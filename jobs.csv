@@ -1,0 +1,379 @@
+id,site,job_url,job_url_direct,title,company,location,date_posted,job_type,salary_source,interval,min_amount,max_amount,currency,is_remote,job_level,job_function,listing_type,emails,description,company_industry,company_url,company_logo,company_url_direct,company_addresses,company_num_employees,company_revenue,company_description,skills,experience_range,company_rating,company_reviews_count,vacancy_count,work_from_home_type
+in-5ec853b3e8ee5637,indeed,https://www.indeed.com/viewjob?jk=5ec853b3e8ee5637,https://job-boards.greenhouse.io/anthropic/jobs/5392335008,"Staff+ Software Engineer, Platform Ecosystem",Anthropic,"San Francisco, CA, US",2026-08-15,,direct_data,yearly,405000.0,485000.0,USD,False,,,,,"**About Anthropic**
+-------------------
+
+Anthropic’s mission is to create reliable, interpretable, and steerable AI systems. We want AI to be safe and beneficial for our users and for society as a whole. Our team is a quickly growing group of committed researchers, engineers, policy experts, and business leaders working together to build beneficial AI systems.
+
+**About the role**
+------------------
+
+We are looking for experienced software engineers to join the Platform Ecosystem team within our Platform organization. Platform Ecosystem exists to empower the next big industries to build on Claude and to create the commercial rails that let businesses building on our platform flourish. This is a founding team, and you'll play a critical role in accelerating AI transformation across highly impactful, mission-driven sectors.
+
+You'll drive 0 1 efforts from ideation through delivery, partner closely with product, design, research, and forward-deployed engineers, and bring strong product and business sense to shape our strategy in entirely new domains. You should be comfortable moving across a breadth of different stacks and going deep when needed to break through walls and turn ambiguous opportunities into high-quality, shipped products.
+
+The Ecosystem team is organized around two pillars. Placement takes into account your interests and experience alongside organizational needs, so you can land where you'll have the greatest impact and growth potential.
+
+**What you'll do**
+------------------
+
+**Verticals:** We build for the next API markets, such as Life Sciences & Healthcare. You'll work alongside product, design, research, and forward-deployed engineers to understand what these industries need from Claude, and build the capabilities, integrations, and workflows that let them adopt Claude safely and at scale. Expect to move quickly across unfamiliar domains, learn what matters to each market, and ship products that unlock entirely new categories of customers on the platform.
+
+**Monetization:** We build the commercial rails and controls that let the platform do business anywhere, with anyone — and turn Claude from a cost line into a revenue line. You'll design and operate the systems that let businesses building on Claude price, package, and sell what they build, and give them the controls they need to do so with confidence. This work sits at the intersection of product, platform infrastructure, and go-to-market, and it directly shapes how the ecosystem around Claude grows.
+
+**You might be a good fit if you:**
+-----------------------------------
+
+* Have a minimum of 8 years of practical experience as a backend or platform engineer, along with some frontend experience
+* Have strong product sense and the technical chops to tackle a wide variety of challenges, and are great at working closely with cross-functional partners to ideate and execute product strategy in new domains
+* Are familiar with using AI tools as part of the software development process
+* Take a product-focused approach to platform work and care about building solutions that are robust, scalable, and easy to use
+* Take full ownership of your work — from design through build, deployment, and operations, to iterating on and improving your product
+Can navigate ambiguity and make sound technical decisions independently, and have ideally operated in both 0* 1 and more mature team or company settings
+* Care about building systems that other engineers and businesses love to use
+
+**Deadline to apply:** None. Applications will be reviewed on a rolling basis.
+
+**Location Preference:** Preference will be given to candidates based in NY, SEA, SF or the Bay Area given the current location of team.
+
+The annual compensation range for this role is listed below.
+
+For sales roles, the range provided is the role’s On Target Earnings (""OTE"") range, meaning that the range includes both the sales commissions/sales bonuses target and annual base salary for the role.
+
+Annual Salary:
+
+$405,000 - $485,000 USD
+
+**Logistics**
+-------------
+
+**Minimum education:** Bachelor’s degree or an equivalent combination of education, training, and/or experience
+
+**Required field of study:** A field relevant to the role as demonstrated through coursework, training, or professional experience
+
+**Minimum years of experience:** Years of experience required will correlate with the internal job level requirements for the position
+
+**Location-based hybrid policy:** Currently, we expect all staff to be in one of our offices at least 25% of the time. However, some roles may require more time in our offices.
+
+**Visa sponsorship:** We do sponsor visas! However, we aren't able to successfully sponsor visas for every role and every candidate. But if we make you an offer, we will make every reasonable effort to get you a visa, and we retain an immigration lawyer to help with this.
+
+**We encourage you to apply even if you do not believe you meet every single qualification.** Not all strong candidates will meet every single qualification as listed. Research shows that people who identify as being from underrepresented groups are more prone to experiencing imposter syndrome and doubting the strength of their candidacy, so we urge you not to exclude yourself prematurely and to submit an application if you're interested in this work. We think AI systems like the ones we're building have enormous social and ethical implications. We think this makes representation even more important, and we strive to include a range of diverse perspectives on our team.  
+  
+**Your safety matters to us.** To protect yourself from potential scams, remember that Anthropic recruiters only contact you from @anthropic.com email addresses. In some cases, we may partner with vetted recruiting agencies who will identify themselves as working on behalf of Anthropic. Be cautious of emails from other domains. Legitimate Anthropic recruiters will never ask for money, fees, or banking information before your first day. If you're ever unsure about a communication, don't click any links—visit anthropic.com/careers directly for confirmed position openings.
+
+**How we're different**
+-----------------------
+
+We believe that the highest-impact AI research will be big science. At Anthropic we work as a single cohesive team on just a few large-scale research efforts. And we value impact — advancing our long-term goals of steerable, trustworthy AI — rather than work on smaller and more specific puzzles. We view AI research as an empirical science, which has as much in common with physics and biology as with traditional efforts in computer science. We're an extremely collaborative group, and we host frequent research discussions to ensure that we are pursuing the highest-impact work at any given time. As such, we greatly value communication skills.
+
+The easiest way to understand our research directions is to read our recent research. This research continues many of the directions our team worked on prior to Anthropic, including: GPT-3, Circuit-Based Interpretability, Multimodal Neurons, Scaling Laws, AI & Compute, Concrete Problems in AI Safety, and Learning from Human Preferences.
+
+**Come work with us!**
+----------------------
+
+Anthropic is a public benefit corporation headquartered in San Francisco. We offer competitive compensation and benefits, optional equity donation matching, generous vacation and parental leave, flexible working hours, and a lovely office space in which to collaborate with colleagues. **Guidance on Candidates' AI Usage:** Learn about our policy for using AI in our application process.",,https://www.indeed.com/cmp/Anthropic,https://d2q79iu7y748jz.cloudfront.net/s/_squarelogo/256x256/0871ccb0a3217a5a6f51980a2ed3e4a6,http://anthropic.com,,51 to 200,,"Anthropic is a San Francisco-based AI safety and research company that’s working to build reliable, interpretable, and steerable AI systems. We are a PBC & offer competitive compensation + benefits!",,,,,,
+in-9e829a02bb5efd84,indeed,https://www.indeed.com/viewjob?jk=9e829a02bb5efd84,https://jobs.ashbyhq.com/replit/7e0dafe8-3eec-442e-aa76-a4d84d779fb1?utm_source=arxZVJA5Pn,Software Engineering Intern (Summer 2027),Replit,"Foster City, CA, US",2026-08-15,internship,,,,,,False,,,,,"Replit is the agentic software creation platform that enables anyone to build applications using natural language. With millions of users worldwide, Replit is democratizing software development by removing traditional barriers to application creation.
+
+**About the role:**
+
+Join our engineering team for a 12-week paid internship where you'll work alongside world-class engineers, designers, and product managers to build the future of software creation. You'll contribute to real features that impact millions of developers worldwide, from our AI-powered development environment to the infrastructure that makes lightning-fast collaboration possible.
+
+This isn't just about learning—you'll ship meaningful code that helps democratize software creation. Whether you're optimizing our cloud infrastructure, building intuitive developer tools, or enhancing our AI agents, your work will directly empower creators around the globe.
+
+**You will:**
+
+* Ship real features to millions of developers using Replit's platform
+* Collaborate cross-functionally with engineers, designers, product managers, and AI researchers
+* Build and optimize developer experiences that make coding accessible to everyone
+* Work on cutting-edge AI tools and infrastructure that power the next generation of software creation
+* Learn from the best in an environment where your ideas are heard and often implemented
+
+**Required skills and experience:**
+
+* Currently pursuing a Bachelor's, Master's, or PhD in Computer Science, Computer Engineering, or related technical field
+* Have at least one semester of schooling remaining after the internship completion
+* Proficient in at least one programming language and comfortable with full stack development
+* Passionate about developer tools, AI, or making technology more accessible
+* Thrive in fast-paced environments where you can move quickly and adapt to changing priorities
+
+**What we value**:
+
+* Problem-solving mindset: Ability to approach complex operational challenges systematically and devise effective solutions
+* Self-directed and autonomous: Capable of working independently while collaborating effectively with cross-functional teams
+* Strong communication skills: Ability to explain complex technical concepts to both technical and non-technical audiences
+* Continuous learning: Passion for staying current with industry best practices and new technologies
+* Focus on automation: Strong belief in automating repetitive tasks and building self-healing systems
+
+**Full-Time Employee Benefits Include:**
+
+Competitive Salary & Equity
+
+401(k) Program with a 4% match (*US Only*)
+
+Health, Dental, Vision and Life Insurance
+
+Short Term and Long Term Disability
+
+Paid Parental, Medical, Caregiver Leave
+
+Flexible Time Off (FTO) + Holidays
+
+Commuter Benefits (*In-Office & US Only*)
+
+Monthly Wellness Stipend
+
+Autonomous Work Environment
+
+In Office Set-Up Reimbursement (*In-Office Only*)
+
+Quarterly Team Gatherings
+
+In Office Amenities (*In-Office Only*)
+
+**Want to learn more about what we are up to?**
+
+* Meet the Replit Agent
+* Replit: Make an app for that
+* Replit Blog
+* Amjad TED Talk
+
+**Interviewing + Culture at Replit**
+
+* Operating Principles
+* Reasons not to work at Replit
+
+To achieve our mission of making programming more accessible around the world, we need our team to be representative of the world. We welcome your unique perspective and experiences in shaping this product. We encourage people from all kinds of backgrounds to apply, including and especially candidates from underrepresented and non-traditional backgrounds.",,https://www.indeed.com/cmp/Replit,,,,,,,,,,,,
+in-53d3f9868177e79c,indeed,https://www.indeed.com/viewjob?jk=53d3f9868177e79c,https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=efc56a2b-ee00-4147-bb8a-4d2bf12302f1&ccId=19000101_000001&jobId=576980&source=IN&lang=en_US,Senior Full Stack Software Engineer,infinite choice,"San Francisco, CA, US",2026-08-15,fulltime,,,,,,True,,,,,"**About the Role**
+------------------
+
+We're seeking a talented Senior Full Stack Software Engineer to join our growing engineering team at InfiniteChoice. You'll lead the design and development of cloud-native software solutions that serve millions of users and power billions in transaction volume.
+
+As a Senior Full Stack Software Engineer, you'll own the complete software development lifecycle from solution design and implementation through testing, production deployment, monitoring and continuous improvement. AI-driven development is a core part of how we build software. You'll leverage modern AI development tools and agentic workflows throughout the engineering lifecycle to accelerate development, improve quality, automate testing, troubleshoot issues and continuously improve production systems.
+
+We're looking for engineers who combine strong software engineering fundamentals with an AI-first mindset using AI as a force multiplier while maintaining ownership of architecture, code quality, security, reliability and business outcomes.
+
+**What You Will Do**
+--------------------
+
+### **AI-Driven End-to-End Product Development**
+
+* **Design**: Partner with Product and Design to translate business requirements into technical designs, leveraging AI to accelerate requirements analysis, solution exploration, technical specifications and implementation planning.
+* **Development**: Build scalable full-stack applications using Node.js, Vue.js/React, JavaScript/TypeScript and cloud-native technologies while leveraging AI-assisted development and agentic coding workflows to accelerate implementation.
+* **Code Quality**: Leverage AI-assisted code reviews and analysis to identify defects, security risks, architectural inconsistencies, code duplication and opportunities for greater component and service reusability.
+* **Testing**: Use AI to develop and continuously improve comprehensive automated testing across unit, integration, end-to-end, regression, and performance testing.
+* **Deployment**: Own applications through production deployment using automated CI/CD pipelines and modern DevOps practices, leveraging AI-driven automation where appropriate.
+* **Monitoring & Operations**: Own production health through observability, performance monitoring, alerting and incident response, using AI-assisted analysis to accelerate troubleshooting, root-cause analysis, and remediation.
+* **Continuous Improvement**: Use production telemetry, customer behavior, incidents and engineering metrics to identify opportunities to continuously improve product quality, reliability, performance and maintainability.
+
+### **Cloud-Native Software Development**
+
+* Architect and develop scalable services using Node.js and modern application frameworks.
+* Build dynamic, responsive user experiences using Vue.js/React and modern JavaScript/TypeScript.
+* Design APIs, services and integration patterns that enable reusable capabilities across applications.
+* Build serverless and containerized applications for scalable cloud deployment.
+* Design software for performance, security, resilience, observability and maintainability.
+* Apply strong architectural principles and engineering judgment when evaluating and validating AI-generated solutions.
+
+### **Technical Excellence & AI-First Engineering**
+
+* Champion AI-driven software engineering practices across the complete development lifecycle.
+* Continuously experiment with and adopt modern AI development tools, coding agents, and engineering automation that improve developer productivity and software quality.
+* Treat AI-generated code with the same engineering rigor as human-written code, ensuring solutions meet architectural, security, performance, testing, and maintainability standards.
+* Write clean, modular, reusable and maintainable code following established engineering standards.
+* Identify opportunities to create reusable components, services, patterns, and automation rather than duplicating solutions across products.
+* Participate in technical design and code reviews and provide constructive feedback to peers.
+* Contribute to architecture decisions and platform improvements.
+* Share effective AI-assisted engineering techniques and best practices across the team.
+
+### **Collaboration & Ownership**
+
+* Take full ownership of features and services from concept and technical design through production deployment, monitoring, and ongoing optimization.
+* Work closely with Product, Design, Platform, CloudOps and other engineering teams to deliver business outcomes.
+* Proactively identify and remove technical blockers rather than waiting for direction.
+* Communicate technical concepts, design decisions, risks, and trade-offs effectively to technical and non-technical stakeholders.
+* Demonstrate strong ownership and urgency in driving deliverables through the finish line.
+* Build solutions and documentation that enable other engineers to understand, maintain, and extend your work.
+
+**What You Must Have**
+----------------------
+
+### **Core Technical Skills**
+
+* Strong proficiency in server-side JavaScript/TypeScript development with Node.js.
+* Hands-on experience with modern frontend frameworks such as Vue.js and/or React.
+* Deep understanding of modern JavaScript, TypeScript, API design, and distributed application architecture.
+* Experience with SQL and NoSQL databases in production environments.
+* Experience designing and consuming RESTful APIs and GraphQL services.
+* Hands-on experience building and operating cloud-native applications; experience with Google Cloud Platform is a plus.
+* Strong understanding of automated testing, CI/CD, observability, and modern DevOps practices.
+* Hands-on experience using AI-powered software development tools such as Cursor, Claude Code, or comparable coding agents as part of day-to-day software development.
+* Demonstrated ability to use AI effectively across multiple stages of the software development lifecycle not simply for code generation.
+
+### **Self-Driven Excellence**
+
+* Strong engineering fundamentals and the judgment to critically evaluate, test and improve AI-generated solutions.
+* Independent problem solver capable of taking ambiguous problems from concept through production.
+* Strong sense of ownership and urgency with a track record of driving work through completion.
+* AI-first and continuous-learning mindset with curiosity for emerging engineering technologies and development practices.
+* Commitment to building high-quality, thoroughly tested, maintainable software.
+* Collaborative approach with a strong belief in teamwork, knowledge sharing, and collective ownership.
+
+### **Education, Experience & Mindset**
+
+* Bachelor's degree in Computer Science, Engineering or equivalent professional experience.
+* 8+ years of hands-on software development experience.
+* Strong analytical, architectural, and problem-solving skills.
+* Ability to thrive in a fast-paced and continuously evolving engineering environment.
+* Passion for building exceptional user experiences.
+* Commitment to engineering excellence across architecture, code quality, automated testing, documentation, deployment, and production operations.
+
+**What We Offer**
+-----------------
+
+* Opportunity to shape the technical direction of a rapidly growing company
+* Remote-first culture with flexibility to work from anywhere
+* Collaborative, innovation-focused culture that values continuous learning
+* Chance to work with cutting-edge technologies and solve complex technical challenges
+* Competitive compensation and comprehensive benefits package
+
+**About InfiniteChoice**
+------------------------
+
+InfiniteChoice was founded to help people find the experiences they want simply and effortlessly. We leverage a new type of business model and platform that uniquely applies automation and technology to solve the challenges of scale and complexity in experience discovery.
+
+Existing business and marketing technologies can no longer handle the demands of connecting millions of consumers with vast inventories of experiences across a fragmented, global marketplace of people, partners, and providers.
+
+Our mission is to disrupt this status quo by creating seamless connections between consumers and experiences. We're just at the beginning of this journey, but our approach is working: we've helped over 275 million visitors connect to millions of experiences, generating over $2 billion in revenue for our brands and partners.",,https://www.indeed.com/cmp/Infinite-Choice,https://d2q79iu7y748jz.cloudfront.net/s/_squarelogo/256x256/d910a3012fa63efb813059100872e312,,,,,,,,,,,
+in-be1b66e994b15027,indeed,https://www.indeed.com/viewjob?jk=be1b66e994b15027,https://apply.careers.microsoft.com/careers/job/1970393556960260?utm_source=indeed&domain=microsoft.com,"Senior Software Engineer, Ads",Microsoft,"Mountain View, CA, US",2026-08-10,fulltime,direct_data,yearly,119800.0,261000.0,USD,True,,,,,"**Overview**
+
+Join our innovative and fast-paced team within Bing Ads, where we are making impactful advancements in the advertising industry. Our recent achievements have driven significant revenue growth, and we’re seeking driven individuals to help us sustain this momentum. In our team, you’ll work on cutting-edge products for Ad Quality and Publishers monetization, focusing on enhancing user experience, building scalable reporting solutions for publishers, working with distributed systems, and delivering top-quality ads.
+
+As a Software Engineer on our team, you will play a crucial role in building solutions for publisher onboarding, ensure publisher quality verification, and provide comprehensive revenue and quality reports. Additionally, you’ll work to deliver top-quality ads to our publishers. This role offers a unique opportunity to accelerate your career growth, deepen your business acumen, and sharpen your technical skills. You’ll be part of a remote team, giving you the flexibility to work from home and manage your schedule efficiently.
+
+Microsoft’s mission is to empower every person and every organization on the planet to achieve more. As employees, we come together with a growth mindset, innovate to empower others, and collaborate to realize our shared goals. Each day we build on our values of respect, integrity, and accountability to create a culture of inclusion where everyone can thrive at work and beyond.
+
+Starting January 26, 2026, Microsoft AI (MAI) employees who live within a 50- mile commute of a designated Microsoft office in the U.S. or 25-mile commute of a non-U.S., country-specific location are expected to work from the office at least four days per week. This expectation is subject to local law and may vary by jurisdiction.
+
+ **Responsibilities**  
+
+* Works with appropriate stakeholders to determine user requirements for a set of features.
+* Contributes to the identification of dependencies, and the development of design documents for a product area with little oversight.
+* Creates and implements code for a product, service, or feature, reusing code as applicable.
+* Contributes to efforts to break down larger work items into smaller work items and provides estimation.
+* Acts as a Designated Responsible Individual (DRI) working on-call to monitor system/product feature/service for degradation, downtime, or interruptions and gains approval to restore system/product/service for simple problems.
+* Remains current in skills by investing time and effort into staying abreast of current developments that will improve the availability, reliability, efficiency, observability, and performance of products while also driving consistency in monitoring and operations at scale.
+
+  
+**Qualifications**
+
+**Required Qualifications:**
+
+* Bachelor's Degree in Computer Science or related technical field AND 4+ years technical engineering experience with coding in languages including, but not limited to, C, C++, C#, Java, JavaScript, or Python
+  + OR equivalent experience.
+
+**Preferred Qualifications:**
+
+* Master's Degree in Computer Science or related technical field AND 6+ years technical engineering experience with coding in languages including, but not limited to, C, C++, C#, Java, JavaScript, or Python
+  + OR Bachelor's Degree in Computer Science or related technical field AND 8+ years technical engineering experience with coding in languages including, but not limited to, C, C++, C#, Java, JavaScript, or Python
+  + OR equivalent experience.
+* 8+ years of experience building and operating reliable, scalable services and platforms.
+* Experience designing and operating production-scale distributed systems.
+* Experience leveraging AI/ML technologies and AI-powered development tools to build intelligent applications and improve engineering productivity.
+* Solid problem-solving skills with the ability to navigate ambiguity and drive clarity.
+* Hands-on mindset with a passion for learning new technologies, including emerging AI and cloud-based solutions.
+* Hands-on experience with Azure DevOps and familiarity with its suite of tools for effective collaboration and delivery
+* Familiarity with distributed systems ,event driven architectures and Azure cloud.
+* Excellent coding skills, solid in OOPS, OOAD, design patterns and their application.
+* Solid understanding of Azure cloud platforms, services, and architecture.
+* Ability to both work independently and coordinate across geographies.
+* Ability to communicate complex ideas and concepts to a variety of cross-group stakeholders.
+* Solid organization skills, a bias for action, and ability to deliver results.
+* Proven ability to deal with ambiguity and drive for clarity.
+* Demonstrated ability to work efficiently, prioritize workflow, ramp quickly, and meet demanding deadlines.
+
+#MicrosoftAI
+
+  
+  
+  
+
+Software Engineering IC4 - The typical base pay range for this role across the U.S. is USD $119,800 - $234,700 per year. There is a different range applicable to specific work locations, within the San Francisco Bay area and New York City metropolitan area, and the base pay range for this role in those locations is USD $160,200 - $261,000 per year.
+
+Certain roles may be eligible for benefits and other compensation. Find additional benefits and pay information here:  
+https://careers.microsoft.com/us/en/us-corporate-pay
+
+This position will be open for a minimum of 5 days, with applications accepted on an ongoing basis until the position is filled.
+
+Microsoft is an equal opportunity employer. All qualified applicants will receive consideration for employment without regard to age, ancestry, citizenship, color, family or medical care leave, gender identity or expression, genetic information, immigration status, marital status, medical condition, national origin, physical or mental disability, political affiliation, protected veteran or military status, race, ethnicity, religion, sex (including pregnancy), sexual orientation, or any other characteristic protected by applicable local laws, regulations and ordinances. If you need assistance with religious accommodations and/or a reasonable accommodation due to a disability during the application process**.**",Internet And Software,https://www.indeed.com/cmp/Microsoft,https://d2q79iu7y748jz.cloudfront.net/s/_squarelogo/256x256/88813b3f866a5b58c9685073e3b87e05,http://www.microsoft.com/,"One Microsoft Way Redmond, Washington 98052-6399","10,000+",more than $10B (USD),Our mission is to empower every person and every organization on the planet to achieve more.,,,,,,
+in-58f636662c344958,indeed,https://www.indeed.com/viewjob?jk=58f636662c344958,https://jobs.infineon.com/careers/job/563808971808713?utm_source=indeed&domain=infineon.com,Internship - Embedded Systems Engineer,Infineon Technologies,"San Jose, CA, US",2026-08-05,"fulltime, internship",direct_data,hourly,27.0,36.0,USD,False,,,,,"#WeAreIn to create tiny chips and big careers.
+
+Trade your textbooks for tools to innovate. Let’s shape your next step together.
+
+Whether through our Graduate Programs or your first full-time role, Infineon gives you the tools, trust and challenges to grow fast and go far.
+
+Are you in?
+
+Your role  
+Key responsibilities in your new role
+
+This is a great opportunity to work on a cutting-edge technology like Type-Cand USB-PD. See https://www.infineon.com/cms/en/product/universal-serial-bus-usb-power-delivery-controller/
+
+for an overview solution offered by Infineon in this space.
+
+* **Firmware Development:** Develop and customize firmware for reference designs and Infineon USB‑PD controller solutions
+* **Hardware Validation:** Validate firmware and hardware against customer requirements and functional specifications
+* **Interoperability Testing:** Perform interoperability and compliance tests on reference and customer designs for USB‑C and USB‑PD ecosystems
+* **Application Notes:** Write clear application notes and example usage guides for Type‑C and USB‑PD applications
+* **Lab Debugging:** Use oscilloscopes, protocol analyzers, and other lab equipment to debug interfaces and power circuits during bring‑up
+* **Documentation & Reporting:** Record test results, log issues, and communicate findings to engineering and product teams
+
+Your profile  
+Qualifications and skills to help you succeed
+
+* **Education:** Pursing a Bachelor’s or Master’s degree in Embedded Systems, Electrical, Electronics, Computer Engineering, Computer Science, or related field preferred
+* **Hands‑on Experience:** Practical experience in embedded system design, microcontroller programming, and board bring‑up preferred
+* **Lab Skills:** Experience with oscilloscopes, protocol analyzers, power supplies, and common bench instruments
+* **Interface Knowledge:** Familiarity with USB, USB‑PD, Type‑C, I2C, SPI, UART and related protocol troubleshooting
+* **Analog & Power:** Understanding of analog circuits, switching regulators, LDOs, DC‑DC converters, and power distribution debugging is a bonus
+
+Find out what we are looking for in your CV
+
+Find out how the student application process works with us
+
+Discover our student website
+
+**Additional information**
+
+Infineon Technologies is an equal opportunity employer. All qualified applicants will receive consideration for employment without regard to race, color, religion, sex (including pregnancy, childbirth, or related medical conditions), gender identity, national origin, ancestry, citizenship, age, physical or mental disability, legally protected medical condition, family care status, military or veteran status, marital status, domestic partner status, sexual orientation, or any other basis protected by local, state, or federal laws.
+
+Employment at Infineon is contingent upon proof of your legal right to work in the United States under applicable law, verification of satisfactory references, successful completion of a background check and drug test, and signing all your on-boarding documents.
+
+In some instances, if applicable, U.S. export control laws require that Infineon obtain a U.S. government export license prior to releasing technologies to certain persons. This offer is contingent upon Infineon's ability to satisfy these export control laws as related to your employment and anticipated job activities. The decision whether or not to submit and/or pursue an export license to satisfy this contingency, if applicable, shall be at Infineon's sole discretion.
+
+Infineon Technologies takes data privacy and identity theft very seriously. As such, we do not request personally-identifiable information (PII) from applicants over the internet or electronically. Please kindly refrain from disclosing your PII electronically during the application process or to unauthorized websites that may purport to be Infineon or any of our affiliates.
+
+**Salary pay information:**
+
+**Location**
+
+**Indicative salary range**
+
+San Jose, CA United States
+
+Wage range that the company expects to pay for a qualified candidate:  
+US$ 27.00 – US$ 36.50  
+  
+Hourly rate will depend on the highest level of education completed.
+
+#WeAreIn for driving decarbonization and digitalization.  
+As a global leader in semiconductor solutions in power systems and IoT, Infineon enables game-changing solutions for green and efficient energy, clean and safe mobility, as well as smart and secure IoT. Together, we drive innovation and customer success, while caring for our people and empowering them to reach ambitious goals. Be a part of making life easier, safer and greener.  
+Are you in?  
+  
+We are on a journey to create the best Infineon for everyone.
+
+We strive to create the best Infineon for everyone by embracing diversity and inclusion. We welcome applicants for who they are and offer a workplace built on trust, openness, respect and equal opportunity.
+
+Our hiring decisions are based on skills and experience. Even if you don’t meet every requirement, we encourage you to apply.
+
+Please let your recruiter know if you need any accommodations during the interview process.
+
+Learn more about our various contact channels and about Diversity & Inclusion at Infineon.",,https://www.indeed.com/cmp/Infineon-Technologies,https://d2q79iu7y748jz.cloudfront.net/s/_squarelogo/256x256/d6d998121efc1f38f34bb1678e486bcb,https://www.infineon.com/,Neubiberg,"10,000+",more than $10B (USD),"Infineon designs, develops, manufactures, and markets a broad range of semiconductors and semiconductor-based solutions, focusing on key markets in the automotive, industrial, and consumer sectors.",,,,,,

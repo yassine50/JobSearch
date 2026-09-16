@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: job-searcher-api
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r web/backend/requirements.txt
+    startCommand: uvicorn web.backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
