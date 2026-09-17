@@ -190,3 +190,62 @@ def get_settings_view(db: Session = Depends(get_db),
     return {"configured": bool(s.smtp_user), "smtp_host": s.smtp_host,
             "smtp_port": s.smtp_port, "smtp_user": s.smtp_user,
             "sender_name": s.sender_name}
+
+# ── Custom Templates ─────────────────────────────────────────────────────────
+
+class CustomTemplateCreate(BaseModel):
+    name: str
+    subject: str = ""
+    body: str = ""
+
+@router.get("/custom-templates")
+def list_custom_templates(db: Session = Depends(get_db),
+                          current_user: models.User = Depends(get_current_user)):
+    items = db.query(models.CustomTemplate) \
+              .filter(models.CustomTemplate.user_id == current_user.id) \
+              .order_by(models.CustomTemplate.created_at.desc()).all()
+    return [{"id": t.id, "name": t.name, "subject": t.subject,
+             "body": t.body, "created_at": str(t.created_at)} for t in items]
+
+@router.post("/custom-templates")
+def create_custom_template(req: CustomTemplateCreate,
+                           db: Session = Depends(get_db),
+                           current_user: models.User = Depends(get_current_user)):
+    t = models.CustomTemplate(user_id=current_user.id,
+                               name=req.name, subject=req.subject, body=req.body)
+    db.add(t); db.commit(); db.refresh(t)
+    return {"id": t.id, "name": t.name, "subject": t.subject, "body": t.body}
+
+@router.delete("/custom-templates/{template_id}")
+def delete_custom_template(template_id: int,
+                           db: Session = Depends(get_db),
+                           current_user: models.User = Depends(get_current_user)):
+    t = db.query(models.CustomTemplate).filter(
+        models.CustomTemplate.id == template_id,
+        models.CustomTemplate.user_id == current_user.id).first()
+    if not t: raise HTTPException(404, "Not found")
+    db.delete(t); db.commit()
+    return {"message": "Deleted"}
+
+@router.post("/test")
+def send_test_email(db: Session = Depends(get_db),
+                    current_user: models.User = Depends(get_current_user)):
+    settings = db.query(models.EmailSettings).filter(
+        models.EmailSettings.user_id == current_user.id).first()
+    if not settings or not settings.smtp_user:
+        raise HTTPException(400, "Email not configured")
+    try:
+        import smtplib as _smtp
+        from email.mime.text import MIMEText as _MT
+        msg = _MT("This is a test email from your Job Searcher app! Your SMTP settings are working correctly.", "plain", "utf-8")
+        msg["Subject"] = "Job Searcher — Test Email ✅"
+        msg["From"] = settings.smtp_user
+        msg["To"] = settings.smtp_user
+        with _smtp.SMTP(settings.smtp_host, settings.smtp_port) as s:
+            s.ehlo(); s.starttls(); s.ehlo()
+            clean_pwd = "".join(settings.smtp_password.split())
+            s.login(settings.smtp_user, clean_pwd)
+            s.sendmail(settings.smtp_user, settings.smtp_user, msg.as_string())
+        return {"message": "Test email sent!"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed: {str(e)}")

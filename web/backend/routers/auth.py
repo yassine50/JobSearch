@@ -1,3 +1,4 @@
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -42,3 +43,20 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me")
 def me(current_user: models.User = Depends(get_current_user)):
     return {**_user_dict(current_user), "created_at": str(current_user.created_at)}
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    password: Optional[str] = None
+
+@router.patch("/profile")
+def update_profile(req: ProfileUpdate,
+                   db: Session = Depends(get_db),
+                   current_user: models.User = Depends(get_current_user)):
+    if req.name:
+        current_user.name = req.name.strip()
+    if req.password:
+        if len(req.password) < 6:
+            raise HTTPException(400, "Password must be at least 6 characters")
+        current_user.hashed_password = get_password_hash(req.password)
+    db.commit()
+    return {"message": "Profile updated", "name": current_user.name, "email": current_user.email}

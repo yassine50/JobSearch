@@ -58,6 +58,21 @@ export default function CoverLetter() {
     setSending(false)
   }
 
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(letter)
+    toast('Cover letter copied to clipboard!', 'success')
+  }
+
+  const downloadTxt = () => {
+    const blob = new Blob([letter], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `cover_letter_${form.company.replace(/\s+/g,'_') || 'draft'}.txt`
+    a.click()
+    toast('Downloaded!', 'success')
+  }
+
   return (
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
@@ -118,6 +133,20 @@ export default function CoverLetter() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-slate-300">Generated Letter</h2>
               {letter && (
+          <div className="flex gap-2 mb-3">
+            <motion.button whileHover={{scale:1.03}} whileTap={{scale:.96}}
+              onClick={copyToClipboard}
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl text-sm font-medium transition-colors">
+              <Copy size={14}/> Copy to Clipboard
+            </motion.button>
+            <motion.button whileHover={{scale:1.03}} whileTap={{scale:.96}}
+              onClick={downloadTxt}
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl text-sm font-medium transition-colors">
+              <Download size={14}/> Download .txt
+            </motion.button>
+          </div>
+        )}
+        {letter && (
                 <div className="flex gap-2">
                   <button onClick={copy}
                     className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-sm px-3 py-1.5 rounded-lg transition">

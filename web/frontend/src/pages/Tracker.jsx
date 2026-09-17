@@ -3,7 +3,7 @@ import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import ScoreBadge from '../components/ScoreBadge.jsx'
 import client from '../api/client.js'
-import { Plus, Trash2, ExternalLink, StickyNote, Mail, CheckCircle, XCircle, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, ExternalLink, StickyNote, Mail, CheckCircle, XCircle, ChevronDown , Calendar, Download } from 'lucide-react'
 
 const COLUMNS = [
   { key:'applied',   label:'📤 Applied',   color:'border-blue-700'   },
@@ -14,6 +14,21 @@ const COLUMNS = [
 ]
 
 function EmailBadge({ email }) {
+
+  const exportCsv = () => {
+    const token = localStorage.getItem('token')
+    const a = document.createElement('a')
+    a.href = `${import.meta.env.VITE_API_URL || ''}/api/tracker/export?token=${token}`
+    // Use fetch with auth header instead
+    fetch('/api/tracker/export', { headers: { Authorization: `Bearer ${token}` }})
+      .then(r => r.blob())
+      .then(blob => {
+        a.href = URL.createObjectURL(blob)
+        a.download = 'applications.csv'
+        a.click()
+      })
+  }
+
   return (
     <div className="flex items-center gap-1 text-xs text-slate-400 mt-1">
       {email.status==='sent'

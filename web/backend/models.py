@@ -1,5 +1,5 @@
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, LargeBinary, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
@@ -72,3 +72,12 @@ class EmailSettings(Base):
     smtp_password = Column(String, default="")
     sender_name   = Column(String, default="")
     user = relationship("User", back_populates="email_settings")
+
+class CustomTemplate(Base):
+    __tablename__ = 'custom_templates'
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    name = Column(String, nullable=False)
+    subject = Column(String, default='')
+    body = Column(Text, default='')
+    created_at = Column(DateTime, default=datetime.utcnow)

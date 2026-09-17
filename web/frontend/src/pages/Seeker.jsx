@@ -18,8 +18,12 @@ const CORE_SITES = [
   { id:'linkedin', label:'LinkedIn',  color:'bg-blue-700' },
   { id:'indeed',   label:'Indeed',    color:'bg-indigo-700' },
 ]
-const COUNTRIES = ['USA','UK','Canada','Australia','France','Germany','Netherlands',
-                   'Spain','Switzerland','UAE','India','Morocco']
+const ALL_COUNTRIES = [
+  'USA','UK','Canada','Australia','France','Germany','Netherlands',
+  'Spain','Switzerland','Belgium','Ireland','Sweden','Denmark','Norway',
+  'UAE','Qatar','Saudi Arabia','Singapore','India','South Africa',
+  'Morocco','Tunisia','Romania','Poland','Portugal','Italy','Austria',
+]
 const TEMPLATE_LABELS = {
   application:'📩 Application', cold_outreach:'❄️ Cold Outreach',
   follow_up:'🔁 Follow-Up', thank_you:'🙏 Thank You'
@@ -142,16 +146,18 @@ function JobDetailPopup({ job, onClose, onEmail, onSave }) {
 export default function Seeker() {
   const toast = useToast()
   const [form, setForm] = useState({
-    title:'', location:'', country:'USA', results:20, hours:168,
-    sites:['linkedin','indeed']
+    title:'', countries:[], results:30, hours:0,
+    sites:['linkedin','indeed'], is_remote:false
   })
-  const [cvInfo, setCvInfo]     = useState({ uploaded:false })
-  const [jobs, setJobs]         = useState([])
-  const [loading, setLoading]   = useState(false)
-  const [matching, setMatch]    = useState(false)
-  const [error, setError]       = useState('')
-  const [detailJob, setDetail]  = useState(null)
-  const [scoreModal, setScore]  = useState(null)
+  const [cvInfo, setCvInfo]         = useState({ uploaded:false })
+  const [jobs, setJobs]             = useState([])
+  const [loading, setLoading]       = useState(false)
+  const [matching, setMatch]        = useState(false)
+  const [error, setError]           = useState('')
+  const [detailJob, setDetail]      = useState(null)
+  const [scoreModal, setScore]      = useState(null)
+  const [cvAnalyzing, setCvAnalyzing] = useState(false)
+  const [cvSuggestion, setCvSuggestion] = useState(null)  // result from /cv/analyze
   const fileRef = useRef()
 
   // Custom URL import
@@ -164,6 +170,12 @@ export default function Seeker() {
   const [emailForm, setEmailForm]     = useState({ to_email:'', to_name:'Hiring Team', subject:'', body:'', template_type:'application' })
   const [sendLoading, setSendLoading] = useState(false)
   const [tplLoading, setTplLoading]   = useState(false)
+  const [attachCv, setAttachCv]       = useState(true)
+
+  // Filters & sort
+  const [filterSite, setFilterSite]   = useState('all')
+  const [sortBy, setSortBy]           = useState('default')
+  const [minScore, setMinScore]       = useState(0)
 
   useEffect(() => {
     client.get('/cv/info').then(r=>setCvInfo(r.data)).catch(()=>{})
@@ -197,22 +209,107 @@ export default function Seeker() {
   }
 
   const searchJobs = async () => {
-    if (!form.title.trim()) return
+    if (!form.title.trim()) {
+      toast('Please enter a Job Title or Skill', 'error')
+      return
+    }
+    if (!form.countries || form.countries.length === 0) {
+      toast('Please select at least one Target Country below', 'error')
+      return
+    }
     setLoading(true); setError(''); setJobs([])
     try {
       const { data } = await client.post('/jobs/search', {
-        title:form.title, location:form.location, country:form.country,
-        sites:form.sites, results_wanted:Number(form.results), hours_old:Number(form.hours)
+        title: form.title.trim(),
+        country: form.countries[0],
+        countries: form.countries,
+        sites: form.sites,
+        results_wanted: Number(form.results) || 30,
+        hours_old: Number(form.hours) > 0 ? Number(form.hours) : null,
+        is_remote: Boolean(form.is_remote),
       })
       setJobs(data.jobs)
-      toast(`Found ${data.jobs.length} jobs`, 'success')
-      if (cvInfo.uploaded && data.jobs.length>0) matchAll(data.jobs, false)
+      toast(`Found ${data.jobs.length} jobs!`, 'success')
+      if (cvInfo.uploaded && data.jobs.length > 0) matchAll(data.jobs, false)
     } catch(e) {
-      setError(e.response?.data?.detail||'Search failed — is the backend running?')
-      toast('Search failed','error')
+      setError(e.response?.data?.detail || 'Search failed — please try again')
+      toast('Search failed', 'error')
     }
     setLoading(false)
   }
+
+  const searchByCV = async () => {
+    if (!cvInfo.uploaded) {
+      toast('Please upload your CV first!', 'error'); return
+    }
+    setCvAnalyzing(true)
+    try {
+      const { data } = await client.get('/cv/analyze')
+      setCvSuggestion(data)
+      const newTitle = data.search_query || data.title || form.title
+      const newRemote = data.is_remote ?? form.is_remote
+
+      // Update role title and remote preference WITHOUT overwriting user's chosen countries
+      setForm(f => ({
+        ...f,
+        title: newTitle,
+        is_remote: newRemote,
+      }))
+      toast(`✨ Role detected from CV: "${newTitle}"`, 'success')
+
+      // Check if user has chosen countries
+      if (!form.countries || form.countries.length === 0) {
+        toast('👉 Please select your target countries below, then click Search Jobs!', 'info')
+        setCvAnalyzing(false)
+        return
+      }
+
+      // If user already selected countries, run search with their chosen countries
+      setLoading(true); setError(''); setJobs([])
+      try {
+        const res = await client.post('/jobs/search', {
+          title: newTitle,
+          country: form.countries[0],
+          countries: form.countries,
+          sites: form.sites,
+          results_wanted: Number(form.results) || 30,
+          hours_old: Number(form.hours) > 0 ? Number(form.hours) : null,
+          is_remote: Boolean(newRemote),
+        })
+        setJobs(res.data.jobs)
+        toast(`🎯 Found ${res.data.jobs.length} jobs matching your CV in your selected countries!`, 'success')
+        if (res.data.jobs.length > 0) matchAll(res.data.jobs, false)
+      } catch (e) {
+        setError(e.response?.data?.detail || 'Search failed')
+      } finally {
+        setLoading(false)
+      }
+    } catch(e) {
+      toast(e.response?.data?.detail || 'CV analysis failed', 'error')
+    }
+    setCvAnalyzing(false)
+  }
+
+  const toggleCountry = (c) => {
+    setForm(f => {
+      const has = f.countries.includes(c)
+      const next = has ? f.countries.filter(x=>x!==c) : [...f.countries, c]
+      return { ...f, countries: next }
+    })
+  }
+
+  const selectTopHubs = () => {
+    setForm(f => ({ ...f, countries: ['USA', 'UK', 'Germany', 'France', 'UAE'] }))
+  }
+
+  const selectAllCountries = () => {
+    setForm(f => ({ ...f, countries: ALL_COUNTRIES }))
+  }
+
+  const clearCountries = () => {
+    setForm(f => ({ ...f, countries: [] }))
+  }
+
 
   const matchAll = async (jobList, single=false) => {
     setMatch(true)
@@ -286,7 +383,8 @@ export default function Seeker() {
       await client.post('/email/send', {
         to_email:emailForm.to_email, to_name:emailForm.to_name,
         subject:emailForm.subject, body:emailForm.body,
-        template_type:emailForm.template_type, application_id:appId
+        template_type:emailForm.template_type, application_id:appId,
+        attach_cv: attachCv
       })
       fireConfetti()
       toast('🎉 Email sent & added to Tracker!','success')
@@ -296,6 +394,26 @@ export default function Seeker() {
     }
     setSendLoading(false)
   }
+
+
+  // Deduplicate + filter + sort
+  const filteredJobs = (() => {
+    // 1. Deduplicate by title+company
+    const seen = new Set()
+    let list = jobs.filter(j => {
+      const key = `${(j.title||'').toLowerCase().trim()}|${(j.company||'').toLowerCase().trim()}`
+      if (seen.has(key)) return false
+      seen.add(key); return true
+    })
+    // 2. Filter by site
+    if (filterSite !== 'all') list = list.filter(j => j.site === filterSite || (filterSite==='custom' && j.imported))
+    // 3. Filter by min match score
+    if (minScore > 0) list = list.filter(j => (j.score||0) >= minScore)
+    // 4. Sort
+    if (sortBy === 'score') list = [...list].sort((a,b) => (b.score||0)-(a.score||0))
+    else if (sortBy === 'company') list = [...list].sort((a,b) => (a.company||'').localeCompare(b.company||''))
+    return list
+  })()
 
   const emailCount = jobs.reduce((n,j)=>n+(j.emails?.length||0),0)
 
@@ -342,80 +460,182 @@ export default function Seeker() {
         <motion.div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 mb-6"
           initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:.3,delay:.06}}>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-            {[['Job Title *','title','e.g. Python Developer'],['Location','location','e.g. Paris, Remote']].map(([label,key,ph])=>(
-              <div key={key}>
-                <label className="text-xs text-slate-400 mb-1 block">{label}</label>
-                <input value={form[key]} onChange={e=>setForm({...form,[key]:e.target.value})}
-                  onKeyDown={e=>e.key==='Enter'&&searchJobs()} placeholder={ph}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors"/>
+            {/* Job Title — No Location Input needed */}
+            <div className="md:col-span-2 lg:col-span-3">
+              <label className="text-xs text-slate-400 mb-1.5 block font-medium">Job Title, Role or Skill *</label>
+              <div className="relative">
+                <input
+                  value={form.title}
+                  onChange={e => setForm({ ...form, title: e.target.value })}
+                  onKeyDown={e => e.key === 'Enter' && searchJobs()}
+                  placeholder="e.g. Flutter Developer, Mobile Engineer, React, Full Stack, Python..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                />
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
               </div>
-            ))}
+            </div>
+
+            {/* Countries with Quick Selectors */}
+            <div className="md:col-span-2 lg:col-span-3">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <label className="text-xs text-slate-400 font-medium">
+                  Target Countries
+                  <span className={`ml-1.5 font-normal ${form.countries.length > 0 ? 'text-blue-400' : 'text-amber-400'}`}>
+                    ({form.countries.length} selected{form.countries.length === 0 ? ' — click countries below to select' : ''})
+                  </span>
+                </label>
+                <div className="flex items-center gap-2 text-xs">
+                  <button type="button" onClick={selectTopHubs} className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
+                    Top Tech Hubs
+                  </button>
+                  <span className="text-slate-600">·</span>
+                  <button type="button" onClick={selectAllCountries} className="text-slate-400 hover:text-slate-200 transition-colors">
+                    Select All
+                  </button>
+                  <span className="text-slate-600">·</span>
+                  <button type="button" onClick={clearCountries} className="text-slate-500 hover:text-slate-300 transition-colors">
+                    Reset
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                {ALL_COUNTRIES.map(c => {
+                  const selected = form.countries.includes(c)
+                  return (
+                    <button key={c} type="button"
+                      onClick={() => toggleCountry(c)}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition-all ${
+                        selected
+                          ? 'bg-blue-600 border-blue-500 text-white font-semibold shadow-sm shadow-blue-500/20'
+                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                      }`}>
+                      {c}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Results Wanted */}
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Country</label>
-              <select value={form.country} onChange={e=>setForm({...form,country:e.target.value})}
+              <label className="text-xs text-slate-400 mb-1.5 block">Results Wanted</label>
+              <select
+                value={form.results}
+                onChange={e => setForm({ ...form, results: Number(e.target.value) })}
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors">
-                {COUNTRIES.map(c=><option key={c}>{c}</option>)}
+                {[20, 30, 50, 75, 100].map(n => (
+                  <option key={n} value={n}>{n} jobs</option>
+                ))}
               </select>
             </div>
+
+            {/* Posted Within */}
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Results</label>
-              <select value={form.results} onChange={e=>setForm({...form,results:e.target.value})}
+              <label className="text-xs text-slate-400 mb-1.5 block">Date Posted</label>
+              <select
+                value={form.hours}
+                onChange={e => setForm({ ...form, hours: Number(e.target.value) })}
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors">
-                {[10,20,30,50].map(n=><option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Posted Within</label>
-              <select value={form.hours} onChange={e=>setForm({...form,hours:e.target.value})}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition-colors">
-                {[[24,'24 hours'],[72,'3 days'],[168,'7 days'],[720,'30 days']].map(([v,l])=>(
+                {[
+                  [0, 'Anytime (Maximum Jobs)'],
+                  [720, 'Past 30 days'],
+                  [336, 'Past 14 days'],
+                  [168, 'Past 7 days'],
+                  [24, 'Past 24 hours']
+                ].map(([v, l]) => (
                   <option key={v} value={v}>{l}</option>
                 ))}
               </select>
             </div>
+
+            {/* Job Boards & Remote Toggle */}
             <div>
-              <label className="text-xs text-slate-400 mb-2 block">Job Boards</label>
-              <div className="flex gap-3">
-                {CORE_SITES.map(s=>(
+              <label className="text-xs text-slate-400 mb-2 block">Sources & Preferences</label>
+              <div className="flex flex-wrap items-center gap-4 pt-1">
+                {CORE_SITES.map(s => (
                   <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer select-none">
-                    <input type="checkbox" checked={form.sites.includes(s.id)} onChange={()=>toggleSite(s.id)}
-                      className="accent-blue-500 w-4 h-4"/>
+                    <input
+                      type="checkbox"
+                      checked={form.sites.includes(s.id)}
+                      onChange={() => toggleSite(s.id)}
+                      className="accent-blue-500 w-4 h-4 rounded"
+                    />
                     <span className="font-medium">{s.label}</span>
                   </label>
                 ))}
+                <label className="flex items-center gap-2 text-sm cursor-pointer select-none text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.is_remote)}
+                    onChange={e => setForm({ ...form, is_remote: e.target.checked })}
+                    className="accent-purple-500 w-4 h-4 rounded"
+                  />
+                  <span className="font-medium text-purple-300">🌐 Remote Only</span>
+                </label>
               </div>
             </div>
           </div>
 
-          <div className="border-t border-slate-700 pt-4 mb-4 flex items-center gap-4 flex-wrap">
-            <div>
-              <p className="text-xs text-slate-400">CV for AI Matching</p>
-              <p className="text-sm font-medium mt-0.5">
-                {cvInfo.uploaded ? `✓ ${cvInfo.filename} · ${cvInfo.words} words` : 'No CV uploaded'}
-              </p>
-            </div>
-            <motion.button whileHover={{scale:1.02}} whileTap={{scale:.97}}
-              onClick={()=>fileRef.current.click()}
-              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-sm px-4 py-2 rounded-xl transition-colors">
-              <Upload size={14}/>{cvInfo.uploaded?'Replace CV':'Upload CV'}
-            </motion.button>
-            <input ref={fileRef} type="file" accept=".pdf,.docx,.txt" onChange={uploadCv} className="hidden"/>
-          </div>
+          {/* CV Section + Action Buttons */}
+          <div className="border-t border-slate-700 pt-5 mt-2">
 
-          <div className="flex items-center gap-4">
-            <motion.button whileHover={{scale:1.02}} whileTap={{scale:.97}}
-              onClick={searchJobs} disabled={loading||!form.title.trim()}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-7 py-2.5 rounded-xl transition-colors text-sm">
-              {loading ? <LoadingSpinner label="Searching..."/> : <><Search size={16}/>Search Jobs</>}
-            </motion.button>
-            <AnimatePresence>
-              {matching && (
+            {/* Smart Search from CV — hero feature */}
+            <div className="bg-gradient-to-r from-blue-900/40 to-purple-900/30 border border-blue-700/40 rounded-2xl p-4 mb-4">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-600/30 flex items-center justify-center shrink-0">
+                    <span className="text-lg">🧠</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">Smart Search from CV</p>
+                    {cvInfo.uploaded
+                      ? <p className="text-xs text-slate-400 mt-0.5">✓ {cvInfo.filename} · {cvInfo.words} words — ready to analyze</p>
+                      : <p className="text-xs text-slate-400 mt-0.5">Upload your CV and we'll find the best jobs automatically</p>
+                    }
+                    {cvSuggestion && (
+                      <p className="text-xs text-blue-300 mt-1">
+                        Detected: <strong>{cvSuggestion.title}</strong> · Skills: {cvSuggestion.top_skills?.slice(0,4).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <motion.button whileHover={{scale:1.02}} whileTap={{scale:.97}}
+                    onClick={()=>fileRef.current.click()}
+                    className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-sm px-4 py-2 rounded-xl transition-colors">
+                    <Upload size={14}/>{cvInfo.uploaded?'Replace CV':'Upload CV'}
+                  </motion.button>
+                  <motion.button whileHover={{scale:1.03}} whileTap={{scale:.96}}
+                    onClick={searchByCV}
+                    disabled={cvAnalyzing || loading || !cvInfo.uploaded}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold px-5 py-2 rounded-xl transition-colors text-sm">
+                    {cvAnalyzing
+                      ? <><LoadingSpinner label="Analyzing..."/></>
+                      : <><Search size={14}/>🎯 Search by CV</>
+                    }
+                  </motion.button>
+                </div>
+              </div>
+            </div>
+            <input ref={fileRef} type="file" accept=".pdf,.docx,.txt" onChange={uploadCv} className="hidden"/>
+
+            {/* Manual search button */}
+            <div className="flex items-center gap-4">
+              <motion.button whileHover={{scale:1.02}} whileTap={{scale:.97}}
+                onClick={searchJobs} disabled={loading || !form.title.trim()}
+                className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 font-semibold px-7 py-2.5 rounded-xl transition-colors text-sm">
+                {loading ? <LoadingSpinner label="Searching..."/> : <><Search size={16}/>Search Jobs</>}
+              </motion.button>
+              <span className="text-xs text-slate-500">or use Smart Search above</span>
+              <AnimatePresence>
+                {matching && (
                 <motion.div initial={{opacity:0,x:-8}} animate={{opacity:1,x:0}} exit={{opacity:0}}>
                   <LoadingSpinner label="AI scoring..."/>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
+          </div>{/* end CV Section + Action Buttons */}
         </motion.div>
 
         <AnimatePresence>
@@ -434,10 +654,34 @@ export default function Seeker() {
               <h2 className="font-bold text-lg">
                 Results{jobs.length>0 && (
                   <span className="text-slate-400 font-normal text-base ml-2">
-                    ({jobs.length} jobs · {emailCount} emails)
+                    ({filteredJobs.length}{filteredJobs.length!==jobs.length?` of ${jobs.length}`:''} jobs · {emailCount} emails)
                   </span>
                 )}
               </h2>
+              {jobs.length>0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <select value={filterSite} onChange={e=>setFilterSite(e.target.value)}
+                    className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                    <option value="all">All Sites</option>
+                    <option value="linkedin">LinkedIn</option>
+                    <option value="indeed">Indeed</option>
+                    <option value="custom">Imported</option>
+                  </select>
+                  <select value={minScore} onChange={e=>setMinScore(Number(e.target.value))}
+                    className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                    <option value={0}>Any Match</option>
+                    <option value={30}>30%+ Match</option>
+                    <option value={50}>50%+ Match</option>
+                    <option value={70}>70%+ Match</option>
+                  </select>
+                  <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+                    className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
+                    <option value="default">Default Order</option>
+                    <option value="score">Best Match ↓</option>
+                    <option value="company">Company A-Z</option>
+                  </select>
+                </div>
+              )}
               <div className="flex gap-3 text-xs text-slate-500">
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-600 inline-block"/>Found in post</span>
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-600 inline-block"/>Suggested</span>
@@ -458,7 +702,7 @@ export default function Seeker() {
                 <tbody>
                   {loading
                     ? Array(8).fill(0).map((_,i)=><SkeletonRow key={i}/>)
-                    : jobs.map((j,i)=>(
+                    : filteredJobs.map((j,i)=>(
                     <motion.tr key={i}
                       initial={{opacity:0,x:-6}} animate={{opacity:1,x:0}}
                       transition={{delay:i*.03,duration:.18}}

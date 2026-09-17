@@ -72,9 +72,11 @@ class SearchRequest(BaseModel):
     title: str
     location: str = ""
     country: str = "USA"
-    sites: List[str] = ["linkedin","indeed"]
-    results_wanted: int = 20
-    hours_old: int = 168
+    countries: List[str] = []          # multi-country support
+    sites: List[str] = ["linkedin", "indeed"]
+    results_wanted: int = 30
+    hours_old: Optional[int] = None    # None/0 means all-time
+    is_remote: bool = False
 
 class ImportUrlRequest(BaseModel):
     url: str
@@ -86,42 +88,114 @@ class SaveJobRequest(BaseModel):
 @router.post("/search")
 def search_jobs(req: SearchRequest,
                 current_user: models.User = Depends(get_current_user)):
-    # Filter to only supported jobspy sites
-    SUPPORTED = {"linkedin","indeed","glassdoor","zip_recruiter","google"}
-    valid_sites = [s for s in req.sites if s in SUPPORTED] or ["linkedin","indeed"]
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from jobspy import scrape_jobs
+    import pandas as pd
+
+    # Filter to supported jobspy sites
+    SUPPORTED = {"linkedin", "indeed", "glassdoor", "zip_recruiter", "google"}
+    valid_sites = [s for s in req.sites if s in SUPPORTED] or ["linkedin", "indeed"]
+
+    # Determine countries — use multi list or fall back to single
+    countries_to_search = [c.strip() for c in req.countries if c.strip()] if req.countries else [req.country or "USA"]
+    if not countries_to_search:
+        countries_to_search = ["USA"]
+
+    # Number of jobs to request per country to ensure high yield
+    per_country = max(req.results_wanted // len(countries_to_search), 15) if len(countries_to_search) > 1 else max(req.results_wanted, 25)
+    hours_filter = req.hours_old if (req.hours_old and req.hours_old > 0) else None
+
+    def scrape_country_worker(country_name: str):
+        try:
+            # For LinkedIn, if location is empty, pass country name so it searches within that country
+            loc = req.location.strip() if req.location.strip() else country_name
+            df_c = scrape_jobs(
+                site_name=valid_sites,
+                search_term=req.title.strip(),
+                location=loc,
+                results_wanted=per_country,
+                hours_old=hours_filter,
+                country_indeed=country_name,
+                is_remote=req.is_remote,
+            )
+            if df_c is not None and not df_c.empty:
+                df_c["_search_country"] = country_name
+                return df_c
+        except Exception as err:
+            print(f"[Scraper] Warning for country '{country_name}': {err}")
+        return None
+
     try:
-        from jobspy import scrape_jobs
-        df = scrape_jobs(site_name=valid_sites, search_term=req.title,
-                         location=req.location, results_wanted=req.results_wanted,
-                         hours_old=req.hours_old, country_indeed=req.country)
-        if df is None or df.empty: return {"jobs":[],"total":0}
+        all_dfs = []
+        # Run parallel scraping across all selected countries
+        max_workers = min(len(countries_to_search), 6)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_country = {
+                executor.submit(scrape_country_worker, c): c
+                for c in countries_to_search
+            }
+            for future in as_completed(future_to_country):
+                res_df = future.result()
+                if res_df is not None and not res_df.empty:
+                    all_dfs.append(res_df)
+
+        if not all_dfs:
+            return {"jobs": [], "total": 0}
+
+        df = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
         df = df.fillna("")
+
         jobs = []
-        for _,row in df.iterrows():
-            desc    = str(row.get("description",""))
-            job_url = str(row.get("job_url",""))
-            company = str(row.get("company",""))
+        seen_keys = set()   # dedup by title+company
+
+        for _, row in df.iterrows():
+            title   = str(row.get("title", "")).strip()
+            company = str(row.get("company", "")).strip()
+            if not title:
+                continue
+
+            dedup_key = f"{title.lower()}|{company.lower()}"
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
+
+            desc    = str(row.get("description", ""))
+            job_url = str(row.get("job_url", ""))
             salary  = ""
-            if row.get("min_amount"): salary = f"${int(float(row['min_amount'])):,}"
-            if row.get("max_amount"): salary += f"–${int(float(row['max_amount'])):,}"
+            if row.get("min_amount"):
+                salary = f"${int(float(row['min_amount'])):,}"
+            if row.get("max_amount"):
+                salary += f"–${int(float(row['max_amount'])):,}"
+
             extracted = _extract_emails_from_text(desc)
             if row.get("emails"):
-                for e in str(row["emails"]).replace(";",",").split(","):
+                for e in str(row["emails"]).replace(";", ",").split(","):
                     c = _clean_email(e.strip())
-                    if c and c not in extracted: extracted.append(c)
+                    if c and c not in extracted:
+                        extracted.append(c)
+
             domain   = _domain_from_url(job_url)
             inferred = _infer_hr_emails(domain)
+
             jobs.append({
-                "title":str(row.get("title","")), "company":company,
-                "location":str(row.get("location","")), "url":job_url,
-                "description":desc[:800], "site":str(row.get("site","")),
-                "date_posted":str(row.get("date_posted","")), "salary":salary,
-                "emails":_best_emails(extracted,inferred),
-                "company_domain":domain, "imported":False,
+                "title": title,
+                "company": company,
+                "location": str(row.get("location", "")),
+                "url": job_url,
+                "description": desc[:800],
+                "site": str(row.get("site", "")),
+                "date_posted": str(row.get("date_posted", "")),
+                "salary": salary,
+                "emails": _best_emails(extracted, inferred),
+                "company_domain": domain,
+                "imported": False,
+                "country": str(row.get("_search_country", "")),
             })
-        return {"jobs":jobs,"total":len(jobs)}
+
+        return {"jobs": jobs, "total": len(jobs)}
     except Exception as e:
         raise HTTPException(500, str(e))
+
 
 @router.post("/import-url")
 def import_from_url(req: ImportUrlRequest,
