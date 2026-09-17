@@ -11,3 +11,6 @@ PyPDF2
 python-docx
 pandas
 scikit-learn
+beautifulsoup4
+requests
+curl_cffi
