@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import ScoreBadge from '../components/ScoreBadge.jsx'
 import ScoreModal from '../components/ScoreModal.jsx'
@@ -30,6 +31,7 @@ export default function Recruiter() {
   }
 
   return (
+    <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar />
       <main className="ml-60 flex-1 p-8">
@@ -153,5 +155,6 @@ export default function Recruiter() {
       </main>
       <ScoreModal item={modal} onClose={() => setModal(null)} mode="recruiter" />
     </div>
+  </PageWrapper>
   )
 }
