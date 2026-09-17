@@ -135,18 +135,23 @@ def import_from_url(req: ImportUrlRequest,
                           "Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        from curl_cffi import requests as c_requests
-        
-        # curl_cffi impersonates a real browser (Chrome) to bypass 403 Forbidden / Cloudflare
-        resp = c_requests.get(
-            req.url, 
-            impersonate="chrome", 
-            timeout=15, 
-            headers={"Accept-Language": "en-US,en;q=0.9"}
-        )
-        if resp.status_code != 200:
-            raise Exception(f"HTTP {resp.status_code}: {resp.reason}")
-        html = resp.text
+        # Try curl_cffi first (bypasses anti-bot / Cloudflare)
+        # Fall back to regular requests if not available
+        try:
+            from curl_cffi import requests as c_requests
+            resp = c_requests.get(
+                req.url, impersonate="chrome", timeout=15,
+                headers={"Accept-Language": "en-US,en;q=0.9"}
+            )
+            html = resp.text
+            if resp.status_code != 200:
+                raise Exception(f"HTTP {resp.status_code}")
+        except ImportError:
+            import requests as r
+            import urllib3; urllib3.disable_warnings()
+            resp = r.get(req.url, headers=headers, timeout=12, verify=False)
+            resp.raise_for_status()
+            html = resp.text
 
         soup  = BeautifulSoup(html, "html.parser")
         # Strip scripts/styles
