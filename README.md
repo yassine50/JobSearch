@@ -1,6 +1,6 @@
 # 🚀 Job Searcher - AI-Powered Job Hunting Platform
 
-![Banner](banner.jpg) *(Add your banner image here)*
+
 
 **Job Searcher** is a complete, full-stack platform built to revolutionize how you find, track, and apply to jobs. By combining automated job board scraping, AI-powered CV matching, and a built-in email outreach system, it turns the exhausting process of job hunting into a streamlined, highly organized workflow.
 
