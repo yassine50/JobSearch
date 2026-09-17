@@ -34,7 +34,7 @@ export default function Recruiter() {
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar />
-      <main className="ml-60 flex-1 p-8">
+      <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8">
         <h1 className="text-2xl font-bold mb-6">👔 Recruiter Mode</h1>
 
         {/* Form */}

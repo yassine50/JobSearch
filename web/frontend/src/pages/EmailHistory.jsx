@@ -21,7 +21,7 @@ export default function EmailHistory() {
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar />
-      <main className="ml-60 flex-1 p-8">
+      <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8">
         <h1 className="text-2xl font-bold mb-6">📧 Email History</h1>
 
         {logs.length === 0 ? (
@@ -33,7 +33,7 @@ export default function EmailHistory() {
         ) : (
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 fade-in">
             <p className="text-slate-400 text-sm mb-4">{logs.length} emails sent</p>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto -mx-2 px-2">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-slate-400 text-left border-b border-slate-700">

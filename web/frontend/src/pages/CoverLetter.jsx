@@ -62,10 +62,10 @@ export default function CoverLetter() {
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar />
-      <main className="ml-60 flex-1 p-8">
+      <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8">
         <h1 className="text-2xl font-bold mb-6">📝 Cover Letter Generator</h1>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Left: form */}
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 fade-in">
             <h2 className="font-semibold mb-4 text-slate-300">Job Details</h2>

@@ -43,7 +43,7 @@ export default function Dashboard() {
     <PageWrapper>
       <div className="flex min-h-screen bg-slate-900">
         <Sidebar/>
-        <main className="ml-60 flex-1 p-8">
+        <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8">
           <motion.div className="flex items-center justify-between mb-8"
             initial={{opacity:0,x:-12}} animate={{opacity:1,x:0}} transition={{duration:.28}}>
             <div>
@@ -56,7 +56,7 @@ export default function Dashboard() {
           </motion.div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             <StatCard delay={0}    icon="💾" value={saved.length}             label="Saved Jobs"   color="blue"   />
             <StatCard delay={0.07} icon="📄" value={cvInfo.uploaded?'✓':'—'} label="CV Status"    color="emerald" sub={cvInfo.uploaded?cvInfo.filename:'No CV uploaded'}/>
             <StatCard delay={0.14} icon="📝" value={cvInfo.words??'—'}       label="CV Words"     color="purple"  />
@@ -64,7 +64,7 @@ export default function Dashboard() {
           </div>
 
           {/* Quick actions */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
             {[
               { label:'Search Jobs', sub:'Find your next opportunity with AI', Icon:Search, to:'/seeker', gradient:'from-blue-700 to-blue-600 hover:from-blue-600 hover:to-blue-500', delay:0.1 },
               { label:'Find Candidates', sub:'Source & rank top candidates', Icon:Users, to:'/recruiter', gradient:'from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500', delay:0.18 },
@@ -100,7 +100,7 @@ export default function Dashboard() {
                 <p className="text-sm mt-1">Search for jobs and save the ones you like!</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto -mx-2 px-2">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-slate-400 text-left border-b border-slate-700">

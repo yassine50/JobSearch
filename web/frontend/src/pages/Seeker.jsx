@@ -64,7 +64,7 @@ function JobDetailPopup({ job, onClose, onEmail, onSave }) {
         initial={{opacity:0,y:40,scale:.97}} animate={{opacity:1,y:0,scale:1}}
         exit={{opacity:0,y:20,scale:.97}}
         transition={{type:'spring',damping:24,stiffness:300}}
-        className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-xl max-h-[80vh] overflow-y-auto"
+        className="bg-slate-800 border border-slate-700 rounded-t-2xl md:rounded-2xl w-full md:max-w-xl max-h-[92vh] overflow-y-auto"
         onClick={e=>e.stopPropagation()}>
         <div className="sticky top-0 bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-start justify-between rounded-t-2xl">
           <div className="flex-1 min-w-0 mr-3">
@@ -303,7 +303,7 @@ export default function Seeker() {
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar/>
-      <main className="ml-60 flex-1 p-8">
+      <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8">
         <motion.div className="flex items-center justify-between mb-6"
           initial={{opacity:0,x:-10}} animate={{opacity:1,x:0}} transition={{duration:.25}}>
           <h1 className="text-2xl font-bold">🔎 Job Search</h1>
@@ -444,7 +444,8 @@ export default function Seeker() {
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-600 inline-block"/>Imported</span>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            {/* ── Desktop table ──────────────────────── */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-slate-400 text-left border-b border-slate-700">
@@ -522,6 +523,59 @@ export default function Seeker() {
                 </tbody>
               </table>
             </div>
+
+            {/* ── Mobile cards ───────────────────────── */}
+            <div className="md:hidden space-y-3 mt-2">
+              {loading
+                ? Array(4).fill(0).map((_,i)=>(
+                  <div key={i} className="bg-slate-900 rounded-2xl p-4 animate-pulse space-y-3 border border-slate-700">
+                    <div className="h-4 bg-slate-700 rounded w-3/4"/>
+                    <div className="h-3 bg-slate-700/60 rounded w-1/2"/>
+                    <div className="h-3 bg-slate-700/40 rounded w-full"/>
+                  </div>
+                ))
+                : jobs.map((j,i)=>(
+                <motion.div key={i}
+                  initial={{opacity:0,y:10}} animate={{opacity:1,y:0}}
+                  transition={{delay:i*.04}}
+                  onClick={()=>setDetail(j)}
+                  className="bg-slate-900 border border-slate-700 rounded-2xl p-4 hover:border-slate-500 transition-colors cursor-pointer active:scale-[0.98]">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate">{j.title}</p>
+                      <p className="text-slate-400 text-xs truncate">{j.company}</p>
+                    </div>
+                    {j.score!=null && <ScoreBadge score={j.score} onClick={e=>{e.stopPropagation();setScore(j)}}/>}
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs mb-3">
+                    {j.location && <span className="text-slate-400">📍 {j.location}</span>}
+                    {j.salary   && <span className="text-emerald-400">💰 {j.salary}</span>}
+                    <span className="bg-slate-700 px-2 py-0.5 rounded-full capitalize">{j.imported?'custom':j.site}</span>
+                  </div>
+                  {/* Emails */}
+                  {j.emails?.length>0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-3" onClick={e=>e.stopPropagation()}>
+                      {j.emails.slice(0,2).map((e,ei)=>(
+                        <EmailPill key={ei} data={e} onClick={()=>openEmail(j,e.email)}/>
+                      ))}
+                      {j.emails.length>2 && <span className="text-xs text-slate-500">+{j.emails.length-2}</span>}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3 border-t border-slate-700 pt-2.5" onClick={e=>e.stopPropagation()}>
+                    {j.url && <a href={j.url} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-xs text-blue-400">
+                      <ExternalLink size={13}/>View
+                    </a>}
+                    <button onClick={()=>openEmail(j,'')} className="flex items-center gap-1 text-xs text-slate-300">
+                      <Mail size={13}/>Email
+                    </button>
+                    <button onClick={()=>saveJob(j)} className="flex items-center gap-1 text-xs text-emerald-400 ml-auto">
+                      <Bookmark size={13}/>Save
+                    </button>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </motion.div>
         )}
       </main>
@@ -539,14 +593,14 @@ export default function Seeker() {
       {/* Email Compose Modal */}
       <AnimatePresence>
         {emailModal && (
-          <motion.div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4"
+          <motion.div className="fixed inset-0 bg-black/75 z-50 flex items-end md:items-center justify-center md:p-4"
             initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
             onClick={()=>setEmailModal(null)}>
             <motion.div
               initial={{opacity:0,scale:.93,y:24}} animate={{opacity:1,scale:1,y:0}}
               exit={{opacity:0,scale:.96,y:12}}
               transition={{type:'spring',damping:22,stiffness:280}}
-              className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6"
+              className="bg-slate-800 border border-slate-700 rounded-t-2xl md:rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-4 md:p-6"
               onClick={e=>e.stopPropagation()}>
               <div className="flex justify-between items-start mb-5">
                 <div>

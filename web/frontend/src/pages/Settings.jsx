@@ -49,7 +49,7 @@ export default function Settings() {
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar />
-      <main className="ml-60 flex-1 p-8 max-w-3xl">
+      <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8 max-w-3xl">
         <h1 className="text-2xl font-bold mb-8">⚙️ Settings</h1>
 
         {/* Email Configuration */}
@@ -73,7 +73,7 @@ export default function Settings() {
             </ol>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             {[['Your Full Name','sender_name','text','e.g. Yassine Youssef'],
               ['Gmail Address','smtp_user','email','your@gmail.com'],
               ['SMTP Host','smtp_host','text','smtp.gmail.com'],

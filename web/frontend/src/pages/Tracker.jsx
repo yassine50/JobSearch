@@ -66,7 +66,7 @@ export default function Tracker() {
     <PageWrapper>
     <div className="flex min-h-screen bg-slate-900">
       <Sidebar/>
-      <main className="ml-60 flex-1 p-8">
+      <main className="md:ml-60 flex-1 pt-14 md:pt-0 p-4 md:p-8">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">📋 Application Tracker</h1>
@@ -79,7 +79,7 @@ export default function Tracker() {
         </div>
 
         {/* Stats */}
-        <div className="flex gap-3 mb-6 flex-wrap">
+        <div className="flex gap-2 mb-5 overflow-x-auto pb-1">
           {COLUMNS.map(c=>(
             <div key={c.key} className={`bg-slate-800 border ${c.color} rounded-xl px-4 py-3 text-center min-w-[90px]`}>
               <div className="text-xl font-bold">{byStatus(c.key).length}</div>
@@ -93,9 +93,9 @@ export default function Tracker() {
         </div>
 
         {/* Kanban */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        <div className="flex gap-4 overflow-x-auto pb-4 md:grid md:grid-cols-3 xl:grid-cols-5 md:overflow-visible">
           {COLUMNS.map(col=>(
-            <div key={col.key} className={`bg-slate-800 border ${col.color} rounded-2xl p-4 min-h-[300px]`}>
+            <div key={col.key} className={`bg-slate-800 border ${col.color} rounded-2xl p-4 min-h-[300px] min-w-[260px] md:min-w-0 shrink-0 md:shrink`}>
               <h3 className="font-semibold text-sm mb-3">
                 {col.label} <span className="text-slate-500">({byStatus(col.key).length})</span>
               </h3>
@@ -157,8 +157,8 @@ export default function Tracker() {
 
       {/* Add Modal */}
       {adding && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={()=>setAdding(false)}>
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-end md:items-center justify-center md:p-4" onClick={()=>setAdding(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-t-2xl md:rounded-2xl p-5 w-full md:max-w-md" onClick={e=>e.stopPropagation()}>
             <h3 className="font-bold text-lg mb-4">Add Application</h3>
             <div className="space-y-3">
               {[['Job Title *','title'],['Company','company'],['Location','location'],['Job URL','url']].map(([label,key])=>(
@@ -184,7 +184,7 @@ export default function Tracker() {
 
       {/* Notes Modal */}
       {editing && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={()=>setEditing(null)}>
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-end md:items-center justify-center md:p-4" onClick={()=>setEditing(null)}>
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-sm" onClick={e=>e.stopPropagation()}>
             <h3 className="font-bold mb-3">📝 Notes</h3>
             <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={5}

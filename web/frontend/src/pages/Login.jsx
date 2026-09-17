@@ -34,7 +34,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen px-4  flex">
       {/* LEFT HERO */}
       <div className="hidden lg:flex flex-col justify-center w-1/2 bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 px-16 py-12 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-96 h-96 bg-blue-600 opacity-10 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
@@ -77,7 +77,7 @@ export default function Login() {
 
       {/* RIGHT AUTH */}
       <div className="flex-1 flex items-center justify-center px-6 py-12 bg-slate-900">
-        <div className="w-full max-w-md">
+        <div className="w-full w-full max-w-md">
           <div className="lg:hidden flex items-center gap-2 mb-8">
             <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center font-bold">J</div>
             <span className="text-xl font-bold">Job Searcher</span>
