@@ -89,9 +89,14 @@ TECH_SKILLS: set = {
     "istio","service mesh","prometheus","grafana","elk","datadog",
     "new relic","splunk","pagerduty","vault","consul","argocd","flux",
     "kustomize","skaffold","buildkite","tekton","drone ci","argo workflows",
-    # Mobile
+    # Mobile & Cross-platform
     "ios","android","react native","flutter","xamarin","ionic","expo",
     "swiftui","jetpack compose","kotlin multiplatform","capacitor",
+    "bloc","getx","provider","riverpod","dio","retrofit","fastlane",
+    "xcode","android studio","gradle","cocoapods","app store","google play",
+    "play store","cross-platform","json","mvvm","mvi","mvc","clean architecture",
+    "state management","push notifications","in-app purchase","deep linking",
+    "offline first","core data","room","realm","sqlite",
     # Security
     "cybersecurity","penetration testing","soc","siem","owasp","ssl","tls",
     "encryption","cryptography","vulnerability assessment","devsecops",
@@ -481,7 +486,9 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
     High-accuracy match score (0-100) + rich breakdown dict.
     """
     cv_n  = _normalize(cv_text)
-    job_n = _normalize(job_text)
+    # Include job_title in job text for skill extraction so skills in titles are never missed
+    job_full_raw = f"{job_title}\n{job_title}\n{job_text}" if job_title else job_text
+    job_n = _normalize(job_full_raw)
     job_full_n = _normalize(f"{job_title} {job_title} {job_text}")
 
     # ── Section-aware CV parsing ─────────────────────────────────────────────
@@ -490,7 +497,7 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
     # ── ① Tech skills (40%) ──────────────────────────────────────────────────
     cv_tech  = _extract_skills(cv_n, TECH_SKILLS)
     job_tech = _extract_skills(job_n, TECH_SKILLS)
-    required = _required_skills_from_jd(job_text, job_tech)
+    required = _required_skills_from_jd(job_full_raw, job_tech)
 
     matched_tech = cv_tech & job_tech
     missing_tech = job_tech - cv_tech
@@ -501,7 +508,7 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
         matched_w = 0.0
         for skill in job_tech:
             # JD weight: required × 2, freq-based ×1.4 if mentioned 3+ times
-            jd_freq  = _skill_freq_in_text(job_text, skill)
+            jd_freq  = _skill_freq_in_text(job_full_raw, skill)
             req_mult = 2.0 if skill in required else 1.0
             freq_mult= 1.4 if jd_freq >= 3 else (1.2 if jd_freq == 2 else 1.0)
             w = req_mult * freq_mult
@@ -518,9 +525,9 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
                 cv_f_mult = 1.0 + min(cv_freq - 1, 2) * 0.15
                 matched_w += w * sec_w * cv_f_mult
 
-        tech_score = min(100, int(matched_w / total_w * 100)) if total_w > 0 else 55
+        tech_score = min(100, int(matched_w / total_w * 100)) if total_w > 0 else 50
     else:
-        tech_score = 55
+        tech_score = 50
 
     # ── ② Ensemble retrieval (30%) ────────────────────────────────────────────
     raw_sim        = _ensemble_sim(cv_n, job_full_n)
@@ -528,14 +535,25 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
     semantic_score = min(100, int(raw_sim * 220))
 
     # ── ③ Role / seniority fit (15%) ─────────────────────────────────────────
-    job_role_kw = _tokenize(_clean(job_title or job_text[:80])) 
-    job_role_kw = [w for w in job_role_kw if w in ROLE_KEYWORDS]
+    title_clean = _clean(job_title or job_text[:80])
+    title_tokens = _tokenize(title_clean)
+    job_role_kw = [w for w in title_tokens if w in ROLE_KEYWORDS or w in TECH_SKILLS]
     if job_role_kw:
-        hits = sum(1 for kw in job_role_kw
-                   if re.search(r"\b" + re.escape(kw) + r"\b", cv_n))
-        title_score = min(100, int(hits / len(job_role_kw) * 100))
+        weighted_hits = 0.0
+        weighted_total = 0.0
+        for kw in job_role_kw:
+            # Technology in title gets 2.5x weight (e.g. Flutter, React, Python)
+            weight = 2.5 if kw in TECH_SKILLS else 1.0
+            weighted_total += weight
+            if re.search(r"\b" + re.escape(kw) + r"\b", cv_n):
+                weighted_hits += weight
+        title_score = min(100, int(weighted_hits / weighted_total * 100)) if weighted_total > 0 else 50
     else:
         title_score = 50
+
+    # If job_tech was empty, adopt title_score as proxy for tech_score
+    if not job_tech:
+        tech_score = title_score
 
     # Seniority comparison
     cv_sen  = _detect_seniority(cv_text)
@@ -628,7 +646,7 @@ def batch_match(cv_text: str, rows: List[Dict],
                 max_workers: int = 6) -> List[Tuple[int, Dict]]:
     """Parallel batch match of a CV against multiple job rows."""
     def _match_one(row: Dict) -> Tuple[int, Dict]:
-        return compute_match(cv_text, row.get("text", ""), row.get("title", ""))
+        return compute_match(cv_text, row.get("description") or row.get("text") or "", row.get("title") or "")
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         return list(ex.map(_match_one, rows))

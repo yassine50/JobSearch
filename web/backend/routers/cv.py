@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from .. import models
 from ..database import get_db
 from ..auth import get_current_user
@@ -15,6 +15,14 @@ class MatchRequest(BaseModel):
     job_description: str
     job_title: str = ""
     cv_text: Optional[str] = None
+
+class BatchMatchItem(BaseModel):
+    title: str = ""
+    description: str = ""
+    url: Optional[str] = ""
+
+class BatchMatchRequest(BaseModel):
+    jobs: List[BatchMatchItem]
 
 def _parse(filename, content):
     ext = os.path.splitext(filename)[1].lower()
@@ -47,9 +55,10 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db),
     if existing:
         existing.filename = file.filename
         existing.text_content = text
+        existing.file_data = content
         db.commit()
     else:
-        cv = models.CvUpload(user_id=current_user.id, filename=file.filename, text_content=text)
+        cv = models.CvUpload(user_id=current_user.id, filename=file.filename, text_content=text, file_data=content)
         db.add(cv); db.commit()
     return {"message": "CV uploaded", "words": len(text.split()), "filename": file.filename}
 
@@ -66,6 +75,37 @@ def match_cv(req: MatchRequest, db: Session = Depends(get_db),
         from cv_matcher import compute_match
         score, bd = compute_match(cv_text, req.job_description, req.job_title)
         return {"score": score, "breakdown": bd}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@router.post("/match-batch")
+def match_cv_batch(req: BatchMatchRequest, db: Session = Depends(get_db),
+                   current_user: models.User = Depends(get_current_user)):
+    rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    if not rec or not rec.text_content:
+        raise HTTPException(400, "No CV uploaded. Upload your CV first.")
+    try:
+        from cv_matcher import compute_match
+        from concurrent.futures import ThreadPoolExecutor
+
+        cv_text = rec.text_content
+
+        def score_item(item: BatchMatchItem):
+            s, bd = compute_match(cv_text, item.description, item.title)
+            return {
+                "url": item.url,
+                "title": item.title,
+                "score": s,
+                "breakdown": bd,
+                "matched_skills": bd.get("matched_tech", []),
+                "missing_skills": bd.get("missing_tech", []),
+                "tips": bd.get("tips", []),
+            }
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            results = list(ex.map(score_item, req.jobs))
+
+        return results
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -195,3 +235,46 @@ def analyze_cv(db: Session = Depends(get_db),
         raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
     result = _analyze_cv_text(cv.text_content)
     return result
+
+class TailorCvRequest(BaseModel):
+    job_title: str
+    company: str
+    job_description: str
+
+@router.post("/tailor")
+def tailor_user_cv(req: TailorCvRequest,
+                   db: Session = Depends(get_db),
+                   current_user: models.User = Depends(get_current_user)):
+    """Analyzes target job, bridges missing skills, and returns tailored summary, bridged skills, and new scores."""
+    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    if not cv or not cv.text_content:
+        raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
+    from cv_tailor import tailor_cv
+    res = tailor_cv(cv.text_content, req.job_title, req.company, req.job_description)
+    return {
+        "original_score": res["original_score"],
+        "tailored_score": res["tailored_score"],
+        "bridged_skills": res["bridged_skills"],
+        "target_headline": res["target_headline"],
+        "tailored_summary": res["tailored_summary"],
+        "filename": res["filename"],
+        "tailored_text": res["tailored_text"]
+    }
+
+@router.post("/tailored-pdf")
+def download_tailored_pdf(req: TailorCvRequest,
+                          db: Session = Depends(get_db),
+                          current_user: models.User = Depends(get_current_user)):
+    """Generates and downloads the executive ATS-compliant PDF resume tailored for this role."""
+    from fastapi.responses import Response
+    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    if not cv or not cv.text_content:
+        raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
+    from cv_tailor import tailor_cv
+    res = tailor_cv(cv.text_content, req.job_title, req.company, req.job_description)
+    return Response(
+        content=res["pdf_bytes"],
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=\"{res['filename']}\""}
+    )
+

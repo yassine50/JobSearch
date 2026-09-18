@@ -33,6 +33,7 @@ class CvUpload(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     filename = Column(String); text_content = Column(Text)
+    file_data = Column(LargeBinary, nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="cv_uploads")
 
@@ -60,6 +61,8 @@ class Application(Base):
     match_score = Column(Integer, default=0)
     applied_at  = Column(DateTime, default=datetime.utcnow)
     follow_up_date = Column(DateTime, nullable=True)
+    tailored_cv_filename = Column(String, nullable=True)
+    tailored_cv_data = Column(LargeBinary, nullable=True)
     user       = relationship("User",     back_populates="applications")
     email_logs = relationship("EmailLog", back_populates="application")
 

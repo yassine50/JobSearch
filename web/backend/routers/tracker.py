@@ -79,6 +79,15 @@ def update_app(app_id: int, req: AppUpdate,
                    "status": l.status, "sent_at": str(l.sent_at)} for l in logs]
     return _serialize(a, email_list)
 
+@router.delete("/clear-all")
+def clear_all_applications(db: Session = Depends(get_db),
+                           current_user: models.User = Depends(get_current_user)):
+    """Delete all applications and email logs for the current user to allow re-applying."""
+    db.query(models.EmailLog).filter(models.EmailLog.user_id == current_user.id).delete()
+    db.query(models.Application).filter(models.Application.user_id == current_user.id).delete()
+    db.commit()
+    return {"message": "All applications and email logs successfully cleared"}
+
 @router.delete("/{app_id}")
 def delete_app(app_id: int, db: Session = Depends(get_db),
                current_user: models.User = Depends(get_current_user)):

@@ -170,27 +170,41 @@ def plain_converter(decription_html:str):
 def extract_emails_from_text(text: str) -> list[str] | None:
     if not text:
         return None
-    email_regex = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-    raw_emails = email_regex.findall(text)
+    # Anti-obfuscation
+    t = re.sub(r'(\s*(\[at\]|\(at\)|\[@\]|\bat\b)\s*)', '@', text, flags=re.IGNORECASE)
+    t = re.sub(r'(\s*(\[dot\]|\(dot\)|\bdot\b)\s*)', '.', t, flags=re.IGNORECASE)
+    t = re.sub(r'([a-zA-Z0-9._%+\-]+)\s*@\s*([a-zA-Z0-9.\-]+)\s*\.\s*([a-zA-Z]{2,10})', r'\1@\2.\3', t)
+
+    email_regex = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,10}")
+    raw_emails = email_regex.findall(t)
     if not raw_emails:
         return None
 
     # Filter out false positives
     false_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.js', '.css', '.ico', '.woff', '.woff2', '.ttf', '.eot')
-    false_prefixes = ('noreply', 'no-reply', 'donotreply', 'do-not-reply', 'mailer-daemon')
+    false_prefixes = ('noreply', 'no-reply', 'donotreply', 'do-not-reply', 'mailer-daemon', 'privacy', 'legal', 'abuse')
     false_domains = ('example.com', 'example.org', 'test.com', 'sentry.io', 'sentry-next.wixpress.com')
+    trailing_words = {'please', 'contact', 'if', 'we', 'for', 'to', 'or', 'and', 'send', 'reach', 'do', 'not', 'apply', 'email'}
+    common_tlds = {'com', 'org', 'net', 'edu', 'gov', 'io', 'ai', 'co', 'tech', 'app', 'dev', 'uk', 'de', 'fr', 'ca', 'us'}
 
     filtered = []
+    seen = set()
     for email in raw_emails:
-        email_lower = email.lower()
+        email_lower = email.lower().strip()
+        parts = email_lower.split('.')
+        if len(parts) >= 3 and parts[-1] in trailing_words and parts[-2] in common_tlds:
+            email_lower = '.'.join(parts[:-1])
+
         local_part, _, domain = email_lower.partition('@')
         if any(email_lower.endswith(ext) for ext in false_extensions):
             continue
         if any(local_part.startswith(p) for p in false_prefixes):
             continue
-        if domain in false_domains:
+        if domain in false_domains or len(local_part) < 2 or len(domain) < 4:
             continue
-        filtered.append(email_lower)
+        if email_lower not in seen:
+            seen.add(email_lower)
+            filtered.append(email_lower)
 
     return filtered if filtered else None
 

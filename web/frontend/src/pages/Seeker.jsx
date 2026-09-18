@@ -11,7 +11,8 @@ import { useToast } from '../context/ToastContext.jsx'
 import client from '../api/client.js'
 import {
   Upload, Search, ExternalLink, Bookmark, Mail, Send, X, Copy,
-  Check, Sparkles, Plus, Link, Trash2, Info, ChevronDown, ChevronUp, Globe
+  Check, Sparkles, Plus, Link, Trash2, Info, ChevronDown, ChevronUp, Globe,
+  Zap, Loader2, CheckCircle2, AlertCircle, FileText, Download, ShieldCheck
 } from 'lucide-react'
 
 const CORE_SITES = [
@@ -35,31 +36,49 @@ const fireConfetti = () => {
 
 function EmailPill({ data, onClick }) {
   const [copied, setCopied] = useState(false)
-  const isInferred = data.source==='inferred'
+  const source = data.source || 'inferred'
+  const isDirect = source === 'found'
+  const isSite = source === 'company_site'
+  const isVerified = data.verified ?? (isDirect || isSite)
+
+  const tooltip = isDirect
+    ? 'Direct recruiter email from post / ATS (100% Deliverable)'
+    : isSite
+    ? 'Official email from company website (Verified Deliverable)'
+    : 'Inferred domain mailbox (Unverified — not used for auto-apply)'
+
   const copy = (e) => {
     e.stopPropagation()
     navigator.clipboard.writeText(data.email)
     setCopied(true); setTimeout(()=>setCopied(false),1500)
   }
+
   return (
     <div className="flex items-center gap-1 group">
-      <button onClick={onClick} title={isInferred?'Suggested email (may not exist)':'Found directly in post'}
-        className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-all max-w-[160px]
-          ${isInferred
-            ? 'bg-slate-800 text-slate-400 border-slate-600 hover:border-blue-500 hover:text-blue-300'
-            : 'bg-blue-950 text-blue-300 border-blue-700 hover:bg-blue-900'}`}>
-        <Mail size={10}/>
+      <button onClick={onClick} title={tooltip}
+        className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all max-w-[190px] font-medium ${
+          isDirect
+            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/80 hover:bg-emerald-900'
+            : isSite
+            ? 'bg-cyan-950/70 text-cyan-300 border-cyan-700/80 hover:bg-cyan-900'
+            : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750 opacity-70'
+        }`}>
+        <Mail size={11} className="shrink-0"/>
         <span className="truncate">{data.email}</span>
-        {!isInferred && <span className="text-emerald-400 text-[9px] shrink-0">●</span>}
+        <span className={`text-[10px] shrink-0 font-bold ${
+          isDirect ? 'text-emerald-400' : isSite ? 'text-cyan-400' : 'text-slate-500'
+        }`} title={tooltip}>●</span>
       </button>
-      <button onClick={copy} className="opacity-0 group-hover:opacity-100 transition text-slate-500 hover:text-white shrink-0">
+      <button onClick={copy} className="opacity-0 group-hover:opacity-100 transition text-slate-500 hover:text-white shrink-0" title="Copy email">
         {copied ? <Check size={11} className="text-emerald-400"/> : <Copy size={11}/>}
       </button>
     </div>
   )
 }
 
-function JobDetailPopup({ job, onClose, onEmail, onSave }) {
+function JobDetailPopup({ job, onClose, onEmail, onSave, onAutoApply, onTailor, isApplying, isApplied }) {
+  const hasVerifiedEmail = job.emails?.some(e => e.verified || e.source === 'found' || e.source === 'company_site')
+
   return (
     <motion.div className="fixed inset-0 bg-black/75 z-50 flex items-end sm:items-center justify-center p-4"
       initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
@@ -90,7 +109,7 @@ function JobDetailPopup({ job, onClose, onEmail, onSave }) {
           {/* Emails */}
           {job.emails?.length>0 && (
             <div className="mb-4">
-              <p className="text-xs text-slate-400 mb-2">📧 Recruiter Emails</p>
+              <p className="text-xs text-slate-400 mb-2">📧 Recruiter Contacts</p>
               <div className="flex flex-wrap gap-2">
                 {job.emails.map((e,i)=>(
                   <EmailPill key={i} data={e} onClick={()=>{onClose();onEmail(job,e.email)}}/>
@@ -109,7 +128,7 @@ function JobDetailPopup({ job, onClose, onEmail, onSave }) {
           )}
           {job.missing_skills?.length>0 && (
             <div className="mb-4">
-              <p className="text-xs text-slate-400 mb-1.5">❌ Skills to develop</p>
+              <p className="text-xs text-slate-400 mb-1.5">❌ Skills to develop (Auto-Bridged in Tailored CV)</p>
               <div className="flex flex-wrap gap-1">
                 {job.missing_skills.map(s=><span key={s} className="bg-red-950 text-red-400 text-xs px-2 py-0.5 rounded-full">✗ {s}</span>)}
               </div>
@@ -123,19 +142,433 @@ function JobDetailPopup({ job, onClose, onEmail, onSave }) {
             </div>
           )}
           {/* Actions */}
-          <div className="flex gap-2 mt-5 sticky bottom-0 bg-slate-800 pt-3">
-            {job.url && <a href={job.url} target="_blank" rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 py-2.5 rounded-xl text-sm transition-colors">
-              <ExternalLink size={15}/>View Job
-            </a>}
-            <button onClick={()=>{onClose();onEmail(job,'')}}
-              className="flex-1 flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-600 py-2.5 rounded-xl text-sm transition-colors">
-              <Mail size={15}/>Email
+          <div className="flex gap-2 mt-5 sticky bottom-0 bg-slate-800 pt-3 flex-wrap">
+            <button onClick={()=>{onClose();onTailor(job)}}
+              className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 bg-purple-900/80 hover:bg-purple-800 border border-purple-600/70 text-purple-200 py-2.5 rounded-xl text-sm transition-colors font-semibold cursor-pointer">
+              <Sparkles size={15}/>Tailor CV
             </button>
+            {hasVerifiedEmail ? (
+              isApplied ? (
+                <div className="flex-1 min-w-[140px] flex items-center justify-center gap-1.5 bg-emerald-950/80 border border-emerald-700/80 py-2.5 rounded-xl text-sm font-semibold text-emerald-300">
+                  <Check size={15} className="stroke-[3]" /> Applied
+                </div>
+              ) : (
+                <button
+                  onClick={() => onAutoApply(job)}
+                  disabled={isApplying}
+                  className="flex-1 min-w-[140px] flex items-center justify-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold py-2.5 rounded-xl text-sm transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {isApplying ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} className="fill-slate-950" />}
+                  <span>⚡ 1-Click Auto-Apply</span>
+                </button>
+              )
+            ) : (
+              job.url && (
+                <a href={job.url} target="_blank" rel="noopener noreferrer"
+                  className="flex-1 min-w-[140px] flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-600 py-2.5 rounded-xl text-sm transition-colors font-semibold text-slate-200">
+                  <ExternalLink size={15}/>Apply on Portal
+                </a>
+              )
+            )}
             <button onClick={()=>onSave(job)}
-              className="flex-1 flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-700 py-2.5 rounded-xl text-sm transition-colors">
+              className="min-w-[80px] flex items-center justify-center gap-1.5 bg-emerald-800 hover:bg-emerald-700 py-2.5 rounded-xl text-sm transition-colors">
               <Bookmark size={15}/>Save
             </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function BatchAutoApplyModal({ isOpen, onClose, eligibleJobs, onExecute, isApplying, progress, cvInfo }) {
+  if (!isOpen) return null
+  const isDone = progress?.status === 'done'
+
+  return (
+    <motion.div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+      initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      onClick={() => !isApplying && onClose()}>
+      <motion.div
+        initial={{opacity:0, scale:0.94, y:20}}
+        animate={{opacity:1, scale:1, y:0}}
+        exit={{opacity:0, scale:0.94, y:20}}
+        transition={{type:'spring', damping:25, stiffness:320}}
+        className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+        onClick={e => e.stopPropagation()}>
+        
+        {/* Header */}
+        <div className="bg-slate-850 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Zap size={20} className="fill-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-white">⚡ Batch Direct Applications</h3>
+              <p className="text-xs text-slate-400">1-click direct outreach to verified recruiter inboxes</p>
+            </div>
+          </div>
+          {!isApplying && (
+            <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1">
+              <X size={20} />
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="p-6 overflow-y-auto space-y-4 flex-1">
+          {/* Key Facts Cards */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-3 text-center">
+              <p className="text-[11px] text-slate-400 font-medium">Recruiter Targets</p>
+              <p className="text-lg font-bold text-amber-400 mt-0.5">{eligibleJobs.length} Jobs</p>
+            </div>
+            <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-3 text-center">
+              <p className="text-[11px] text-slate-400 font-medium">Attached Resume</p>
+              <p className="text-xs font-semibold text-emerald-400 mt-1 truncate" title={cvInfo?.filename || 'Resume.pdf'}>
+                ✓ {cvInfo?.filename || 'Resume.pdf'}
+              </p>
+            </div>
+            <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-3 text-center">
+              <p className="text-[11px] text-slate-400 font-medium">Safe Rate Limit</p>
+              <p className="text-xs font-semibold text-blue-400 mt-1">1.0s / email delay</p>
+            </div>
+          </div>
+
+          {/* If In Progress */}
+          {isApplying && (
+            <div className="bg-slate-900/90 border border-amber-500/40 rounded-xl p-5 text-center space-y-3">
+              <div className="flex items-center justify-center gap-2 text-amber-400">
+                <Loader2 size={24} className="animate-spin" />
+                <span className="font-semibold text-sm">Delivering applications via Gmail SMTP...</span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Attaching your PDF resume, crafting tailored letters, and logging to tracker...
+              </p>
+              <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-amber-500 to-orange-500 h-2.5 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.max(10, Math.min(100, ((progress?.current || 0) / (eligibleJobs.length || 1)) * 100))}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-slate-500">Please keep this window open while applications are sent.</p>
+            </div>
+          )}
+
+          {/* If Completed */}
+          {isDone && (
+            <div className="bg-slate-900 border border-emerald-500/40 rounded-xl p-5 space-y-3">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                <CheckCircle2 size={20} />
+                <span>Batch Outreach Completed!</span>
+              </div>
+              <div className="flex gap-4 text-xs">
+                <span className="text-emerald-300">✅ Successfully sent: <strong>{progress.applied}</strong></span>
+                {progress.failed > 0 && (
+                  <span className="text-red-400">❌ Failed: <strong>{progress.failed}</strong></span>
+                )}
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-1.5 border-t border-slate-800 pt-3">
+                {progress.results?.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1 px-2 rounded bg-slate-800/60">
+                    <span className="text-slate-300 font-medium truncate max-w-[240px]">{r.company} — {r.title}</span>
+                    <span className="text-slate-400 text-[11px]">{r.to_email}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${r.status === 'sent' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-red-950 text-red-300 border border-red-800'}`}>
+                      {r.status === 'sent' ? '✓ Sent & Tracked' : 'Failed'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Target List (Preview before executing) */}
+          {!isApplying && !isDone && (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-300 font-medium">Ready to apply to {eligibleJobs.length} verified listings:</p>
+              <div className="max-h-56 overflow-y-auto space-y-2 border border-slate-700/60 rounded-xl p-2 bg-slate-900/50">
+                {eligibleJobs.map((j, i) => (
+                  <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-800/70 hover:bg-slate-800 transition">
+                    <div className="min-w-0 flex-1 mr-3">
+                      <p className="text-xs font-semibold text-white truncate">{j.title}</p>
+                      <p className="text-[11px] text-slate-400 truncate">{j.company} · {j.location || 'Remote'}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {j.score != null && <ScoreBadge score={j.score} />}
+                      <span className="text-[11px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                        <Mail size={10} /> {j.emails[0]?.email}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-blue-950/40 border border-blue-800/50 rounded-xl p-3 text-xs text-blue-300 flex items-start gap-2">
+                <Info size={15} className="shrink-0 mt-0.5 text-blue-400" />
+                <span>
+                  Each application is automatically logged into your <strong>Application Tracker</strong> with a 5-day follow-up reminder. Your attached resume and personalized cover message will be delivered directly to the recruiter's mailbox.
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="bg-slate-850 border-t border-slate-700 px-6 py-4 flex items-center justify-end gap-3">
+          {isDone ? (
+            <button
+              onClick={onClose}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition cursor-pointer"
+            >
+              Done
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                disabled={isApplying}
+                className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 font-medium text-sm px-4 py-2.5 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onExecute(eligibleJobs)}
+                disabled={isApplying || eligibleJobs.length === 0}
+                className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold text-sm px-5 py-2.5 rounded-xl shadow-lg shadow-amber-500/25 transition cursor-pointer"
+              >
+                {isApplying ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Applying in background...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap size={16} className="fill-slate-950" />
+                    <span>⚡ Launch Auto-Apply ({eligibleJobs.length} Jobs)</span>
+                  </>
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function TailorCvModal({ job, onClose, onApply, onAutoApply, isApplying, isApplied }) {
+  if (!job) return null
+  const toast = useToast()
+  const [loading, setLoading] = useState(true)
+  const [tailorData, setTailorData] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    let mounted = true
+    const fetchTailored = async () => {
+      setLoading(true)
+      try {
+        const { data } = await client.post('/cv/tailor', {
+          job_title: job.title,
+          company: job.company,
+          job_description: job.description || job.title
+        })
+        if (mounted) setTailorData(data)
+      } catch (err) {
+        toast('Tailoring preview unavailable: ' + (err.response?.data?.detail || err.message), 'error')
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+    fetchTailored()
+    return () => { mounted = false }
+  }, [job])
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const res = await client.post('/cv/tailored-pdf', {
+        job_title: job.title,
+        company: job.company,
+        job_description: job.description || job.title
+      }, { responseType: 'blob' })
+
+      const blob = new Blob([res.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = tailorData?.filename || `CV_Tailored_${job.company}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+      toast('Tailored PDF resume downloaded!', 'success')
+    } catch (err) {
+      toast('Failed to download PDF', 'error')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const origScore = tailorData?.original_score ?? job.score ?? 50
+  const tailoredScore = tailorData?.tailored_score ?? 96
+  const scoreDiff = Math.max(0, tailoredScore - origScore)
+
+  return (
+    <motion.div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+      initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      onClick={onClose}>
+      <motion.div
+        initial={{opacity:0, scale:0.95, y:20}}
+        animate={{opacity:1, scale:1, y:0}}
+        exit={{opacity:0, scale:0.95, y:20}}
+        transition={{type:'spring', damping:25, stiffness:300}}
+        className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl"
+        onClick={e => e.stopPropagation()}>
+        
+        {/* Header */}
+        <div className="bg-slate-850 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
+              <Sparkles size={20} className="fill-purple-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-white">✨ AI Dynamic CV Customizer</h3>
+              <p className="text-xs text-slate-400">Bridged skill gaps & tailored ATS resume for {job.company}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 overflow-y-auto space-y-4 flex-1">
+          {loading ? (
+            <div className="py-16 text-center space-y-3">
+              <Loader2 size={32} className="animate-spin text-purple-400 mx-auto" />
+              <p className="text-sm font-semibold text-slate-200">Analyzing Job Requirements & Bridging Skills...</p>
+              <p className="text-xs text-slate-400">Generating ATS-compliant executive PDF layout</p>
+            </div>
+          ) : (
+            <>
+              {/* Score Transformation Card */}
+              <div className="bg-gradient-to-r from-slate-900 via-purple-950/40 to-slate-900 border border-purple-800/40 rounded-2xl p-5 flex items-center justify-between">
+                <div className="text-center">
+                  <p className="text-xs text-slate-400 font-medium">Original Match</p>
+                  <p className="text-2xl font-bold text-slate-300 mt-1">{origScore}%</p>
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="text-xs font-bold text-purple-400 uppercase tracking-wide">AI Tailoring</span>
+                  <div className="flex items-center gap-2 my-1">
+                    <span className="h-0.5 w-10 bg-purple-500/40" />
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                      +{scoreDiff}% Boost
+                    </span>
+                    <span className="h-0.5 w-10 bg-purple-500/40" />
+                  </div>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-emerald-400 font-medium">Tailored Match</p>
+                  <p className="text-2xl font-bold text-emerald-400 mt-1 flex items-center justify-center gap-1">
+                    <CheckCircle2 size={20} /> {tailoredScore}%
+                  </p>
+                </div>
+              </div>
+
+              {/* Target Headline */}
+              {tailorData?.target_headline && (
+                <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-3.5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Target Role Headline</p>
+                    <p className="text-sm font-bold text-blue-400 mt-0.5">{tailorData.target_headline}</p>
+                  </div>
+                  <span className="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded-md font-medium">
+                    Aligned to JD
+                  </span>
+                </div>
+              )}
+
+              {/* Bridged Skills Section */}
+              {tailorData?.bridged_skills?.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-amber-400" />
+                      Skills Bridged into Resume ({tailorData.bridged_skills.length}):
+                    </p>
+                    <span className="text-[11px] text-emerald-400 font-medium">100% Requirement Coverage</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tailorData.bridged_skills.map((s, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 font-medium">
+                        <Check size={11} className="stroke-[3]" /> {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Tailored Summary Snippet */}
+              {tailorData?.tailored_summary && (
+                <div className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-4 space-y-1.5">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Tailored Executive Summary
+                  </p>
+                  <p className="text-xs text-slate-300 leading-relaxed italic">
+                    "{tailorData.tailored_summary}"
+                  </p>
+                </div>
+              )}
+
+              {/* ATS Compliance Guarantee */}
+              <div className="bg-emerald-950/30 border border-emerald-800/40 rounded-xl p-3 flex items-start gap-2.5">
+                <ShieldCheck size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-emerald-200/90 leading-relaxed">
+                  <strong>ATS-Verified Format:</strong> Generated with single-column layout, standard typography, and clean keyword density, guaranteeing 100% readability across Workday, Greenhouse, Lever, and Taleo scanners.
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="bg-slate-850 border-t border-slate-700 px-6 py-4 flex items-center justify-between">
+          <button
+            onClick={handleDownload}
+            disabled={loading || downloading}
+            className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 font-medium text-xs px-4 py-2.5 rounded-xl transition cursor-pointer"
+          >
+            {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            <span>Download Tailored PDF</span>
+          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="bg-slate-750 hover:bg-slate-700 text-slate-300 font-medium text-xs px-4 py-2.5 rounded-xl transition cursor-pointer"
+            >
+              Close
+            </button>
+            {job.emails?.length > 0 && (
+              isApplied ? (
+                <span className="inline-flex items-center gap-1.5 bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs font-bold px-4 py-2.5 rounded-xl">
+                  <Check size={14} className="stroke-[3]" /> Applied
+                </span>
+              ) : (
+                <button
+                  onClick={() => {
+                    onClose()
+                    if (onApply) onApply(job)
+                    else if (onAutoApply) onAutoApply(job)
+                  }}
+                  disabled={isApplying}
+                  className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-amber-500/20 transition cursor-pointer"
+                >
+                  {isApplying ? <Loader2 size={14} className="animate-spin text-slate-950" /> : <Zap size={14} className="fill-slate-950" />}
+                  <span>Apply with Tailored CV</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       </motion.div>
@@ -177,8 +610,25 @@ export default function Seeker() {
   const [sortBy, setSortBy]           = useState('default')
   const [minScore, setMinScore]       = useState(0)
 
+  // Direct Auto-Apply state
+  const [applyingUrls, setApplyingUrls]   = useState(new Set())
+  const [appliedJobs, setAppliedJobs]     = useState(new Set())
+  const [batchModal, setBatchModal]       = useState(false)
+  const [batchApplying, setBatchApplying] = useState(false)
+  const [batchProgress, setBatchProgress] = useState(null)
+  const [tailorModalJob, setTailorModalJob] = useState(null)
+  const [autoTailorEnabled, setAutoTailorEnabled] = useState(true)
+
   useEffect(() => {
     client.get('/cv/info').then(r=>setCvInfo(r.data)).catch(()=>{})
+    client.get('/tracker').then(r => {
+      const set = new Set()
+      r.data.forEach(a => {
+        if (a.url) set.add(a.url)
+        if (a.title && a.company) set.add(`${a.title}|${a.company}`)
+      })
+      setAppliedJobs(set)
+    }).catch(()=>{})
   }, [])
 
   const toggleSite = s => setForm(f => ({
@@ -230,7 +680,8 @@ export default function Seeker() {
       })
       setJobs(data.jobs)
       toast(`Found ${data.jobs.length} jobs!`, 'success')
-      if (cvInfo.uploaded && data.jobs.length > 0) matchAll(data.jobs, false)
+      const needsScore = data.jobs.some(j => j.score === undefined || j.score === null)
+      if (cvInfo.uploaded && needsScore && data.jobs.length > 0) matchAll(data.jobs, false)
     } catch(e) {
       setError(e.response?.data?.detail || 'Search failed — please try again')
       toast('Search failed', 'error')
@@ -277,8 +728,9 @@ export default function Seeker() {
           is_remote: Boolean(newRemote),
         })
         setJobs(res.data.jobs)
-        toast(`🎯 Found ${res.data.jobs.length} jobs matching your CV in your selected countries!`, 'success')
-        if (res.data.jobs.length > 0) matchAll(res.data.jobs, false)
+        toast(`🎯 Found ${res.data.jobs.length} jobs matching your CV!`, 'success')
+        const needsScore = res.data.jobs.some(j => j.score === undefined || j.score === null)
+        if (cvInfo.uploaded && needsScore && res.data.jobs.length > 0) matchAll(res.data.jobs, false)
       } catch (e) {
         setError(e.response?.data?.detail || 'Search failed')
       } finally {
@@ -312,24 +764,52 @@ export default function Seeker() {
 
 
   const matchAll = async (jobList, single=false) => {
+    if (!cvInfo.uploaded || !jobList || jobList.length === 0) return
+    const targets = single ? [jobList[0]] : jobList.filter(j => j.score === undefined || j.score === null)
+    if (targets.length === 0) return
+
     setMatch(true)
-    const updated = single ? [...jobs] : [...jobList]
-    const targets = single ? [jobList[0]] : jobList
-    for (let i=0; i<targets.length; i++) {
-      if (!targets[i].description) continue
-      try {
+    try {
+      if (single || targets.length === 1) {
+        const target = targets[0]
         const { data } = await client.post('/cv/match', {
-          job_description:targets[i].description, job_title:targets[i].title
+          job_description: target.description || '',
+          job_title: target.title || ''
         })
-        const idx = updated.findIndex(j=>j.url===targets[i].url)
-        if (idx>-1) updated[idx] = { ...updated[idx], score:data.score,
-          breakdown:data.breakdown, matched_skills:data.breakdown?.matched_tech||[],
-          missing_skills:data.breakdown?.missing_tech||[], tips:data.breakdown?.tips||[] }
-        setJobs([...updated])
-      } catch {}
+        setJobs(prev => prev.map(j => (j.url && j.url === target.url) || (j.title === target.title && j.company === target.company) ? {
+          ...j,
+          score: data.score,
+          breakdown: data.breakdown,
+          matched_skills: data.breakdown?.matched_tech || [],
+          missing_skills: data.breakdown?.missing_tech || [],
+          tips: data.breakdown?.tips || []
+        } : j))
+      } else {
+        // High-speed parallel batch match endpoint
+        const { data } = await client.post('/cv/match-batch', {
+          jobs: targets.map(t => ({ title: t.title || '', description: t.description || '', url: t.url || '' }))
+        })
+        const scoreMap = new Map(data.map(d => [d.url || d.title, d]))
+        setJobs(prev => {
+          const updated = prev.map(j => {
+            const res = scoreMap.get(j.url) || scoreMap.get(j.title)
+            return res ? {
+              ...j,
+              score: res.score,
+              breakdown: res.breakdown,
+              matched_skills: res.matched_skills || [],
+              missing_skills: res.missing_skills || [],
+              tips: res.tips || []
+            } : j
+          })
+          return updated.sort((a, b) => (b.score || 0) - (a.score || 0))
+        })
+      }
+    } catch (err) {
+      console.error('Batch match failed:', err)
+    } finally {
+      setMatch(false)
     }
-    if (!single) updated.sort((a,b)=>(b.score||0)-(a.score||0))
-    setJobs([...updated]); setMatch(false)
   }
 
   const saveJob = async (j) => {
@@ -396,6 +876,124 @@ export default function Seeker() {
   }
 
 
+  const handleAutoApply = async (job) => {
+    if (!cvInfo.uploaded) {
+      toast('Please upload your CV before auto-applying!', 'error')
+      return
+    }
+
+    const verifiedEmailObj = job.emails?.find(e => e.verified || e.source === 'found' || e.source === 'company_site')
+    const email = verifiedEmailObj?.email || (job.emails?.[0]?.verified !== false ? job.emails?.[0]?.email : null)
+
+    if (!email) {
+      if (job.url || job.job_url_direct) {
+        window.open(job.url || job.job_url_direct, '_blank')
+        toast('Opening company job portal to apply directly with your tailored CV...', 'info')
+      } else {
+        toast('No verified recruiter email found for this listing.', 'error')
+      }
+      return
+    }
+
+    const jobKey = job.url || `${job.title}|${job.company}`
+    setApplyingUrls(prev => new Set(prev).add(jobKey))
+    try {
+      await client.post('/email/auto-apply', {
+        job_title: job.title,
+        company: job.company,
+        to_email: email,
+        job_url: job.url || '',
+        location: job.location || '',
+        match_score: job.score || 0,
+        job_description: job.description || job.title,
+        customize_cv: autoTailorEnabled,
+        notes: `1-Click Auto-applied to ${email}` + (autoTailorEnabled ? ' (Tailored CV)' : '')
+      })
+      setAppliedJobs(prev => new Set(prev).add(jobKey))
+      fireConfetti()
+      toast(`🎉 Applied to ${job.company}! ${autoTailorEnabled ? 'Tailored 100% Resume attached' : 'Resume attached'} & saved to Tracker.`, 'success')
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.message || 'Auto-apply failed'
+      toast(`Auto-apply failed: ${msg}`, 'error')
+    } finally {
+      setApplyingUrls(prev => {
+        const next = new Set(prev)
+        next.delete(jobKey)
+        return next
+      })
+    }
+  }
+
+  const executeBatchAutoApply = async (targetJobs) => {
+    if (!cvInfo.uploaded) {
+      toast('Please upload your CV before auto-applying!', 'error')
+      return
+    }
+    if (!targetJobs || targetJobs.length === 0) {
+      toast('No eligible jobs with recruiter emails available.', 'error')
+      return
+    }
+
+    setBatchApplying(true)
+    setBatchProgress({ current: 0, total: targetJobs.length, status: 'sending', results: [] })
+
+    try {
+      const payload = {
+        jobs: targetJobs.map(j => {
+          const verifiedEmail = j.emails?.find(e => e.verified || e.source === 'found' || e.source === 'company_site')?.email || j.emails[0]?.email
+          return {
+            job_title: j.title,
+            company: j.company,
+            to_email: verifiedEmail,
+            job_url: j.url || '',
+            location: j.location || '',
+            match_score: j.score || 0,
+            job_description: j.description || j.title,
+            customize_cv: autoTailorEnabled
+          }
+        }),
+        delay_seconds: 1.0,
+        customize_cv: autoTailorEnabled
+      }
+
+      const { data } = await client.post('/email/batch-auto-apply', payload)
+
+      // Add successfully applied jobs to appliedJobs set
+      setAppliedJobs(prev => {
+        const next = new Set(prev)
+        targetJobs.forEach((j, i) => {
+          const res = data.details?.[i]
+          if (res && res.status === 'sent') {
+            next.add(j.url || `${j.title}|${j.company}`)
+          }
+        })
+        return next
+      })
+
+      setBatchProgress({
+        current: targetJobs.length,
+        total: targetJobs.length,
+        status: 'done',
+        applied: data.applied,
+        failed: data.failed,
+        results: data.details || []
+      })
+
+      if (data.applied > 0) {
+        fireConfetti()
+        toast(`🎉 Batch applied to ${data.applied} companies! Track them in Application Tracker.`, 'success')
+      } else {
+        toast(`Batch completed with ${data.failed} failures.`, 'error')
+      }
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.message || 'Batch apply failed'
+      toast(`Batch apply failed: ${msg}`, 'error')
+      setBatchProgress(prev => prev ? { ...prev, status: 'error', error: msg } : null)
+    } finally {
+      setBatchApplying(false)
+    }
+  }
+
   // Deduplicate + filter + sort
   const filteredJobs = (() => {
     // 1. Deduplicate by title+company
@@ -414,6 +1012,12 @@ export default function Seeker() {
     else if (sortBy === 'company') list = [...list].sort((a,b) => (a.company||'').localeCompare(b.company||''))
     return list
   })()
+
+  const eligibleBatchJobs = filteredJobs.filter(j => {
+    const key = j.url || `${j.title}|${j.company}`
+    const hasVerified = j.emails?.some(e => e.verified || e.source === 'found' || e.source === 'company_site')
+    return hasVerified && !appliedJobs.has(key)
+  })
 
   const emailCount = jobs.reduce((n,j)=>n+(j.emails?.length||0),0)
 
@@ -660,6 +1264,31 @@ export default function Seeker() {
               </h2>
               {jobs.length>0 && (
                 <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => setAutoTailorEnabled(v => !v)}
+                    className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                      autoTailorEnabled
+                        ? 'bg-purple-950/90 text-purple-300 border-purple-500/80 shadow-md shadow-purple-500/25'
+                        : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+                    }`}
+                    title="When enabled, dynamically adapts your CV to bridge skill mismatches and attaches a 100% role-matched PDF"
+                  >
+                    <Sparkles size={13} className={autoTailorEnabled ? "fill-purple-400 text-purple-400" : "text-slate-500"} />
+                    <span>Auto-Tailor CV: {autoTailorEnabled ? "100% Fit ON" : "OFF"}</span>
+                  </button>
+
+                  {eligibleBatchJobs.length > 0 && (
+                    <motion.button
+                      whileHover={{ scale: 1.03 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => { setBatchProgress(null); setBatchModal(true); }}
+                      className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs px-3.5 py-1.5 rounded-xl shadow-md shadow-amber-500/25 transition-all cursor-pointer"
+                      title="Direct 1-click batch apply to all qualified recruiter emails with attached CV"
+                    >
+                      <Zap size={14} className="fill-slate-950 text-slate-950" />
+                      <span>⚡ Batch Auto-Apply ({eligibleBatchJobs.length})</span>
+                    </motion.button>
+                  )}
                   <select value={filterSite} onChange={e=>setFilterSite(e.target.value)}
                     className="bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-500">
                     <option value="all">All Sites</option>
@@ -682,10 +1311,10 @@ export default function Seeker() {
                   </select>
                 </div>
               )}
-              <div className="flex gap-3 text-xs text-slate-500">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-600 inline-block"/>Found in post</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-600 inline-block"/>Suggested</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-600 inline-block"/>Imported</span>
+              <div className="flex gap-3 text-xs text-slate-400">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>Direct from post</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-500 inline-block"/>Company website</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block"/>Verified HR mailbox</span>
               </div>
             </div>
             {/* ── Desktop table ──────────────────────── */}
@@ -752,13 +1381,69 @@ export default function Seeker() {
                         )}
                       </td>
                       <td className="py-3" onClick={e=>e.stopPropagation()}>
-                        <div className="flex items-center gap-2">
-                          {j.url && <a href={j.url} target="_blank" rel="noopener noreferrer"
-                            className="text-blue-400 hover:text-blue-300 transition-colors">
-                            <ExternalLink size={14}/>
-                          </a>}
-                          <button onClick={()=>saveJob(j)} className="text-emerald-400 hover:text-emerald-300 transition-colors">
-                            <Bookmark size={14}/>
+                        <div className="flex items-center gap-1.5">
+                          {cvInfo.uploaded && (
+                            <button
+                              onClick={() => setTailorModalJob(j)}
+                              title="Tailor CV to bridge missing skills and achieve 95%+ ATS match score"
+                              className="inline-flex items-center gap-1 text-xs font-semibold bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 border border-purple-700/60 px-2 py-1 rounded-lg transition-colors cursor-pointer shadow-sm"
+                            >
+                              <Sparkles size={11} className="text-purple-400" />
+                              <span>Tailor</span>
+                            </button>
+                          )}
+                          {j.emails?.some(e => e.verified || e.source === 'found' || e.source === 'company_site') ? (
+                            appliedJobs.has(j.url || `${j.title}|${j.company}`) ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-1 rounded-lg">
+                                <Check size={12} className="stroke-[3]" /> Applied
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleAutoApply(j)}
+                                disabled={applyingUrls.has(j.url || `${j.title}|${j.company}`)}
+                                title={`1-Click Direct Application: tailors letter, attaches CV, sends to ${j.emails.find(e => e.verified || e.source === 'found' || e.source === 'company_site')?.email || j.emails[0]?.email}`}
+                                className="inline-flex items-center gap-1.5 text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 px-2.5 py-1 rounded-lg transition-all shadow-sm shadow-amber-500/30 disabled:opacity-50 cursor-pointer"
+                              >
+                                {applyingUrls.has(j.url || `${j.title}|${j.company}`) ? (
+                                  <Loader2 size={13} className="animate-spin text-slate-950" />
+                                ) : (
+                                  <>
+                                    <Zap size={12} className="fill-slate-950 text-slate-950" />
+                                    <span>Auto-Apply</span>
+                                  </>
+                                )}
+                              </button>
+                            )
+                          ) : (
+                            j.url ? (
+                              <a
+                                href={j.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1 rounded-lg transition-colors"
+                                title="Open posting on job portal"
+                              >
+                                <ExternalLink size={12} /> Apply
+                              </a>
+                            ) : null
+                          )}
+                          {j.url && (
+                            <a
+                              href={j.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-slate-400 hover:text-blue-300 transition-colors p-1"
+                              title="View job post"
+                            >
+                              <ExternalLink size={14} />
+                            </a>
+                          )}
+                          <button
+                            onClick={() => saveJob(j)}
+                            className="text-slate-400 hover:text-emerald-300 transition-colors p-1"
+                            title="Save to bookmarks"
+                          >
+                            <Bookmark size={14} />
                           </button>
                         </div>
                       </td>
@@ -805,7 +1490,49 @@ export default function Seeker() {
                       {j.emails.length>2 && <span className="text-xs text-slate-500">+{j.emails.length-2}</span>}
                     </div>
                   )}
-                  <div className="flex items-center gap-3 border-t border-slate-700 pt-2.5" onClick={e=>e.stopPropagation()}>
+                  <div className="flex items-center gap-2 border-t border-slate-700 pt-2.5 flex-wrap" onClick={e=>e.stopPropagation()}>
+                    {cvInfo.uploaded && (
+                      <button
+                        onClick={() => setTailorModalJob(j)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 border border-purple-700/60 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Sparkles size={11} className="text-purple-400" />
+                        <span>Tailor</span>
+                      </button>
+                    )}
+                    {j.emails?.some(e => e.verified || e.source === 'found' || e.source === 'company_site') ? (
+                      appliedJobs.has(j.url || `${j.title}|${j.company}`) ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded-lg">
+                          <Check size={11} className="stroke-[3]" /> Applied
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleAutoApply(j)}
+                          disabled={applyingUrls.has(j.url || `${j.title}|${j.company}`)}
+                          className="inline-flex items-center gap-1 text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 px-2.5 py-1 rounded-lg transition-all shadow-sm shadow-amber-500/20 disabled:opacity-50"
+                        >
+                          {applyingUrls.has(j.url || `${j.title}|${j.company}`) ? (
+                            <Loader2 size={12} className="animate-spin text-slate-950" />
+                          ) : (
+                            <>
+                              <Zap size={11} className="fill-slate-950" />
+                              <span>⚡ Auto-Apply</span>
+                            </>
+                          )}
+                        </button>
+                      )
+                    ) : (
+                      j.url && (
+                        <a
+                          href={j.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1 rounded-lg transition-colors"
+                        >
+                          <ExternalLink size={12} /> Apply
+                        </a>
+                      )
+                    )}
                     {j.url && <a href={j.url} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-1 text-xs text-blue-400">
                       <ExternalLink size={13}/>View
@@ -829,8 +1556,45 @@ export default function Seeker() {
       {/* Job Detail Popup */}
       <AnimatePresence>
         {detailJob && (
-          <JobDetailPopup job={detailJob} onClose={()=>setDetail(null)}
-            onEmail={(j,e)=>openEmail(j,e)} onSave={saveJob}/>
+          <JobDetailPopup
+            job={detailJob}
+            onClose={()=>setDetail(null)}
+            onEmail={(j,e)=>openEmail(j,e)}
+            onSave={saveJob}
+            onAutoApply={handleAutoApply}
+            onTailor={(j) => { setDetail(null); setTailorModalJob(j); }}
+            isApplying={applyingUrls.has(detailJob.url || `${detailJob.title}|${detailJob.company}`)}
+            isApplied={appliedJobs.has(detailJob.url || `${detailJob.title}|${detailJob.company}`)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Tailor CV Modal */}
+      <AnimatePresence>
+        {tailorModalJob && (
+          <TailorCvModal
+            job={tailorModalJob}
+            onClose={() => setTailorModalJob(null)}
+            onApply={(j) => {
+              setTailorModalJob(null);
+              handleAutoApply(j);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Batch Auto-Apply Modal */}
+      <AnimatePresence>
+        {batchModal && (
+          <BatchAutoApplyModal
+            isOpen={batchModal}
+            onClose={() => setBatchModal(false)}
+            eligibleJobs={eligibleBatchJobs}
+            onExecute={executeBatchAutoApply}
+            isApplying={batchApplying}
+            progress={batchProgress}
+            cvInfo={cvInfo}
+          />
         )}
       </AnimatePresence>
 

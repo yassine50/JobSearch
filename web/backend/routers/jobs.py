@@ -87,6 +87,7 @@ class SaveJobRequest(BaseModel):
 
 @router.post("/search")
 def search_jobs(req: SearchRequest,
+                db: Session = Depends(get_db),
                 current_user: models.User = Depends(get_current_user)):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from jobspy import scrape_jobs
@@ -117,6 +118,7 @@ def search_jobs(req: SearchRequest,
                 hours_old=hours_filter,
                 country_indeed=country_name,
                 is_remote=req.is_remote,
+                linkedin_fetch_description=False,
             )
             if df_c is not None and not df_c.empty:
                 df_c["_search_country"] = country_name
@@ -145,7 +147,7 @@ def search_jobs(req: SearchRequest,
         df = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
         df = df.fillna("")
 
-        jobs = []
+        raw_jobs = []
         seen_keys = set()   # dedup by title+company
 
         for _, row in df.iterrows():
@@ -167,30 +169,69 @@ def search_jobs(req: SearchRequest,
             if row.get("max_amount"):
                 salary += f"–${int(float(row['max_amount'])):,}"
 
-            extracted = _extract_emails_from_text(desc)
+            initial_emails = []
             if row.get("emails"):
                 for e in str(row["emails"]).replace(";", ",").split(","):
-                    c = _clean_email(e.strip())
-                    if c and c not in extracted:
-                        extracted.append(c)
+                    c = e.strip().lower()
+                    if c and "@" in c:
+                        initial_emails.append({"email": c, "source": "found"})
 
-            domain   = _domain_from_url(job_url)
-            inferred = _infer_hr_emails(domain)
-
-            jobs.append({
+            raw_jobs.append({
                 "title": title,
                 "company": company,
                 "location": str(row.get("location", "")),
                 "url": job_url,
-                "description": desc[:800],
+                "job_url_direct": str(row.get("job_url_direct", "")),
+                "company_url_direct": str(row.get("company_url_direct", "")),
+                "company_url": str(row.get("company_url", "")),
+                "description": desc,
                 "site": str(row.get("site", "")),
                 "date_posted": str(row.get("date_posted", "")),
                 "salary": salary,
-                "emails": _best_emails(extracted, inferred),
-                "company_domain": domain,
+                "emails": initial_emails,
+                "company_domain": "",
                 "imported": False,
                 "country": str(row.get("_search_country", "")),
+                "score": None,
+                "matched_skills": [],
+                "missing_skills": [],
             })
+
+        # Multi-Layer Recruiter Email Discovery Engine
+        from recruiter_hunter import batch_enrich_jobs
+        jobs = batch_enrich_jobs(raw_jobs, max_workers=12)
+
+        # Automatic High-Accuracy AI Matching if user has a CV
+        cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+        if cv_rec and cv_rec.text_content and jobs:
+            try:
+                from cv_matcher import compute_match
+                cv_text = cv_rec.text_content
+
+                def score_one_job(j):
+                    try:
+                        s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
+                        j["score"] = s
+                        j["breakdown"] = bd
+                        j["matched_skills"] = bd.get("matched_tech", [])
+                        j["missing_skills"] = bd.get("missing_tech", [])
+                        j["tips"] = bd.get("tips", [])
+                    except Exception as match_e:
+                        print(f"Match error on '{j.get('title')}': {match_e}")
+                    return j
+
+                with ThreadPoolExecutor(max_workers=8) as matcher_executor:
+                    jobs = list(matcher_executor.map(score_one_job, jobs))
+
+                # Auto-sort so highest matching jobs appear first
+                jobs.sort(key=lambda x: (x.get("score") is not None, x.get("score") or 0), reverse=True)
+            except Exception as auto_err:
+                print(f"[Matching] Auto-match exception: {auto_err}")
+
+        # Truncate descriptions before sending over wire to keep payload light
+        for j in jobs:
+            if len(j.get("description", "")) > 800:
+                j["description"] = j["description"][:800]
 
         return {"jobs": jobs, "total": len(jobs)}
     except Exception as e:
@@ -199,6 +240,7 @@ def search_jobs(req: SearchRequest,
 
 @router.post("/import-url")
 def import_from_url(req: ImportUrlRequest,
+                    db: Session = Depends(get_db),
                     current_user: models.User = Depends(get_current_user)):
     """Scrape any job posting URL and extract emails + basic info."""
     try:
@@ -245,23 +287,32 @@ def import_from_url(req: ImportUrlRequest,
             tag = soup.find("meta", {attr[0]:attr[1]})
             if tag and tag.get("content"): company = tag["content"]; break
 
-        domain   = _domain_from_url(req.url)
-        extracted = _extract_emails_from_text(text)
-        inferred  = _infer_hr_emails(domain)
-
-        return {
+        from recruiter_hunter import enrich_job_emails
+        job_data = {
             "title":    title[:120] or "Imported Job",
             "company":  company[:80] or domain,
             "location": "",
             "url":      req.url,
-            "description": text[:800],
+            "job_url_direct": req.url,
+            "description": text,
             "site":     "custom",
             "date_posted": "",
             "salary":   "",
-            "emails":   _best_emails(extracted, inferred),
+            "emails":   [],
             "company_domain": domain,
             "imported": True,
+            "score": score,
+            "breakdown": breakdown,
+            "matched_skills": matched_skills,
+            "missing_skills": missing_skills,
+            "tips": tips,
         }
+        job_data["emails"] = enrich_job_emails(job_data)
+        if not job_data.get("company_domain") and job_data["emails"]:
+            job_data["company_domain"] = job_data["emails"][0]["email"].split("@")[-1]
+
+        job_data["description"] = text[:800]
+        return job_data
     except Exception as e:
         raise HTTPException(400, f"Could not import URL: {str(e)}")
 
