@@ -5,7 +5,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import PageWrapper from '../components/PageWrapper.jsx'
 import client from '../api/client.js'
-import { Settings as SettingsIcon, Mail, User, Lock, Trash2, Plus, Eye, EyeOff, Save, Send } from 'lucide-react'
+import { Settings as SettingsIcon, Mail, User, Lock, Trash2, Plus, Eye, EyeOff, Save, Send, ShieldAlert, RefreshCw, Search, Loader2 } from 'lucide-react'
 
 function Section({ title, icon: Icon, children }) {
   return (
@@ -41,11 +41,28 @@ export default function Settings() {
   const [addingTpl, setAddingTpl] = useState(false)
   const [tplSaving, setTplSaving] = useState(false)
 
+  // Blacklist & Bounces
+  const [blacklist, setBlacklist] = useState([])
+  const [blSearch, setBlSearch]   = useState('')
+  const [blLoading, setBlLoading] = useState(false)
+  const [syncingBounces, setSyncingBounces] = useState(false)
+  const [newBlEmail, setNewBlEmail] = useState('')
+  const [newBlReason, setNewBlReason] = useState('Manual entry')
+
+  const loadBlacklist = () => {
+    setBlLoading(true)
+    client.get('/email/blacklist')
+      .then(r => setBlacklist(r.data))
+      .catch(()=>{})
+      .finally(() => setBlLoading(false))
+  }
+
   useEffect(() => {
     client.get('/email/settings').then(r => {
       if (r.data.configured) setSmtp(s => ({ ...s, ...r.data }))
     }).catch(()=>{})
     client.get('/email/custom-templates').then(r => setTemplates(r.data)).catch(()=>{})
+    loadBlacklist()
   }, [])
 
   const saveSmtp = async () => {
@@ -102,6 +119,42 @@ export default function Settings() {
       setTemplates(t => t.filter(x => x.id !== id))
       toast('Template deleted','info')
     } catch { toast('Delete failed','error') }
+  }
+
+  const handleSyncBounces = async () => {
+    setSyncingBounces(true)
+    try {
+      const { data } = await client.post('/email/sync-bounces', { delete_from_gmail: true })
+      const sentMsg = data.deleted_from_sent > 0 ? `, purged ${data.deleted_from_sent} dead emails from Sent box` : ''
+      toast(`✅ Scanned ${data.scanned_messages} messages: Blacklisted ${data.blacklisted_added} dead emails${sentMsg}, purged ${data.tracker_purged} dead applications from Tracker!`, 'success')
+      loadBlacklist()
+    } catch(e) {
+      toast(e.response?.data?.detail || 'Sync failed', 'error')
+    } finally {
+      setSyncingBounces(false)
+    }
+  }
+
+  const handleAddBlacklist = async () => {
+    if (!newBlEmail.trim() || !newBlEmail.includes('@')) return toast('Enter a valid email', 'error')
+    try {
+      await client.post('/email/blacklist', { email: newBlEmail.trim(), reason: newBlReason })
+      toast('Email added to blacklist', 'success')
+      setNewBlEmail('')
+      loadBlacklist()
+    } catch(e) {
+      toast(e.response?.data?.detail || 'Failed to add', 'error')
+    }
+  }
+
+  const handleRemoveBlacklist = async (id) => {
+    try {
+      await client.delete(`/email/blacklist/${id}`)
+      setBlacklist(prev => prev.filter(b => b.id !== id))
+      toast('Email unblocked and removed from blacklist', 'info')
+    } catch {
+      toast('Failed to unblock', 'error')
+    }
   }
 
   return (
@@ -268,6 +321,107 @@ export default function Settings() {
               <Plus size={15}/> New Template
             </motion.button>
           )}
+        </Section>
+
+        {/* Blacklisted & Bounced Emails */}
+        <Section title="Blacklisted & Bounced Emails" icon={ShieldAlert}>
+          <div className="space-y-4">
+            <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-3.5 text-xs text-amber-300/90 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold text-amber-200 mb-0.5">🌐 Platform-Wide Global Protection & Zero Bounces</p>
+                Emails flagged with <strong>"Message bloqué"</strong> or <strong>"Adresse introuvable"</strong> are permanently blacklisted for <strong>all users</strong> across the platform. The hunter and auto-apply engines will never suggest or contact these dead addresses.
+              </div>
+              <button
+                onClick={handleSyncBounces}
+                disabled={syncingBounces}
+                className="shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition cursor-pointer"
+              >
+                {syncingBounces ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                <span>{syncingBounces ? 'Scanning...' : 'Sync Bounces'}</span>
+              </button>
+            </div>
+
+            {/* Manual Add Input */}
+            <div className="flex gap-2">
+              <input
+                value={newBlEmail}
+                onChange={e => setNewBlEmail(e.target.value)}
+                placeholder="Block an invalid email globally (e.g. dead@company.com)"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder-slate-600"
+              />
+              <input
+                value={newBlReason}
+                onChange={e => setNewBlReason(e.target.value)}
+                placeholder="Reason (optional)"
+                className="w-36 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder-slate-600"
+              />
+              <button
+                onClick={handleAddBlacklist}
+                className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer"
+              >
+                Block Globally
+              </button>
+            </div>
+
+            {/* Search filter */}
+            <div className="flex items-center justify-between gap-3 pt-2">
+              <div className="relative flex-1">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  value={blSearch}
+                  onChange={e => setBlSearch(e.target.value)}
+                  placeholder="Filter blacklisted emails..."
+                  className="w-full bg-slate-900/80 border border-slate-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <span className="text-xs text-slate-400 font-medium shrink-0">
+                {blacklist.length} dead email(s) blocked globally
+              </span>
+            </div>
+
+            {/* Blacklist Table */}
+            <div className="max-h-60 overflow-y-auto border border-slate-700/80 rounded-xl bg-slate-900/60 divide-y divide-slate-800">
+              {blacklist.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-6">No blacklisted emails found. Click "Sync Bounces" to scan your Gmail inbox.</p>
+              ) : (
+                blacklist
+                  .filter(b => !blSearch || b.email.toLowerCase().includes(blSearch.toLowerCase()) || (b.reason || '').toLowerCase().includes(blSearch.toLowerCase()))
+                  .map(b => (
+                    <div key={b.id} className="flex items-center justify-between px-3.5 py-2 hover:bg-slate-800/40 transition text-xs">
+                      <div className="min-w-0 flex-1 mr-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-slate-200">{b.email}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${
+                            b.is_mine ? 'bg-purple-950/80 text-purple-300 border border-purple-800/50' : 'bg-blue-950/80 text-blue-300 border border-blue-800/50'
+                          }`}>
+                            {b.is_mine ? '👤 You' : '🌐 Global'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${
+                            b.reason?.includes('bloqué') ? 'bg-red-950 text-red-300 border border-red-800/60' :
+                            b.reason?.includes('introuvable') ? 'bg-amber-950 text-amber-300 border border-amber-800/60' :
+                            'bg-slate-800 text-slate-400 border border-slate-700'
+                          }`}>
+                            {b.reason}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {b.created_at?.split(' ')[0] || ''}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveBlacklist(b.id)}
+                        className="text-slate-500 hover:text-red-400 transition p-1 cursor-pointer"
+                        title="Unblock this email"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
         </Section>
 
       </main>

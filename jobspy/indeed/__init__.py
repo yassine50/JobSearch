@@ -57,7 +57,7 @@ class Indeed(Scraper):
         domain, self.api_country_code = self.scraper_input.country.indeed_domain_value
         self.base_url = f"https://{domain}.indeed.com"
         self.headers = api_headers.copy()
-        self.headers["indeed-co"] = self.scraper_input.country.indeed_domain_value
+        self.headers["indeed-co"] = self.api_country_code
         job_list = []
         page = 1
 

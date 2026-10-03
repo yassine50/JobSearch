@@ -135,8 +135,8 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <StatCard delay={0}    icon="📋" value={totalApps}        label="Applications"   color="blue"    onClick={()=>navigate('/tracker')}/>
           <StatCard delay={0.07} icon="📈" value={`${responseRate}%`} label="Response Rate" color="emerald" sub={`${stats?.interviews||0} interviews`}/>
-          <StatCard delay={0.14} icon="✉️"  value={emailsSent}       label="Emails Sent"    color="purple"  onClick={()=>navigate('/email')}/>
-          <StatCard delay={0.21} icon="🗓️"  value={thisWeek}        label="This Week"       color="slate"   sub="new applications"/>
+          <StatCard delay={0.14} icon="✉️"  value={emailsSent}       label="Emails Sent"    color="purple"  onClick={()=>navigate('/email')} sub="Daily Calendar →"/>
+          <StatCard delay={0.21} icon="🗓️"  value={thisWeek}        label="This Week"       color="slate"   onClick={()=>navigate('/email')} sub="View calendar →"/>
         </div>
 
         {/* Pipeline + Activity */}

@@ -130,7 +130,7 @@ class Country(Enum):
     THAILAND = ("thailand", "th")
     TURKEY = ("türkiye,turkey", "tr")
     UKRAINE = ("ukraine", "ua")
-    UNITEDARABEMIRATES = ("united arab emirates", "ae")
+    UNITEDARABEMIRATES = ("united arab emirates,uae", "ae")
     UK = ("uk,united kingdom", "uk:gb", "co.uk")
     USA = ("usa,us,united states", "www:us", "com")
     URUGUAY = ("uruguay", "uy")
@@ -166,16 +166,55 @@ class Country(Enum):
 
     @classmethod
     def from_string(cls, country_str: str):
-        """Convert a string to the corresponding Country enum."""
-        country_str = country_str.strip().lower()
+        """Convert a string to the corresponding Country enum safely."""
+        if not country_str:
+            return cls.USA
+        country_str = str(country_str).strip().lower()
+
+        # 1. Direct match in country name aliases
         for country in cls:
-            country_names = country.value[0].split(",")
+            country_names = [n.strip() for n in country.value[0].split(",")]
             if country_str in country_names:
                 return country
-        valid_countries = [country.value for country in cls]
-        raise ValueError(
-            f"Invalid country string: '{country_str}'. Valid countries are: {', '.join([country[0] for country in valid_countries])}"
-        )
+
+        # 2. Match by 2-letter ISO country code or domain code
+        for country in cls:
+            domain_code = country.value[1].split(":")[0].strip().lower()
+            if country_str == domain_code:
+                return country
+
+        # 3. Known special abbreviations / aliases
+        alias_map = {
+            "uae": cls.UNITEDARABEMIRATES,
+            "dubai": cls.UNITEDARABEMIRATES,
+            "abu dhabi": cls.UNITEDARABEMIRATES,
+            "uk": cls.UK,
+            "gb": cls.UK,
+            "great britain": cls.UK,
+            "england": cls.UK,
+            "us": cls.USA,
+            "usa": cls.USA,
+            "united states": cls.USA,
+            "america": cls.USA,
+            "morocco": cls.MOROCCO,
+            "maroc": cls.MOROCCO,
+            "sg": cls.SINGAPORE,
+            "worldwide": cls.WORLDWIDE,
+            "global": cls.WORLDWIDE,
+            "remote": cls.USA,
+        }
+        if country_str in alias_map:
+            return alias_map[country_str]
+
+        # 4. Substring matching
+        for country in cls:
+            for n in country.value[0].split(","):
+                n = n.strip()
+                if n and (n in country_str or country_str in n):
+                    return country
+
+        # 5. Default fallback to USA instead of crashing
+        return cls.USA
 
 
 class Location(BaseModel):
@@ -254,6 +293,8 @@ class JobPost(BaseModel):
     emails: list[str] | None = None
     is_remote: bool | None = None
     listing_type: str | None = None
+    easy_apply: bool | None = None
+    is_direct_apply: bool | None = None
 
     # LinkedIn specific
     job_level: str | None = None

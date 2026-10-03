@@ -11,12 +11,14 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(String, default="seeker")
+    linkedin_cookie = Column(String, default="", nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     saved_jobs     = relationship("SavedJob",      back_populates="user")
     cv_uploads     = relationship("CvUpload",      back_populates="user")
     email_logs     = relationship("EmailLog",      back_populates="user")
     applications   = relationship("Application",   back_populates="user")
     email_settings = relationship("EmailSettings", back_populates="user", uselist=False)
+    blacklisted_emails = relationship("EmailBlacklist", back_populates="user")
 
 class SavedJob(Base):
     __tablename__ = "saved_jobs"
@@ -84,3 +86,14 @@ class CustomTemplate(Base):
     subject = Column(String, default='')
     body = Column(Text, default='')
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class EmailBlacklist(Base):
+    __tablename__ = "email_blacklist"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    email = Column(String, index=True, nullable=False)
+    reason = Column(String, default="Bounced")
+    source = Column(String, default="gmail_bounce")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    user = relationship("User", back_populates="blacklisted_emails")
+

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse, urlunparse, unquote
 
@@ -215,12 +215,26 @@ class LinkedIn(Scraper):
                 "time", class_="job-search-card__listdate--new"
             )
         date_posted = None
-        if datetime_tag and "datetime" in datetime_tag.attrs:
-            datetime_str = datetime_tag["datetime"]
-            try:
-                date_posted = datetime.strptime(datetime_str, "%Y-%m-%d")
-            except:
-                date_posted = None
+        if datetime_tag:
+            if "datetime" in datetime_tag.attrs:
+                datetime_str = datetime_tag["datetime"]
+                try:
+                    date_posted = datetime.strptime(datetime_str, "%Y-%m-%d")
+                except:
+                    date_posted = None
+            if not date_posted:
+                tag_text = datetime_tag.get_text(strip=True).lower()
+                now_dt = datetime.now()
+                if "hour" in tag_text or re.search(r"\b\d+\s*h\b", tag_text):
+                    m_h = re.search(r"(\d+)", tag_text)
+                    hrs = int(m_h.group(1)) if m_h else 1
+                    date_posted = now_dt - timedelta(hours=hrs)
+                elif "day" in tag_text or re.search(r"\b\d+\s*d\b", tag_text):
+                    m_d = re.search(r"(\d+)", tag_text)
+                    days = int(m_d.group(1)) if m_d else 1
+                    date_posted = now_dt - timedelta(days=days)
+                elif any(w in tag_text for w in ["minute", "min", "just now", "moment"]):
+                    date_posted = now_dt
         job_details = {}
         if full_descr:
             job_details = self._get_job_details(job_id)
@@ -243,8 +257,23 @@ class LinkedIn(Scraper):
             description=job_details.get("description"),
             job_url_direct=job_details.get("job_url_direct"),
             emails=extract_emails_from_text(description),
-            company_logo=job_details.get("company_logo"),
             job_function=job_details.get("job_function"),
+            easy_apply=bool(
+                self.scraper_input.easy_apply or
+                (
+                    job_card.find(class_=lambda x: x and "easy-apply" in str(x).lower()) is not None or
+                    "candidature simplifiée" in job_card.get_text().lower() or
+                    "easy apply" in job_card.get_text().lower()
+                )
+            ),
+            is_direct_apply=bool(
+                self.scraper_input.easy_apply or
+                (
+                    job_card.find(class_=lambda x: x and "easy-apply" in str(x).lower()) is not None or
+                    "candidature simplifiée" in job_card.get_text().lower() or
+                    "easy apply" in job_card.get_text().lower()
+                )
+            ),
         )
 
     def _get_job_details(self, job_id: str) -> dict:
@@ -253,14 +282,19 @@ class LinkedIn(Scraper):
         :param job_page_url:
         :return: dict
         """
+        response = None
         try:
-            response = self.session.get(
-                f"{self.base_url}/jobs/view/{job_id}", timeout=5
-            )
+            # 1. First try the public guest API endpoint (fast & never redirects to /signup)
+            guest_url = f"{self.base_url}/jobs-guest/jobs/api/jobPosting/{job_id}"
+            response = self.session.get(guest_url, timeout=6)
+            if response.status_code != 200 or "linkedin.com/signup" in response.url:
+                response = self.session.get(
+                    f"{self.base_url}/jobs/view/{job_id}", timeout=6
+                )
             response.raise_for_status()
         except:
             return {}
-        if "linkedin.com/signup" in response.url:
+        if not response or "linkedin.com/signup" in response.url:
             return {}
 
         soup = BeautifulSoup(response.text, "html.parser")
