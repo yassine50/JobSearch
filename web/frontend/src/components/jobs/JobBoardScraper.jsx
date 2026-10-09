@@ -23,7 +23,7 @@ import { useToast } from '../../context/ToastContext.jsx'
 const CORE_SITES = [
   { id: 'linkedin', label: 'LinkedIn Jobs', color: 'bg-blue-600' },
   { id: 'indeed', label: 'Indeed', color: 'bg-indigo-600' },
-  { id: 'zip_recruiter', label: 'ZipRecruiter', color: 'bg-emerald-600' },
+  { id: 'job_bank', label: '🇨🇦 Job Bank Canada', color: 'bg-red-600' },
   { id: 'google', label: 'Google Jobs', color: 'bg-rose-600' },
 ]
 
@@ -53,6 +53,7 @@ const QUICK_ROLES = [
 export default function JobBoardScraper({
   jobs = [],
   loading,
+  searchMeta,
   onSearch,
   onSaveJob,
   onOpenDetail,
@@ -66,13 +67,14 @@ export default function JobBoardScraper({
   const [title, setTitle] = useState('')
   const [selectedCountries, setSelectedCountries] = useState(['Worldwide'])
   const [showLocationPicker, setShowLocationPicker] = useState(false)
-  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'zip_recruiter', 'google'])
+  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'job_bank'])
   const [resultsCount, setResultsCount] = useState(30)
   const [isRemote, setIsRemote] = useState(false)
   const [cvAnalyzing, setCvAnalyzing] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
 
   const [localJobs, setLocalJobs] = useState(jobs || [])
+  const [hasSerperKey, setHasSerperKey] = useState(false)
 
   // Auto-mark searched if jobs prop has items & sync local state
   useEffect(() => {
@@ -82,12 +84,30 @@ export default function JobBoardScraper({
     }
   }, [jobs])
 
+  useEffect(() => {
+    client.get('/jobs/scraper-config').then(r => {
+      if (r.data?.has_serper) setHasSerperKey(true)
+    }).catch(() => {})
+  }, [])
+
   const handleUpdateJob = (updatedJob) => {
     if (!updatedJob) return
     setLocalJobs(prev => prev.map(j => {
       const match = (updatedJob.id && j.id === updatedJob.id) || (updatedJob.url && j.url === updatedJob.url)
       return match ? { ...j, ...updatedJob } : j
     }))
+  }
+
+  // Helper to normalize job URLs without destroying Indeed job IDs (?jk=)
+  const getCleanJobUrl = (url) => {
+    if (!url) return ''
+    const u = String(url).trim().toLowerCase()
+    if (u.includes('indeed.com') || u.includes('viewjob')) {
+      const match = u.match(/[?&]jk=([a-zA-Z0-9]+)/)
+      if (match) return `indeed:${match[1]}`
+      return u.split('&')[0].replace(/\/+$/, '')
+    }
+    return u.split('?')[0].replace(/\/+$/, '')
   }
 
   // Handle immediate local removal and synchronization when job(s) applied
@@ -101,7 +121,7 @@ export default function JobBoardScraper({
     list.forEach(item => {
       const raw = item.raw || item
       const u = (raw.url || raw.job_url || raw.job_url_direct || raw.post_url || '').trim().toLowerCase()
-      const cleanU = u ? u.split('?')[0].replace(/\/+$/, '') : ''
+      const cleanU = getCleanJobUrl(u)
       const tc = `${(raw.title || raw.role_title || '').trim().toLowerCase()}|${(raw.company || '').trim().toLowerCase()}`
       if (u) appliedUrls.add(u)
       if (cleanU) appliedUrls.add(cleanU)
@@ -114,9 +134,9 @@ export default function JobBoardScraper({
 
     setLocalJobs(prev => prev.filter(j => {
       const jUrl = (j.url || j.job_url || j.job_url_direct || '').trim().toLowerCase()
-      const jCleanUrl = jUrl ? jUrl.split('?')[0].replace(/\/+$/, '') : ''
+      const jCleanUrl = getCleanJobUrl(jUrl)
       const jTc = `${(j.title || '').trim().toLowerCase()}|${(j.company || '').trim().toLowerCase()}`
-      if (jUrl && (appliedUrls.has(jUrl) || appliedUrls.has(jCleanUrl))) return false
+      if (jUrl && (appliedUrls.has(jUrl) || (jCleanUrl && appliedUrls.has(jCleanUrl)))) return false
       if (jTc !== '|' && appliedTcs.has(jTc)) return false
       return true
     }))
@@ -438,6 +458,17 @@ export default function JobBoardScraper({
         if (!hasEasy) return false
       }
 
+      // International candidates only (Job Bank Canada LMIA / foreign worker eligible)
+      if (filters.internationalOnly) {
+        const isIntl = job.is_international_eligible ||
+          job.site?.toLowerCase().includes('job_bank') ||
+          job.site?.toLowerCase().includes('jobbank') ||
+          desc.includes('international candidate') ||
+          desc.includes('without a valid canadian work permit') ||
+          desc.includes('who can apply')
+        if (!isIntl) return false
+      }
+
       // Sectors
       if (filters.sectors?.length > 0) {
         const matchesSector = filters.sectors.some(sec => {
@@ -479,7 +510,7 @@ export default function JobBoardScraper({
       if (filters.sortBy === 'recent') {
         return (a.age_hours ?? 999) - (b.age_hours ?? 999)
       }
-      return (b.score ?? 0) - (a.score ?? 0)
+      return (b.rank_score ?? b.score ?? 0) - (a.rank_score ?? a.score ?? 0)
     })
   }, [unappliedJobs, filters])
 
@@ -597,18 +628,25 @@ export default function JobBoardScraper({
               <span className="text-slate-400 font-medium">Boards:</span>
               {CORE_SITES.map(s => {
                 const active = selectedSites.includes(s.id)
+                const isGoogleUnconfigured = s.id === 'google' && !hasSerperKey
                 return (
                   <button
                     key={s.id}
                     type="button"
                     onClick={() => toggleSite(s.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border ${
+                    title={isGoogleUnconfigured ? 'Google Jobs uses Serper API (free 2,500 queries/mo). Add key in Settings.' : s.label}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border flex items-center gap-1.5 ${
                       active
                         ? 'bg-blue-600/20 text-blue-300 border-blue-500/60'
                         : 'bg-slate-800 text-slate-400 border-slate-750 hover:text-white'
                     }`}
                   >
-                    {s.label}
+                    <span>{s.label}</span>
+                    {isGoogleUnconfigured && (
+                      <span className="text-[10px] text-amber-400/90 bg-amber-950/60 border border-amber-800/40 px-1 py-0.2 rounded font-normal">
+                        Key in Settings
+                      </span>
+                    )}
                   </button>
                 )
               })}
@@ -714,6 +752,29 @@ export default function JobBoardScraper({
               }`}
             >
               <span>Easy Apply</span>
+            </button>
+
+            {/* Quick Filter: International Candidates (LMIA / Job Bank) */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !filters.internationalOnly
+                const next = { ...filters, internationalOnly: nextVal }
+                setFilters(next)
+                if (nextVal && !selectedSites.includes('job_bank')) {
+                  setSelectedSites(p => [...p, 'job_bank'])
+                }
+                handleTriggerSearchWithFilters(next)
+              }}
+              className={`px-3 py-1.5 rounded-xl font-medium border transition cursor-pointer flex items-center gap-1.5 ${
+                filters.internationalOnly
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-600 shadow-sm'
+                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+              }`}
+              title="Filter jobs open to international candidates (Job Bank Canada LMIA)"
+            >
+              <Globe size={12} className={filters.internationalOnly ? 'text-amber-400' : 'text-slate-500'} />
+              <span>International (LMIA)</span>
             </button>
 
             {/* Reset active filters */}
@@ -859,8 +920,34 @@ export default function JobBoardScraper({
             <div className="lg:col-span-5 space-y-2.5 max-h-[calc(100vh-140px)] overflow-y-auto pr-1 select-none">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-1 pb-1 flex items-center justify-between">
                 <span>Job Postings ({filteredJobs.length})</span>
-                <span className="text-slate-500 font-normal">Click to preview</span>
+                <span className="text-slate-500 font-normal">Ranked by fit &amp; quality</span>
               </div>
+
+              {searchMeta?.stats && (
+                <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-[10px]">
+                  {searchMeta.queries?.length > 1 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-slate-500 font-semibold mr-0.5">Searched as:</span>
+                      {searchMeta.queries.map(q => (
+                        <span key={q} className="px-1.5 py-0.5 rounded bg-blue-950/70 border border-blue-800/60 text-blue-300">{q}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 flex-wrap text-slate-400">
+                    <span>{searchMeta.stats.raw} scraped</span>
+                    <span className="text-slate-600">→</span>
+                    <span>{searchMeta.stats.after_dedup} unique</span>
+                    <span className="text-slate-600">→</span>
+                    <span className="text-emerald-400 font-semibold">{searchMeta.stats.after_relevance} relevant</span>
+                    {searchMeta.stats.spam_removed > 0 && (
+                      <span className="text-rose-400">· {searchMeta.stats.spam_removed} spam removed</span>
+                    )}
+                    {searchMeta.stats.timings?.total_s && (
+                      <span className="text-slate-500">· {searchMeta.stats.timings.total_s}s</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {filteredJobs.map((job, idx) => {
                 const jobId = job.id || job.url || idx
@@ -915,12 +1002,27 @@ export default function JobBoardScraper({
                       </span>
                       <span className="text-slate-500">·</span>
                       <span className={`px-1.5 py-0.2 rounded text-[10px] uppercase font-semibold border ${
-                        isLinkedIn
+                        (job.site || '').toLowerCase().includes('job_bank') || (job.site || '').toLowerCase().includes('jobbank')
+                          ? 'bg-rose-950/80 text-rose-300 border-rose-800/80'
+                          : isLinkedIn
                           ? 'bg-blue-950/80 text-blue-300 border-blue-800/80'
                           : 'bg-indigo-950/80 text-indigo-300 border-indigo-800/80'
                       }`}>
-                        {job.site}
+                        {(job.site || '').toLowerCase().includes('job_bank') || (job.site || '').toLowerCase().includes('jobbank') ? '🇨🇦 Job Bank' : job.site}
                       </span>
+                      {job.is_international_eligible && (
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-amber-950/80 text-amber-300 border-amber-800/80 flex items-center gap-0.5">
+                          <span>🌐</span> LMIA / Global
+                        </span>
+                      )}
+                      {(job.also_on?.length || 0) > 1 && (
+                        <span
+                          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-cyan-950/80 text-cyan-300 border-cyan-800/80"
+                          title={`Also listed on: ${job.also_on.join(', ')}`}
+                        >
+                          ✓ {job.also_on.length} boards
+                        </span>
+                      )}
                       {job.age_str && (
                         <>
                           <span className="text-slate-500">·</span>
@@ -936,11 +1038,32 @@ export default function JobBoardScraper({
                       )}
                     </div>
 
-                    {/* Recruiter Email Badge */}
+                    {/* Recruiter Email Badge with 1-Click Action */}
                     {primaryEmail && (
-                      <div className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/70 border border-emerald-800/70 px-2 py-0.5 rounded-md w-fit">
-                        <ShieldCheck size={11} className="text-emerald-400 shrink-0" />
-                        <span className="font-mono truncate max-w-[200px]">{primaryEmail}</span>
+                      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                        <div className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/70 border border-emerald-800/70 px-2 py-0.5 rounded-md w-fit">
+                          <ShieldCheck size={11} className="text-emerald-400 shrink-0" />
+                          <span className="font-mono truncate max-w-[190px]">{primaryEmail}</span>
+                        </div>
+                        {!applied && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setAutoApplyJob({
+                                ...job,
+                                author_name: 'Hiring Team',
+                                role_title: job.title,
+                                recruiter_emails: [{ email: primaryEmail, name: 'Hiring Team' }]
+                              })
+                            }}
+                            className="px-2 py-0.5 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs shrink-0"
+                            title="1-Click Auto Apply directly to recruiter"
+                          >
+                            <Send size={10} />
+                            <span>Auto-Apply</span>
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -1058,7 +1181,18 @@ export default function JobBoardScraper({
                           {job.location || 'Remote'}
                         </span>
                         <span className="text-slate-500">·</span>
-                        <span className="text-slate-400 capitalize bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">{job.site}</span>
+                        <span className={`capitalize px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                          (job.site || '').toLowerCase().includes('job_bank') || (job.site || '').toLowerCase().includes('jobbank')
+                            ? 'bg-rose-950/80 text-rose-300 border-rose-800/80'
+                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}>
+                          {(job.site || '').toLowerCase().includes('job_bank') || (job.site || '').toLowerCase().includes('jobbank') ? '🇨🇦 Job Bank' : job.site}
+                        </span>
+                        {job.is_international_eligible && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-amber-950/80 text-amber-300 border-amber-800/80 flex items-center gap-0.5">
+                            <span>🌐</span> LMIA / Global
+                          </span>
+                        )}
                         {job.age_str && (
                           <>
                             <span className="text-slate-500">·</span>

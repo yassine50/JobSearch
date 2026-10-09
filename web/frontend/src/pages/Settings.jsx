@@ -49,6 +49,10 @@ export default function Settings() {
   const [newBlEmail, setNewBlEmail] = useState('')
   const [newBlReason, setNewBlReason] = useState('Manual entry')
 
+  // Scraper API & Proxy Config
+  const [scraperConfig, setScraperConfig] = useState({ serper_api_key: '', scraper_proxy: '' })
+  const [scraperSaving, setScraperSaving] = useState(false)
+
   const loadBlacklist = () => {
     setBlLoading(true)
     client.get('/email/blacklist')
@@ -62,6 +66,9 @@ export default function Settings() {
       if (r.data.configured) setSmtp(s => ({ ...s, ...r.data }))
     }).catch(()=>{})
     client.get('/email/custom-templates').then(r => setTemplates(r.data)).catch(()=>{})
+    client.get('/jobs/scraper-config').then(r => {
+      if (r.data) setScraperConfig({ serper_api_key: r.data.serper_api_key || '', scraper_proxy: r.data.scraper_proxy || '' })
+    }).catch(()=>{})
     loadBlacklist()
   }, [])
 
@@ -154,6 +161,18 @@ export default function Settings() {
       toast('Email unblocked and removed from blacklist', 'info')
     } catch {
       toast('Failed to unblock', 'error')
+    }
+  }
+
+  const handleSaveScraperConfig = async () => {
+    setScraperSaving(true)
+    try {
+      await client.post('/jobs/scraper-config', scraperConfig)
+      toast('Scraper configuration saved successfully!', 'success')
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Failed to save scraper config', 'error')
+    } finally {
+      setScraperSaving(false)
     }
   }
 
@@ -420,6 +439,64 @@ export default function Settings() {
                     </div>
                   ))
               )}
+            </div>
+          </div>
+        </Section>
+
+        {/* Job Board APIs & Proxy */}
+        <Section title="Job Board APIs & Proxy (Google Jobs & Glassdoor)" icon={Search}>
+          <div className="space-y-4">
+            <div className="bg-slate-900/70 border border-slate-700/80 rounded-xl p-3.5 text-xs text-slate-300 leading-relaxed">
+              <p className="font-semibold text-white mb-1">⚡ Supercharge Google Jobs & Glassdoor</p>
+              Google Jobs blocks standard bots via client-side JavaScript (<code className="text-amber-300">enablejs</code>). Connect a free Serper API key to unlock live Google Jobs search results (2,500 free queries/month with zero credit card). Glassdoor is protected by Cloudflare Turnstile; you can optionally connect a residential/datacenter proxy to bypass it.
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-slate-300">Google Jobs Serper API Key</label>
+                  <a
+                    href="https://serper.dev"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] text-blue-400 hover:text-blue-300 underline font-medium"
+                  >
+                    Get 2,500 Free Searches at serper.dev ↗
+                  </a>
+                </div>
+                <input
+                  type="password"
+                  value={scraperConfig.serper_api_key}
+                  onChange={e => setScraperConfig(c => ({ ...c, serper_api_key: e.target.value }))}
+                  placeholder="e.g. 5a1b2c3d4e5f..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Rotating Proxy URL (Optional for Direct Glassdoor Scraping)
+                </label>
+                <input
+                  type="text"
+                  value={scraperConfig.scraper_proxy}
+                  onChange={e => setScraperConfig(c => ({ ...c, scraper_proxy: e.target.value }))}
+                  placeholder="e.g. http://username:password@proxy.example.com:8080"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-600"
+                />
+              </div>
+
+              <div className="pt-2">
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={handleSaveScraperConfig}
+                  disabled={scraperSaving}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-xl text-xs transition cursor-pointer"
+                >
+                  {scraperSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  <span>{scraperSaving ? 'Saving...' : 'Save Scraper Settings'}</span>
+                </motion.button>
+              </div>
             </div>
           </div>
         </Section>

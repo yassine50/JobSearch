@@ -2058,7 +2058,7 @@ def fetch_linkedin_voyager_posts(
     )
 
     try:
-        r = requests.get(url, headers=headers, cookies=cookies, timeout=12, verify=False)
+        r = requests.get(url, headers=headers, cookies=cookies, timeout=5, allow_redirects=False, verify=False)
         if r.status_code == 200:
             data = r.json()
             included = data.get("included", [])
@@ -2354,8 +2354,8 @@ def search_linkedin_recruiter_posts(
             return voyager_posts
 
     # 1. Fallback: Deep Multi-Angle LinkedIn Harvester (recruiter posts only)
-    # Request 4x the desired limit to have enough raw URLs to survive filtering
-    harvest_limit = max(limit * 4, 120)
+    # Request a sensible buffer of raw URLs based on user's desired limit
+    harvest_limit = min(max(limit * 3, 25), 75)
     found_posts = fetch_deep_linkedin_postings(clean_role, target_locs, limit=harvest_limit, page=page, time_range=time_range)
 
     if not found_posts:
@@ -2391,7 +2391,7 @@ def search_linkedin_recruiter_posts(
 
     # 2. Concurrently scrape and deep-mine candidate posts
     detailed_posts = []
-    max_to_scrape = min(len(found_posts), max(limit * 4, 120))
+    max_to_scrape = min(len(found_posts), harvest_limit)
     posts_to_scrape = found_posts[:max_to_scrape]
     max_workers = min(len(posts_to_scrape), 30)
 

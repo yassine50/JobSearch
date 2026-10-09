@@ -333,6 +333,9 @@ def extract_job_type(description: str):
 
 
 def map_str_to_site(site_name: str) -> Site:
+    s = str(site_name).strip().lower().replace("-", "_")
+    if s in ("jobbank", "job_bank", "jobbank_canada", "canada_job_bank"):
+        return Site.JOB_BANK
     return Site[site_name.upper()]
 
 

@@ -67,6 +67,7 @@ export const DEFAULT_FILTERS = {
   workplaceType: [], // 'remote', 'onsite', 'hybrid'
   easyApply: false,
   verifiedInfoOnly: false,
+  internationalOnly: false,
   sectors: [], // strings
   functions: [], // strings
   jobTitles: [], // strings
@@ -331,6 +332,19 @@ export default function JobFilterDrawer({
                   checked={Boolean(localFilters.verifiedInfoOnly)}
                   onChange={e => setLocalFilters(p => ({ ...p, verifiedInfoOnly: e.target.checked }))}
                   className="w-4 h-4 rounded accent-emerald-500"
+                />
+              </label>
+
+              <label className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer select-none hover:border-slate-700">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">🌐</span>
+                  <span className="font-medium text-slate-300">International Candidates (LMIA / Job Bank)</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(localFilters.internationalOnly)}
+                  onChange={e => setLocalFilters(p => ({ ...p, internationalOnly: e.target.checked }))}
+                  className="w-4 h-4 rounded accent-amber-500"
                 />
               </label>
 

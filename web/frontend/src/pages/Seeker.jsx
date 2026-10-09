@@ -13,6 +13,18 @@ import {
   Briefcase, Globe, Sparkles, MessageSquare, Layers, Users
 } from 'lucide-react'
 
+// Helper to normalize job URLs without destroying Indeed job IDs (?jk=)
+const getCleanJobUrl = (url) => {
+  if (!url) return ''
+  const u = String(url).trim().toLowerCase()
+  if (u.includes('indeed.com') || u.includes('viewjob')) {
+    const match = u.match(/[?&]jk=([a-zA-Z0-9]+)/)
+    if (match) return `indeed:${match[1]}`
+    return u.split('&')[0].replace(/\/+$/, '')
+  }
+  return u.split('?')[0].replace(/\/+$/, '')
+}
+
 export default function Seeker() {
   const toast = useToast()
   const [activeTab, setActiveTab] = useState('linkedin_posts') // 'linkedin_posts' | 'job_boards'
@@ -22,6 +34,7 @@ export default function Seeker() {
   // Job boards scraper state
   const [boardJobs, setBoardJobs] = useState([])
   const [boardLoading, setBoardLoading] = useState(false)
+  const [boardMeta, setBoardMeta] = useState(null)
   const [tailorJob, setTailorJob] = useState(null)
   const [scoreModalJob, setScoreModalJob] = useState(null)
   const [appliedJobs, setAppliedJobs] = useState(new Set())
@@ -34,12 +47,15 @@ export default function Seeker() {
       const applied = new Set()
       const saved = new Set()
       ;(r.data || []).forEach(a => {
-        const key1 = (a.url || '').trim().toLowerCase()
+        const rawUrl = (a.url || '').trim().toLowerCase()
+        const key1 = getCleanJobUrl(rawUrl)
         const key2 = `${(a.title || '').trim().toLowerCase()}|${(a.company || '').trim().toLowerCase()}`
         if (['applied', 'interviewing', 'offer'].includes(a.status?.toLowerCase())) {
+          if (rawUrl) applied.add(rawUrl)
           if (key1) applied.add(key1)
           if (key2 !== '|') applied.add(key2)
         } else if (a.status?.toLowerCase() === 'saved') {
+          if (rawUrl) saved.add(rawUrl)
           if (key1) saved.add(key1)
           if (key2 !== '|') saved.add(key2)
         }
@@ -87,10 +103,14 @@ export default function Seeker() {
         results_wanted: Number(params.results_wanted) || 30,
         hours_old: hoursOld,
         is_remote: params.is_remote,
-        easy_apply: Boolean(params.filters?.easyApply || params.easy_apply)
+        easy_apply: Boolean(params.filters?.easyApply || params.easy_apply),
+        international_only: Boolean(params.filters?.internationalOnly || params.international_only)
       })
       setBoardJobs(data.jobs || [])
-      toast(`Found ${data.jobs?.length || 0} job board postings!`, 'success')
+      setBoardMeta({ queries: data.queries_used || [], stats: data.stats || null })
+      const st = data.stats || {}
+      const merged = st.raw && st.after_dedup ? ` · ${st.raw - st.after_dedup} duplicates merged` : ''
+      toast(`Found ${data.jobs?.length || 0} relevant jobs${merged}`, 'success')
     } catch (err) {
       toast(err?.response?.data?.detail || 'Job board search failed', 'error')
     } finally {
@@ -102,31 +122,31 @@ export default function Seeker() {
   const isJobApplied = (j) => {
     if (!j) return false
     if (j.is_applied) return true
-    const key1 = (j.url || j.job_url || j.job_url_direct || j.post_url || '').trim().toLowerCase()
-    const cleanKey1 = key1 ? key1.split('?')[0].replace(/\/+$/, '') : ''
+    const rawUrl = (j.url || j.job_url || j.job_url_direct || j.post_url || '').trim().toLowerCase()
+    const cleanUrl = getCleanJobUrl(rawUrl)
     const key2 = `${(j.title || j.role_title || '').trim().toLowerCase()}|${(j.company || '').trim().toLowerCase()}`
-    return appliedJobs.has(key1) || (cleanKey1 && appliedJobs.has(cleanKey1)) || appliedJobs.has(key2)
+    return (rawUrl && appliedJobs.has(rawUrl)) || (cleanUrl && appliedJobs.has(cleanUrl)) || (key2 !== '|' && appliedJobs.has(key2))
   }
 
   const handleJobApplied = (job) => {
     if (!job) return
-    const key1 = (job.url || job.job_url || job.job_url_direct || job.post_url || '').trim().toLowerCase()
-    const cleanKey1 = key1 ? key1.split('?')[0].replace(/\/+$/, '') : ''
+    const rawUrl = (job.url || job.job_url || job.job_url_direct || job.post_url || '').trim().toLowerCase()
+    const cleanUrl = getCleanJobUrl(rawUrl)
     const key2 = `${(job.title || job.role_title || '').trim().toLowerCase()}|${(job.company || '').trim().toLowerCase()}`
     
     setAppliedJobs(prev => {
       const next = new Set(prev)
-      if (key1) next.add(key1)
-      if (cleanKey1) next.add(cleanKey1)
+      if (rawUrl) next.add(rawUrl)
+      if (cleanUrl) next.add(cleanUrl)
       if (key2 !== '|') next.add(key2)
       return next
     })
 
     setBoardJobs(prev => prev.filter(j => {
-      const jUrl = (j.url || j.job_url || j.job_url_direct || '').trim().toLowerCase()
-      const jCleanUrl = jUrl ? jUrl.split('?')[0].replace(/\/+$/, '') : ''
+      const jRawUrl = (j.url || j.job_url || j.job_url_direct || '').trim().toLowerCase()
+      const jCleanUrl = getCleanJobUrl(jRawUrl)
       const jTc = `${(j.title || '').trim().toLowerCase()}|${(j.company || '').trim().toLowerCase()}`
-      if (key1 && jUrl && (jUrl === key1 || jCleanUrl === cleanKey1)) return false
+      if (rawUrl && jRawUrl && (jRawUrl === rawUrl || (cleanUrl && jCleanUrl === cleanUrl))) return false
       if (key2 !== '|' && jTc === key2) return false
       return true
     }))
@@ -244,6 +264,7 @@ export default function Seeker() {
             <JobBoardScraper
               jobs={boardJobs}
               loading={boardLoading}
+              searchMeta={boardMeta}
               onSearch={handleBoardSearch}
               onSaveJob={handleSaveBoardJob}
               onTailorJob={j => setTailorJob(j)}

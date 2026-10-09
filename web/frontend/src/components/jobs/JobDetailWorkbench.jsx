@@ -25,12 +25,19 @@ export default function JobDetailWorkbench({
   const [fetchingDesc, setFetchingDesc] = useState(false)
   const [fetchError, setFetchError] = useState(false)
 
-  // Auto-fetch description if missing from the initial feed card
+  // Auto-fetch description and Job Bank recruiter emails if missing from the initial feed card
   useEffect(() => {
     let isMounted = true
     setFetchError(false)
 
-    const needsDesc = job && (!job.description || job.description.trim().length < 50)
+    const isJobBank = job && (
+      (job.site || '').toLowerCase().includes('job bank') ||
+      (job.url || '').includes('jobbank.gc.ca') ||
+      (job.listing_type || '').toLowerCase().includes('job bank')
+    )
+    const hasNoEmails = !job?.emails || (Array.isArray(job.emails) && job.emails.length === 0)
+    const needsDesc = job && (!job.description || job.description.trim().length < 50 || (isJobBank && hasNoEmails))
+
     if (needsDesc) {
       setFetchingDesc(true)
       const cleanJobId = job.id ? String(job.id).replace('li-', '') : null
@@ -42,10 +49,10 @@ export default function JobDetailWorkbench({
       .then(res => {
         if (!isMounted) return
         setFetchingDesc(false)
-        if (res.data && res.data.description) {
+        if (res.data && (res.data.description || (res.data.emails && res.data.emails.length > 0))) {
           const updated = {
             ...job,
-            description: res.data.description,
+            description: res.data.description || job.description,
             score: res.data.score != null ? res.data.score : job.score,
             matched_skills: res.data.matched_skills?.length ? res.data.matched_skills : job.matched_skills,
             missing_skills: res.data.missing_skills?.length ? res.data.missing_skills : job.missing_skills,
@@ -196,7 +203,7 @@ export default function JobDetailWorkbench({
               className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-amber-500/20 transition cursor-pointer disabled:opacity-50"
             >
               <Zap size={14} className="fill-slate-950" />
-              <span>⚡ Auto-Apply (Tailored CV)</span>
+              <span>⚡ Auto-Apply (Direct Email)</span>
             </button>
           ) : isEasyApply ? (
             <button
@@ -300,11 +307,14 @@ export default function JobDetailWorkbench({
       </div>
 
       {/* Recruiter Email Banner */}
-      {primaryEmail && (
+      {primaryEmail ? (
         <div className="p-3.5 rounded-xl bg-purple-950/30 border border-purple-800/50 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Mail size={12} className="text-purple-400" /> Mined Recruiter Direct Mailbox
+              <Mail size={12} className="text-purple-400" />
+              {(job.site || '').toLowerCase().includes('job bank') || (job.url || '').includes('jobbank.gc.ca')
+                ? 'Job Bank Recruiter Email (Additional ways to apply)'
+                : 'Mined Recruiter Direct Mailbox'}
             </span>
             <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded-full flex items-center gap-1">
               <ShieldCheck size={10} /> MX Verified Deliverable
@@ -323,6 +333,35 @@ export default function JobDetailWorkbench({
               <span>{copiedEmail === primaryEmail ? 'Copied' : 'Copy Email'}</span>
             </button>
           </div>
+        </div>
+      ) : ((job.site || '').toLowerCase().includes('job bank') || (job.url || '').includes('jobbank.gc.ca')) && (
+        <div className="p-3 rounded-xl bg-slate-850/80 border border-slate-750 flex items-center justify-between text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 text-slate-300">
+            <Mail size={13} className="text-amber-400" />
+            {fetchingDesc ? 'Mining "Additional ways to apply" for recruiter email...' : 'No email in "Additional ways to apply" (Direct Apply / Postal Mail)'}
+          </span>
+          {!fetchingDesc && (
+            <button
+              type="button"
+              onClick={() => {
+                setFetchingDesc(true)
+                client.post('/jobs/fetch-description', {
+                  url: job.url || job.job_url || '',
+                  job_id: job.id,
+                  title: job.title || '',
+                  site: job.site || ''
+                }).then(res => {
+                  setFetchingDesc(false)
+                  if (res.data?.emails?.length && onUpdateJob) {
+                    onUpdateJob({ ...job, emails: res.data.emails.map(e => ({ email: e, source: 'found' })) })
+                  }
+                }).catch(() => setFetchingDesc(false))
+              }}
+              className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 transition cursor-pointer"
+            >
+              Re-check
+            </button>
+          )}
         </div>
       )}
 

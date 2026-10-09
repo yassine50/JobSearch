@@ -20,6 +20,7 @@ from ..linkedin_post_hunter import (
     _SEARCH_CACHE
 )
 from .email import _dispatch_smtp
+from ..email_templates import get_application_email, detect_language
 
 router = APIRouter(prefix="/api/linkedin-posts", tags=["linkedin-posts"])
 
@@ -55,6 +56,11 @@ class PostApplyRequest(BaseModel):
     recruiter_email: str
     post_text: Optional[str] = ""
     customize_cv: bool = True
+    custom_subject: Optional[str] = None
+    custom_body: Optional[str] = None
+    lang: Optional[str] = None
+    site: Optional[str] = "linkedin"
+
 
 class PostSaveRequest(BaseModel):
     post_url: str
@@ -403,36 +409,26 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
             continue
 
         try:
-            # Tailor CV if available
+            # Automatic batch send strictly attaches authentic original CV
             custom_pdf_bytes = None
             custom_pdf_name = None
             effective_score = 75
-            if cv_text:
-                try:
-                    from cv_tailor import tailor_cv
-                    tailor_res = tailor_cv(cv_text, item.role_title, item.company, item.post_text or item.role_title)
-                    custom_pdf_bytes = tailor_res["pdf_bytes"]
-                    custom_pdf_name = tailor_res["filename"]
-                    effective_score = tailor_res["tailored_score"]
-                except Exception:
-                    pass
 
             sender_name = settings.sender_name or current_user.name
             r_name = item.recruiter_name or "Hiring Team"
-            subject = f"Application for {item.role_title} — {sender_name}"
-            body = f"""Dear {r_name} at {item.company},
-
-I came across your hiring post on LinkedIn regarding the {item.role_title} opportunity and wanted to reach out to you directly.
-
-With strong technical background and hands-on expertise, I specialize in building reliable, high-performance software solutions. Having reviewed your requirements, I am confident my technical skills make me a great fit for your team.
-
-I have attached my tailored resume for your review, detailing my accomplishments, shipped projects, and technical stack.
-
-I would welcome the opportunity to discuss how I can add immediate value to {item.company}. Thank you for your time and consideration.
-
-Best regards,
-{sender_name}
-{current_user.email}"""
+            auto_subject, auto_body, _ = get_application_email(
+                role_title=item.role_title,
+                company=item.company,
+                recruiter_name=r_name,
+                post_text=item.post_text,
+                sender_name=sender_name,
+                sender_email=current_user.email,
+                lang=getattr(item, "lang", None),
+                site=getattr(item, "site", None) or "linkedin",
+                url=item.post_url
+            )
+            subject = getattr(item, "custom_subject", None) or auto_subject
+            body = getattr(item, "custom_body", None) or auto_body
 
             _dispatch_smtp(settings, current_user, clean_email, r_name,
                            subject, body, True, db,
@@ -501,36 +497,25 @@ def auto_apply_to_post(req: PostApplyRequest,
 
     sender_name = settings.sender_name or current_user.name
     r_name = req.recruiter_name or "Hiring Team"
-    subject = f"Application for {req.role_title} — {sender_name}"
 
+    # Automatic auto-apply strictly attaches authentic original CV
     custom_pdf_bytes = None
     custom_pdf_name = None
     effective_score = 75
 
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
-    if req.customize_cv and cv and cv.text_content:
-        try:
-            from cv_tailor import tailor_cv
-            tailor_res = tailor_cv(cv.text_content, req.role_title, req.company, req.post_text or req.role_title)
-            custom_pdf_bytes = tailor_res["pdf_bytes"]
-            custom_pdf_name = tailor_res["filename"]
-            effective_score = tailor_res["tailored_score"]
-        except Exception as t_err:
-            print(f"[LinkedInPostApply] Tailoring warning: {t_err}")
-
-    body = f"""Dear {r_name} at {req.company},
-
-I came across your hiring post on LinkedIn regarding the {req.role_title} opportunity and wanted to reach out to you directly.
-
-With strong technical background and hands-on expertise, I specialize in building high-performance applications and clean, reliable software solutions. Having reviewed your requirements, I am confident my technical skills make me a great fit for your team.
-
-I have attached my tailored resume for your review, detailing my accomplishments, shipped projects, and technical stack.
-
-I would welcome the opportunity to discuss how I can add immediate value to {req.company}. Thank you for your time and consideration.
-
-Best regards,
-{sender_name}
-{current_user.email}"""
+    auto_subj, auto_body, _ = get_application_email(
+        role_title=req.role_title,
+        company=req.company,
+        recruiter_name=r_name,
+        post_text=req.post_text,
+        sender_name=sender_name,
+        sender_email=current_user.email,
+        lang=req.lang,
+        site=req.site or "linkedin",
+        url=req.post_url
+    )
+    subject = req.custom_subject or auto_subj
+    body = req.custom_body or auto_body
 
     try:
         _dispatch_smtp(settings, current_user, clean_email, r_name,

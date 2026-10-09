@@ -778,8 +778,9 @@ def enrich_job_emails(job: dict) -> List[dict]:
     company_url_direct = str(job.get("company_url_direct") or "")
     company_url = str(job.get("company_url") or "")
     existing_emails = job.get("emails") or []
+    is_job_bank = "jobbank.gc.ca" in (job.get("url") or "") or "job_bank" in (job.get("site") or "").lower()
 
-    # 1. Ingest pre-parsed emails — ONLY if they satisfy is_hr_email
+    # 1. Ingest pre-parsed emails (Job Bank Canada / Scraped directly from posting)
     if isinstance(existing_emails, list):
         for item in existing_emails:
             e = ""
@@ -787,18 +788,27 @@ def enrich_job_emails(job: dict) -> List[dict]:
                 e = str(item["email"]).lower().strip()
             elif isinstance(item, str):
                 e = item.lower().strip()
-            if e and is_hr_email(e) and e not in discovered:
+            e = re.sub(r"[\[\]'\"\s]", "", e)
+            if e and "@" in e and not is_email_blacklisted(e):
                 discovered[e] = {
                     "email": e,
-                    "source": "found",
-                    "score": 180,
+                    "source": "job_bank" if is_job_bank else "found",
+                    "score": 200 if is_job_bank else 180,
                     "verified": True,
                     "is_hr": True,
+                    "confidence": 98 if is_job_bank else 90,
+                    "role_type": "Recruiter / Hiring Team",
+                    "verification": {
+                        "deliverable": True,
+                        "is_recruitment": True,
+                        "confidence": 98 if is_job_bank else 90,
+                        "role_type": "Recruiter / Hiring Team"
+                    }
                 }
 
     # 2. Extract HR emails from job description
     for e in extract_hr_emails_from_text(desc):
-        if e not in discovered:
+        if e not in discovered and not is_email_blacklisted(e):
             discovered[e] = {
                 "email": e,
                 "source": "found",
@@ -810,7 +820,7 @@ def enrich_job_emails(job: dict) -> List[dict]:
     # 3. Direct ATS apply link inspection
     if job_url_direct and any(ats in job_url_direct.lower() for ats in ATS_HOSTS):
         for e in probe_ats_page_emails(job_url_direct):
-            if e not in discovered:
+            if e not in discovered and not is_email_blacklisted(e):
                 discovered[e] = {
                     "email": e,
                     "source": "ats_page",
@@ -847,6 +857,11 @@ def enrich_job_emails(job: dict) -> List[dict]:
     # 7. Verification Filter & Enrichment
     verified_results = []
     for item in discovered.values():
+        # Pre-verified directly from official job posting or Job Bank "Additional ways to apply"
+        if item.get("source") in ("job_bank", "found") and item.get("verified"):
+            verified_results.append(item)
+            continue
+
         v_report = verify_email_full(
             item["email"],
             company=company,
@@ -861,10 +876,10 @@ def enrich_job_emails(job: dict) -> List[dict]:
         item["role_type"] = v_report.get("role_type", "Recruitment")
         verified_results.append(item)
 
-    # 8. Sort: Named Recruiters first, then highest confidence score
+    # 8. Sort: Directly Mined (Job Bank / Posting) first, then Named Recruiters, then highest confidence score
     def sort_key(x):
         return (
-            1 if x.get("source") == "named_recruiter" else 0,
+            2 if x.get("source") in ("job_bank", "found") else (1 if x.get("source") == "named_recruiter" else 0),
             x.get("confidence", 0),
             x.get("score", 0)
         )
@@ -891,6 +906,6 @@ def batch_enrich_jobs(jobs: List[dict], max_workers: int = 12) -> List[dict]:
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_worker, job) for job in jobs]
-        enriched = [f.result() for f in as_completed(futures)]
+        enriched = [f.result() for f in futures]
 
     return enriched

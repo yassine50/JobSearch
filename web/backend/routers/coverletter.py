@@ -49,6 +49,26 @@ STYLES = {
     },
 }
 
+from ..email_templates import detect_language
+
+FR_STYLES = {
+    "professional": {
+        "opening": "Je vous soumets par la présente ma candidature pour le poste de {job_title} au sein de {company}.",
+        "body_p1": "Fort d'une solide expérience et d'une maîtrise de {skills}, j'ai développé des compétences pointues directement en adéquation avec les exigences de votre organisation.",
+        "closing": "Je serais ravi d'échanger avec vous afin d'approfondir la manière dont mon parcours peut répondre à vos enjeux de développement.",
+    },
+    "casual": {
+        "opening": "C'est avec grand enthousiasme que je candidate au poste de {job_title} chez {company}.",
+        "body_p1": "Passionné par le développement et fort d'une expérience concrète avec {skills}, je serais ravi d'apporter mon dynamisme et mon savoir-faire à vos projets.",
+        "closing": "Je reste à votre entière disposition pour un échange informel autour de votre vision et de vos besoins.",
+    },
+    "technical": {
+        "opening": "Spécialisé dans le développement logiciel performant et maîtrisant {skills}, je vous propose ma candidature pour le poste de {job_title} au sein de {company}.",
+        "body_p1": "Mon parcours m'a permis de concevoir des architectures robustes, maintenables et évolutives, en accord étroit avec vos critères techniques.",
+        "closing": "Je serais ravi de vous présenter concrètement mes réalisations lors d'un entretien technique.",
+    },
+}
+
 @router.post("/generate")
 def generate(req: CLRequest, db: Session = Depends(get_db),
              current_user: models.User = Depends(get_current_user)):
@@ -56,17 +76,40 @@ def generate(req: CLRequest, db: Session = Depends(get_db),
     cv_text = cv_rec.text_content if cv_rec else ""
 
     top_skills = _extract_top_skills(cv_text, req.job_description)
-    skills_str = ", ".join(top_skills) if top_skills else "my core skills"
+    skills_str = ", ".join(top_skills) if top_skills else "mes compétences clés"
     years = _extract_years(cv_text)
-    style = STYLES.get(req.style, STYLES["professional"])
 
-    opening = style["opening"].format(job_title=req.job_title, company=req.company, skills=skills_str)
+    lang = detect_language(f"{req.job_title} {req.company} {req.job_description}")
 
-    letter = f"""Dear Hiring Manager,
+    if lang == "fr":
+        fr_style = FR_STYLES.get(req.style, FR_STYLES["professional"])
+        fr_opening = fr_style["opening"].format(job_title=req.job_title, company=req.company, skills=skills_str)
+        fr_p1 = fr_style["body_p1"].format(skills=skills_str)
+        letter = f"""Madame, Monsieur,
+
+{fr_opening}
+
+{fr_p1}
+
+Au cours de mon parcours professionnel, j'ai mené à bien des projets d'envergure, alliant rigueur méthodologique, autonomie et recherche constante de la qualité. Votre organisation, {req.company}, se distingue par son dynamisme et son excellence, des valeurs dans lesquelles je me reconnais pleinement.
+
+{fr_style["closing"]}
+
+En vous remerciant pour l'attention portée à ma candidature, je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.
+
+{current_user.name}
+{current_user.email}
+"""
+    else:
+        style = STYLES.get(req.style, STYLES["professional"])
+        skills_en = ", ".join(top_skills) if top_skills else "my core skills"
+        opening = style["opening"].format(job_title=req.job_title, company=req.company, skills=skills_en)
+
+        letter = f"""Dear Hiring Manager,
 
 {opening}
 
-With {years} of experience and a strong background in {skills_str}, I have consistently delivered impactful results throughout my career. My expertise aligns closely with what you are looking for in this role.
+With {years} of experience and a strong background in {skills_en}, I have consistently delivered impactful results throughout my career. My expertise aligns closely with what you are looking for in this role.
 
 In my previous roles, I have demonstrated the ability to work both independently and collaboratively, taking ownership of complex challenges and delivering solutions that create real value. I am particularly drawn to {req.company} because of its reputation for innovation and excellence.
 
@@ -78,5 +121,6 @@ Sincerely,
 {current_user.name}
 {current_user.email}
 """
+
     return {"letter": letter, "skills_used": top_skills, "style": req.style,
-            "job_title": req.job_title, "company": req.company}
+            "job_title": req.job_title, "company": req.company, "language": lang}

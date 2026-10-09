@@ -18,7 +18,6 @@ export default function BatchEasyApplyModal({
 }) {
   const toast = useToast()
   const [selectedIds, setSelectedIds] = useState([])
-  const [customizeCv, setCustomizeCv] = useState(true)
   const [applying, setApplying] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentTarget: '' })
   const [completed, setCompleted] = useState(false)
@@ -86,10 +85,10 @@ export default function BatchEasyApplyModal({
           description: item.description,
           site: item.site,
           match_score: item.score,
-          customize_cv: customizeCv,
+          customize_cv: false,
           notes: 'Auto-applied via Candidature Simplifiée batch engine.'
         })),
-        customize_cv: customizeCv
+        customize_cv: false
       }
 
       // Step-by-step progress simulation for realistic feedback
@@ -183,19 +182,10 @@ export default function BatchEasyApplyModal({
                   <span>Select All ({selectedIds.length}/{candidateItems.length})</span>
                 </button>
 
-                <label className="flex items-center gap-2 cursor-pointer text-slate-300 select-none">
-                  <input
-                    type="checkbox"
-                    checked={customizeCv}
-                    onChange={e => setCustomizeCv(e.target.checked)}
-                    disabled={applying}
-                    className="w-4 h-4 rounded border-slate-700 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                  />
-                  <span className="flex items-center gap-1 font-semibold text-emerald-300">
-                    <Sparkles size={12} className="text-amber-400" />
-                    Auto-Tailor CV for each role (Recommended)
-                  </span>
-                </label>
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold bg-emerald-950/50 border border-emerald-800/50 px-3 py-1 rounded-lg">
+                  <FileText size={13} className="text-emerald-400" />
+                  <span>Attaching Original Verified Resume (CV_Yassine_Youssef.pdf)</span>
+                </div>
               </div>
 
               {/* Progress Bar when applying */}

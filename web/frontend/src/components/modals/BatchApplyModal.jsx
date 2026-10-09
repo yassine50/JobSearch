@@ -18,7 +18,6 @@ export default function BatchApplyModal({
 }) {
   const toast = useToast()
   const [selectedIds, setSelectedIds] = useState([])
-  const [customizeCv, setCustomizeCv] = useState(true)
   const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentTarget: '' })
   const [results, setResults] = useState(null)
@@ -102,7 +101,8 @@ export default function BatchApplyModal({
             recruiter_name: item.name,
             recruiter_email: item.email,
             post_text: item.raw.full_text || item.raw.post_snippet || '',
-            customize_cv: customizeCv
+            customize_cv: false,
+            site: item.raw?.site || 'linkedin'
           }))
         }
 
@@ -114,7 +114,7 @@ export default function BatchApplyModal({
       } else {
         // Formal Job Boards batch auto-apply
         const payload = {
-          customize_cv: customizeCv,
+          customize_cv: false,
           jobs: selectedList.map(item => ({
             job_title: item.title,
             company: item.company,
@@ -123,7 +123,8 @@ export default function BatchApplyModal({
             to_email: item.email,
             to_name: item.name,
             job_description: item.raw?.description || '',
-            match_score: item.score || 0
+            match_score: item.score || 0,
+            site: item.raw?.site || ''
           }))
         }
 
@@ -226,18 +227,10 @@ export default function BatchApplyModal({
                   <span>{selectedIds.length === candidateItems.length ? 'Deselect All' : 'Select All'} ({candidateItems.length})</span>
                 </button>
 
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={customizeCv}
-                    onChange={e => setCustomizeCv(e.target.checked)}
-                    className="accent-purple-500 w-4 h-4 rounded cursor-pointer"
-                  />
-                  <span className="font-semibold text-purple-300 flex items-center gap-1">
-                    <Sparkles size={12} className="text-purple-400" />
-                    Auto-tailor CV per job
-                  </span>
-                </label>
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold bg-emerald-950/50 border border-emerald-800/50 px-3 py-1 rounded-lg">
+                  <FileText size={13} className="text-emerald-400" />
+                  <span>Attaching Original Verified Resume (CV_Yassine_Youssef.pdf)</span>
+                </div>
               </div>
 
               {/* Recipient Cards List */}

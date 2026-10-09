@@ -4,9 +4,15 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, Any
 from datetime import datetime, timedelta, date
+import os
+import sys
 import re
+import json
+import logging
 import urllib.parse
 import urllib.request
+
+logger = logging.getLogger("jobsearcher.jobs")
 
 def _compute_job_age_hours(date_val: Any) -> Optional[float]:
     if not date_val:
@@ -129,61 +135,74 @@ SKIP_PATTERNS = {"example","sentry","wixpress","amazonaws","cloudfront","noreply
                  "@domain.com","privacy@","legal@","support@sentry", "jnahar@dashkar.com",
                  "laura.peters@fartherforward.com", "fartherforward.com"}
 SKIP_EXTS = {".png",".jpg",".jpeg",".gif",".svg",".webp",".css",".js"}
-HR_PREFIXES = ["careers","jobs","hr","recruit","hiring","talent","apply","recruitment","people","work"]
-JOB_BOARDS  = {"linkedin.com","indeed.com","glassdoor.com","ziprecruiter.com","monster.com",
-               "dice.com","greenhouse.io","lever.co","workday.com","myworkdayjobs.com",
-               "taleo.net","icims.com","jobvite.com","wellfound.com","remoteok.com"}
 
-def _clean_email(e):
-    e = e.strip().lower()
-    if any(s in e for s in SKIP_PATTERNS): return None
-    if any(e.endswith(x) for x in SKIP_EXTS): return None
+def _clean_email(e: str) -> Optional[str]:
+    if not e: return None
+    clean = e.strip().lower()
+    if any(s in clean for s in SKIP_PATTERNS): return None
+    if any(clean.endswith(x) for x in SKIP_EXTS): return None
     try:
         from recruiter_hunter import is_email_blacklisted
-        if is_email_blacklisted(e):
+        if is_email_blacklisted(clean):
             return None
     except Exception:
         pass
-    parts = e.split("@")
-    if len(parts)!=2: return None
+    parts = clean.split("@")
+    if len(parts) != 2: return None
     loc, dom = parts
-    if len(loc)<2 or len(dom)<4 or "." not in dom: return None
-    return e
+    if len(loc) < 2 or len(dom) < 4 or "." not in dom: return None
+    return clean
 
-def _extract_emails_from_text(text):
+def _extract_emails_from_text(text: str) -> List[str]:
+    if not text: return []
     seen, clean = set(), []
-    for e in EMAIL_RE.findall(text or ""):
+    for e in EMAIL_RE.findall(text):
         c = _clean_email(e)
-        if c and c not in seen: seen.add(c); clean.append(c)
+        if c and c not in seen:
+            seen.add(c)
+            clean.append(c)
     return clean[:5]
 
-def _domain_from_url(url):
-    try:
-        host = urllib.parse.urlparse(url).netloc.lower()
-        parts = host.split(".")
-        return ".".join(parts[-2:]) if len(parts)>=2 else ""
-    except: return ""
+def _extract_row_emails(row: Any, desc: str = "") -> List[dict]:
+    """Extract and validate initial recruiter emails from raw scrape row and job description."""
+    initial_emails: List[dict] = []
+    seen: set = set()
 
-def _infer_hr_emails(domain):
-    if not domain or len(domain)<5 or domain in JOB_BOARDS: return []
-    return [f"{p}@{domain}" for p in HR_PREFIXES[:4]]
+    def _add(clean_em: str, source: str, score: int):
+        clean_em = clean_em.strip().lower()
+        if (clean_em and "@" in clean_em and 
+            clean_em not in seen and 
+            not any(clean_em.endswith(x) for x in SKIP_EXTS) and
+            not any(s in clean_em for s in SKIP_PATTERNS)):
+            seen.add(clean_em)
+            initial_emails.append({
+                "email": clean_em,
+                "source": source,
+                "score": score,
+                "verified": True,
+                "is_hr": True
+            })
 
-def _score_email(email):
-    local = email.split("@")[0].lower()
-    s = 0
-    if any(p in local for p in ["hr","recruit","hiring","talent","career","job"]): s+=10
-    if any(p in local for p in ["info","contact","hello","admin"]): s+=5
-    if any(p in local for p in ["noreply","no-reply","donotreply","bounce"]): s-=20
-    return s
+    site_str = str(row.get("site", "") if hasattr(row, "get") else "").lower()
+    is_jb = "job_bank" in site_str
+    default_source = "job_bank" if is_jb else "found"
+    default_score = 200 if is_jb else 180
 
-def _best_emails(extracted, inferred):
-    combined = {}
-    for e in extracted:
-        combined[e] = {"email":e,"source":"found","score":_score_email(e)+15}
-    for e in inferred:
-        if e not in combined:
-            combined[e] = {"email":e,"source":"inferred","score":_score_email(e)}
-    return sorted(combined.values(), key=lambda x:-x["score"])[:5]
+    raw_val = row.get("emails") if hasattr(row, "get") else None
+    if isinstance(raw_val, (list, tuple, set)):
+        for em in raw_val:
+            cleaned = re.sub(r"[\[\]'\"\s]", "", str(em))
+            _add(cleaned, default_source, default_score)
+    elif raw_val and str(raw_val).lower() not in ("none", "nan", ""):
+        for em in str(raw_val).replace(";", ",").split(","):
+            cleaned = re.sub(r"[\[\]'\"\s]", "", em)
+            _add(cleaned, default_source, default_score)
+
+    if desc:
+        for em in EMAIL_RE.findall(desc):
+            _add(em, "found", 180)
+
+    return initial_emails
 
 def _fetch_linkedin_description(url_or_id: str) -> str:
     """Fetches full job description via LinkedIn public guest API."""
@@ -221,25 +240,299 @@ def _fetch_linkedin_description(url_or_id: str) -> str:
                 return div.get_text(separator="\n").strip()
     except Exception:
         pass
-    return ""
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "scraper_config.json")
+
+def _get_scraper_config() -> dict:
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_scraper_config(cfg: dict):
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save scraper config: {e}")
+
+def _fetch_serper_google_jobs(query: str, location: str = "", country: str = "us", results_wanted: int = 15, api_key: str = "") -> List[dict]:
+    """Fetches structured Google Search Jobs using Serper API when key is configured."""
+    if not api_key:
+        return []
+    try:
+        import requests as req_lib
+        from urllib.parse import urlparse
+        url = "https://google.serper.dev/search"
+        loc_str = location if location and location.lower() != "worldwide" else ""
+        q_str = f"{query} jobs in {loc_str}" if loc_str else f"{query} jobs"
+        gl_map = {
+            "usa": "us", "united states": "us", "canada": "ca", "france": "fr",
+            "germany": "de", "uk": "uk", "united kingdom": "uk", "netherlands": "nl",
+            "morocco": "ma", "united arab emirates": "ae", "uae": "ae", "singapore": "sg"
+        }
+        gl = gl_map.get(str(country).lower().strip(), "us")
+        payload = {"q": q_str, "gl": gl, "hl": "en", "num": max(10, min(results_wanted, 30))}
+        resp = req_lib.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=12)
+        if resp.status_code == 200:
+            data = resp.json()
+            jobs = []
+            for item in data.get("organic", [])[:results_wanted]:
+                raw_title = item.get("title", "")
+                link = item.get("link", "")
+                snippet = item.get("snippet", "")
+                if not link or not raw_title:
+                    continue
+                # Clean title
+                title = raw_title.split("|")[0].split(" - ")[0].split(" – ")[0].strip()
+                title = re.sub(r"^(?:Now Hiring:\s*\d*\s*|Apply for\s*|\$\d+k-\$\d+k\s*)", "", title, flags=re.I).strip()
+                # Parse company
+                parsed = urlparse(link)
+                netloc = parsed.netloc.replace("www.", "")
+                domain_name = netloc.split(".")[0].capitalize()
+                company = domain_name
+                m_co = re.search(r"(?:at|by|with)\s+([A-Z][A-Za-z0-9\s&]{2,25})(?:\s*[\.\,\-–|]|\s+in\s+|\s*$)", raw_title)
+                if m_co:
+                    company = m_co.group(1).strip()
+                jobs.append({
+                    "title": title or query.title(),
+                    "company": company,
+                    "location": loc_str or "United States",
+                    "description": snippet,
+                    "job_url": link,
+                    "job_url_direct": link,
+                    "date_posted": "Recently",
+                    "salary": "",
+                    "site": "google"
+                })
+            return jobs
+    except Exception as e:
+        logger.warning(f"[SerperGoogleJobs] Error: {e}")
+    return []
+
+def _fetch_jobbank_details(job_id_or_url: str) -> dict:
+    """Fetch complete Job Bank Canada posting details, instructions, screening questions,
+    and especially the recruiter's email hiding behind 'Additional ways to apply'."""
+    m = re.search(r"(\d{7,10})", str(job_id_or_url or ""))
+    job_id = m.group(1) if m else None
+    if not job_id:
+        return {}
+
+    det_url = f"https://www.jobbank.gc.ca/jobsearch/jobposting/{job_id}"
+    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    headers = {
+        "User-Agent": ua,
+        "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    title = ""
+    company = ""
+    location = ""
+    salary = ""
+    desc_parts = []
+    is_intl = False
+
+    # 1. Fetch static detail page
+    try:
+        import requests as req_lib
+        from bs4 import BeautifulSoup
+        r_get = req_lib.get(det_url, headers=headers, timeout=12)
+        if r_get.status_code == 200:
+            soup = BeautifulSoup(r_get.text, "html.parser")
+            t_elem = soup.find("span", property="title") or soup.find("h1")
+            if t_elem:
+                title = t_elem.get_text(strip=True)
+
+            c_elem = soup.find("span", property="hiringOrganization") or soup.find("li", class_="business")
+            if c_elem:
+                company = c_elem.get_text(strip=True)
+
+            l_elem = soup.find("span", property="jobLocation") or soup.find("li", class_="location")
+            if l_elem:
+                location = l_elem.get_text(strip=True)
+
+            s_elem = soup.find("li", class_="salary")
+            if s_elem:
+                salary = s_elem.get_text(strip=True).replace("Salary", "").strip()
+
+            req_div = soup.find("div", class_="job-posting-detail-requirements")
+            if req_div:
+                desc_parts.append(req_div.get_text(separator="\n", strip=True))
+            else:
+                main_sec = soup.find("section", id="job-posting-detail") or soup.find("main")
+                if main_sec:
+                    desc_parts.append(main_sec.get_text(separator="\n", strip=True)[:3500])
+
+            page_text = soup.get_text()
+            if "other candidates with or without" in page_text.lower() or "without a valid canadian work permit" in page_text.lower():
+                is_intl = True
+    except Exception as e_get:
+        logger.warning(f"[JobBank] Detail page fetch warning for {job_id}: {e_get}")
+
+    # 2. JSF AJAX POST for 'How to Apply' (Recruiter Email behind 'Additional ways to apply')
+    payload = {
+        "jakarta.faces.partial.ajax": "true",
+        "jakarta.faces.source": "applynowbutton",
+        "jakarta.faces.partial.execute": "jobid",
+        "jakarta.faces.partial.render": "applynow markappliedgroup",
+        "jakarta.faces.behavior.event": "action",
+        "action": "applynowbutton",
+        "seekeractivity:jobid": job_id,
+        "seekeractivity_SUBMIT": "1",
+        "jakarta.faces.ViewState": "stateless",
+        "seekeractivity": "seekeractivity",
+    }
+    post_headers = {
+        "User-Agent": ua,
+        "Faces-Request": "partial/ajax",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": det_url,
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Accept": "application/xml, text/xml, */*; q=0.01",
+    }
+
+    emails: List[str] = []
+    ext_apply_url = None
+    hta_text = ""
+
+    try:
+        import requests as req_lib
+        from bs4 import BeautifulSoup
+        r_post = req_lib.post(det_url, data=payload, headers=post_headers, timeout=12)
+        if r_post.status_code == 200:
+            cdata = re.search(r"<!\[CDATA\[(.*?)\]\]>", r_post.text, re.DOTALL)
+            content = cdata.group(1) if cdata else r_post.text
+            hta_soup = BeautifulSoup(content, "html.parser")
+
+            # mailto links
+            for a in hta_soup.find_all("a", href=True):
+                href = a["href"]
+                if href.startswith("mailto:"):
+                    em = href.replace("mailto:", "").split("?")[0].strip().lower()
+                    if "@" in em and em not in emails:
+                        emails.append(em)
+                elif href.startswith("http") and "jobbank.gc.ca" not in href:
+                    if not ext_apply_url:
+                        ext_apply_url = href
+
+            # Regex search for recruiter emails inside the Additional ways to apply block
+            for em in EMAIL_RE.findall(content):
+                em_clean = em.lower().strip()
+                if em_clean not in emails and not any(em_clean.endswith(ext) for ext in [".png", ".jpg", ".css", ".js"]):
+                    emails.append(em_clean)
+
+            # Details / How to apply block
+            det_tag = hta_soup.find("details") or hta_soup.find("div", id="howtoapply")
+            if det_tag:
+                hta_text = det_tag.get_text(separator="\n", strip=True)
+                desc_parts.append(f"\n### How to Apply & Recruiter Instructions\n{hta_text}")
+    except Exception as e_post:
+        logger.warning(f"[JobBank] HTA AJAX POST warning for {job_id}: {e_post}")
+
+    full_desc = "\n\n".join(desc_parts)
+    if is_intl:
+        full_desc = (
+            "### 🌐 International Candidate Eligibility\n"
+            "✅ **This employer accepts applications from Canadian citizens, permanent residents, "
+            "and international candidates (with or without a valid Canadian work permit / LMIA-eligible).**\n\n"
+            + full_desc
+        )
+
+    return {
+        "job_id": job_id,
+        "title": title,
+        "company": company,
+        "location": location,
+        "salary": salary,
+        "url": det_url,
+        "emails": emails,
+        "description": full_desc,
+        "job_url_direct": ext_apply_url,
+        "easy_apply": bool(emails or "direct apply" in hta_text.lower()),
+        "is_direct_apply": bool("direct apply" in hta_text.lower()),
+        "is_international_eligible": is_intl,
+    }
 
 def _enrich_job_description(job: dict) -> dict:
+    url = job.get("url") or ""
+    site = (job.get("site") or "").lower()
+
+    # Dedicated enrichment for Job Bank Canada postings
+    if "jobbank.gc.ca" in url or "job_bank" in site:
+        existing_emails = job.get("emails") or []
+        valid_emails = [
+            re.sub(r"[\[\]'\"\s]", "", (e.get("email") if isinstance(e, dict) else str(e))).lower()
+            for e in existing_emails
+        ]
+        valid_emails = [e for e in valid_emails if "@" in e]
+        current_desc = job.get("description") or ""
+        # The Job Bank scraper already ran the 'How to apply' AJAX call, so only re-fetch
+        # when the description is genuinely missing (avoids doubling requests per listing).
+        if len(current_desc.strip()) < 150:
+            jb_res = _fetch_jobbank_details(url)
+            if jb_res.get("description") and len(jb_res["description"]) > len(current_desc):
+                job["description"] = jb_res["description"]
+            if jb_res.get("emails"):
+                existing_set = {
+                    (e.get("email") if isinstance(e, dict) else str(e)).lower()
+                    for e in job.get("emails", [])
+                }
+                for ne in jb_res["emails"]:
+                    clean_ne = ne.strip().lower()
+                    if clean_ne and clean_ne not in existing_set:
+                        existing_set.add(clean_ne)
+                        job.setdefault("emails", []).append({
+                            "email": clean_ne,
+                            "source": "job_bank",
+                            "score": 200,
+                            "verified": True,
+                            "is_hr": True
+                        })
+            if jb_res.get("easy_apply"):
+                job["easy_apply"] = True
+            if jb_res.get("is_direct_apply"):
+                job["is_direct_apply"] = True
+            if jb_res.get("job_url_direct"):
+                job["job_url_direct"] = jb_res["job_url_direct"]
+        return job
+
     current_desc = job.get("description") or ""
+
+    # Always mine any email addresses from the job description immediately
+    if current_desc:
+        new_emails = _extract_emails_from_text(current_desc)
+        if new_emails:
+            existing = {
+                (e.get("email") if isinstance(e, dict) else str(e)).lower()
+                for e in (job.get("emails") or [])
+            }
+            for ne in new_emails:
+                clean_ne = ne.strip().lower()
+                if clean_ne and clean_ne not in existing:
+                    existing.add(clean_ne)
+                    job.setdefault("emails", []).append({"email": clean_ne, "source": "found"})
+
     if len(current_desc.strip()) > 80:
         return job
 
-    url = job.get("url") or ""
-    site = (job.get("site") or "").lower()
     if "linkedin" in site or "linkedin.com" in url:
         desc = _fetch_linkedin_description(url)
         if desc:
             job["description"] = desc
             new_emails = _extract_emails_from_text(desc)
             if new_emails:
-                existing = [e.get("email") if isinstance(e, dict) else e for e in (job.get("emails") or [])]
+                existing = {
+                    (e.get("email") if isinstance(e, dict) else str(e)).lower()
+                    for e in (job.get("emails") or [])
+                }
                 for ne in new_emails:
-                    if ne not in existing:
-                        job.setdefault("emails", []).append({"email": ne, "source": "found"})
+                    clean_ne = ne.strip().lower()
+                    if clean_ne and clean_ne not in existing:
+                        existing.add(clean_ne)
+                        job.setdefault("emails", []).append({"email": clean_ne, "source": "found"})
     return job
 
 class SearchRequest(BaseModel):
@@ -252,6 +545,7 @@ class SearchRequest(BaseModel):
     hours_old: Optional[int] = None    # None/0 means all-time
     is_remote: bool = False
     easy_apply: Optional[bool] = None
+    international_only: Optional[bool] = False
 
 class ImportUrlRequest(BaseModel):
     url: str
@@ -289,6 +583,32 @@ class EasyApplyRequest(BaseModel):
 class BatchEasyApplyJobsRequest(BaseModel):
     jobs: List[EasyApplyRequest]
     customize_cv: Optional[bool] = True
+
+class ScraperConfigModel(BaseModel):
+    serper_api_key: Optional[str] = ""
+    scraper_proxy: Optional[str] = ""
+
+@router.get("/scraper-config")
+def get_scraper_config_route(current_user: models.User = Depends(get_current_user)):
+    cfg = _get_scraper_config()
+    serper = cfg.get("serper_api_key") or os.getenv("SERPER_API_KEY", "")
+    proxy = cfg.get("scraper_proxy") or os.getenv("SCRAPER_PROXY") or os.getenv("GLASSDOOR_PROXY", "")
+    return {
+        "serper_api_key": serper,
+        "scraper_proxy": proxy,
+        "has_serper": bool(serper.strip()),
+        "has_proxy": bool(proxy.strip()),
+    }
+
+@router.post("/scraper-config")
+def save_scraper_config_route(data: ScraperConfigModel, current_user: models.User = Depends(get_current_user)):
+    cfg = _get_scraper_config()
+    if data.serper_api_key is not None:
+        cfg["serper_api_key"] = data.serper_api_key.strip()
+    if data.scraper_proxy is not None:
+        cfg["scraper_proxy"] = data.scraper_proxy.strip()
+    _save_scraper_config(cfg)
+    return {"message": "Scraper configuration updated successfully", "has_serper": bool(cfg.get("serper_api_key")), "has_proxy": bool(cfg.get("scraper_proxy"))}
 
 COUNTRY_NORM = {
     "uae": ("united arab emirates", "United Arab Emirates"),
@@ -332,13 +652,17 @@ def search_jobs(req: SearchRequest,
     import pandas as pd
 
     # Filter to supported jobspy sites - enable multi-board scraping
-    SUPPORTED = {"linkedin", "indeed", "glassdoor", "zip_recruiter", "google"}
-    valid_sites = [s for s in req.sites if s in SUPPORTED] or ["linkedin", "indeed", "zip_recruiter", "google"]
+    SUPPORTED = {"linkedin", "indeed", "job_bank", "glassdoor", "google"}
+    valid_sites = [s for s in req.sites if s in SUPPORTED] or ["linkedin", "indeed", "job_bank"]
+    if req.international_only and "job_bank" not in valid_sites:
+        valid_sites.append("job_bank")
 
     # Determine countries — use multi list or fall back to single
     countries_to_search = [c.strip() for c in req.countries if c.strip()] if req.countries else [req.country or "Worldwide"]
     if not countries_to_search:
         countries_to_search = ["Worldwide"]
+    if req.international_only and not any(c.lower() in ("canada", "worldwide", "global") for c in countries_to_search):
+        countries_to_search.append("Canada")
 
     hours_filter = req.hours_old if (req.hours_old and req.hours_old > 0) else None
 
@@ -348,60 +672,132 @@ def search_jobs(req: SearchRequest,
     per_country = max((req.results_wanted * fetch_multiplier) // max(len(countries_to_search), 1), min(max(req.results_wanted * 2, 15), 45))
 
     # For strict 24h searches: remove LinkedIn (it ignores f_TPR for public unauthenticated requests)
-    # Indeed, Google, and ZipRecruiter actually honor the hours_old parameter reliably
+    # Indeed and Job Bank actually honor the hours_old parameter reliably
     effective_sites = list(valid_sites)
     if hours_filter and hours_filter <= 24:
         effective_sites = [s for s in effective_sites if s != "linkedin"]
         if not effective_sites:
-            effective_sites = ["indeed", "google", "zip_recruiter"]
-        # Ensure indeed and google are included for 24h
-        for must_have in ["indeed", "google"]:
+            effective_sites = ["indeed", "job_bank"]
+        # Ensure indeed and job_bank are included for 24h
+        for must_have in ["indeed", "job_bank"]:
             if must_have not in effective_sites and must_have in SUPPORTED:
                 effective_sites.append(must_have)
 
-    def scrape_country_worker(country_name: str):
-        try:
-            norm_key = country_name.strip().lower()
-            if norm_key in ("worldwide", "global", "all", ""):
-                # Indeed doesn't have a 'worldwide' domain; 'usa' indexes massive US + global remote jobs
-                indeed_c = "usa"
-                linkedin_loc = "Worldwide"
-                loc = req.location.strip() if req.location.strip() else ("Remote" if req.is_remote else "Worldwide")
-            else:
-                indeed_c, linkedin_loc = COUNTRY_NORM.get(norm_key, (norm_key, country_name.strip()))
-                loc = req.location.strip() if req.location.strip() else linkedin_loc
+    from ..search_engine import (
+        expand_queries, best_relevance, is_spam, dedup_and_merge, quality_score,
+    )
+    import time as _time
+    from concurrent.futures import wait as _wait, FIRST_COMPLETED
 
-            df_c = scrape_jobs(
-                site_name=effective_sites,
-                search_term=req.title.strip(),
-                location=loc,
-                results_wanted=per_country,
-                hours_old=hours_filter,
-                country_indeed=indeed_c,
-                is_remote=req.is_remote,
-                easy_apply=req.easy_apply,
-                linkedin_fetch_description=False,
-            )
-            if df_c is not None and not df_c.empty:
-                df_c["_search_country"] = "Worldwide" if norm_key in ("worldwide", "global", "all", "") else country_name
-                return df_c
-        except Exception as err:
-            print(f"[Scraper] Warning for country '{country_name}': {err}")
+    t_start = _time.time()
+    SCRAPE_BUDGET_S = 30      # hard wall-clock budget for the whole scraping fan-out
+    # How many phrasings of the role each board is queried with
+    SITE_VARIANT_LIMIT = {"indeed": 3, "linkedin": 2, "job_bank": 2, "glassdoor": 2, "google": 2}
+    stats = {"tasks": 0, "tasks_ok": 0, "tasks_failed": 0, "tasks_timed_out": 0,
+             "raw": 0, "after_dedup": 0, "after_relevance": 0, "spam_removed": 0,
+             "per_site": {}, "queries": {}, "timings": {}}
+
+    def _country_ctx(country_name: str):
+        norm_key = country_name.strip().lower()
+        if norm_key in ("worldwide", "global", "all", ""):
+            indeed_c = "usa"
+            loc = req.location.strip() if req.location.strip() else ("Remote" if req.is_remote else "Worldwide")
+        else:
+            indeed_c, linkedin_loc = COUNTRY_NORM.get(norm_key, (norm_key, country_name.strip()))
+            loc = req.location.strip() if req.location.strip() else linkedin_loc
+        sites = [
+            s for s in effective_sites
+            if s != "job_bank" or norm_key in ("canada", "ca", "worldwide", "global", "all", "") or req.international_only
+        ] or list(effective_sites)
+        return norm_key, indeed_c, loc, sites
+
+    # Build the fan-out task list
+    tasks = []
+    all_queries: List[str] = [req.title.strip()]
+    for country_name in countries_to_search:
+        norm_key, indeed_c, loc, sites = _country_ctx(country_name)
+        variants = expand_queries(req.title.strip(), norm_key, max_variants=3) or [req.title.strip()]
+        stats["queries"][country_name] = variants
+        for q in variants:
+            if q not in all_queries:
+                all_queries.append(q)
+        for site in sites:
+            for vi, q in enumerate(variants[: SITE_VARIANT_LIMIT.get(site, 2)]):
+                want = per_country if vi == 0 else max(10, per_country // 2)
+                tasks.append((country_name, norm_key, site, q, want, indeed_c, loc))
+    stats["tasks"] = len(tasks)
+
+    def scrape_task(task):
+        country_name, norm_key, site, q, want, indeed_c, loc = task
+        # Indeed cannot search for literal 'Worldwide' or 'Global' as a city name
+        site_loc = loc
+        if site == "indeed" and str(loc).strip().lower() in ("worldwide", "global", "all"):
+            site_loc = "Remote" if req.is_remote else ""
+
+        # High-precision Google Jobs integration via Serper API if key is set
+        if site == "google":
+            serper_key = os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")
+            if serper_key:
+                g_jobs = _fetch_serper_google_jobs(q, location=loc, country=indeed_c, results_wanted=want, api_key=serper_key)
+                if g_jobs:
+                    df_g = pd.DataFrame(g_jobs)
+                    df_g["_search_country"] = "Worldwide" if norm_key in ("worldwide", "global", "all", "") else country_name
+                    df_g["_query"] = q
+                    return df_g
+
+        kwargs = dict(
+            site_name=[site],
+            search_term=q,
+            location=site_loc,
+            results_wanted=want,
+            hours_old=hours_filter,
+            country_indeed=indeed_c,
+            is_remote=req.is_remote,
+            easy_apply=req.easy_apply,
+            international_only=bool(req.international_only),
+            linkedin_fetch_description=False,
+        )
+        # Pass proxy if configured for Glassdoor / Cloudflare-protected boards
+        proxy = os.getenv("SCRAPER_PROXY") or os.getenv("GLASSDOOR_PROXY") or _get_scraper_config().get("scraper_proxy", "")
+        if proxy and site in ("glassdoor", "google"):
+            kwargs["proxies"] = [proxy]
+
+        if site == "google":
+            kwargs["google_search_term"] = f"{q} jobs near {loc}" if loc and loc.lower() != "worldwide" else f"{q} jobs"
+        df_t = scrape_jobs(**kwargs)
+        if df_t is not None and not df_t.empty:
+            df_t["_search_country"] = "Worldwide" if norm_key in ("worldwide", "global", "all", "") else country_name
+            df_t["_query"] = q
+            return df_t
         return None
 
     try:
         all_dfs = []
-        # Run parallel scraping across all selected countries
-        max_workers = min(len(countries_to_search), 6)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_country = {
-                executor.submit(scrape_country_worker, c): c
-                for c in countries_to_search
-            }
-            for future in as_completed(future_to_country):
-                res_df = future.result()
-                if res_df is not None and not res_df.empty:
-                    all_dfs.append(res_df)
+        executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 10))
+        fut_map = {executor.submit(scrape_task, t): t for t in tasks}
+        pending = set(fut_map)
+        deadline = t_start + SCRAPE_BUDGET_S
+        while pending:
+            remaining = deadline - _time.time()
+            if remaining <= 0:
+                break
+            done, pending = _wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
+            for fut in done:
+                t = fut_map[fut]
+                try:
+                    res_df = fut.result()
+                    stats["tasks_ok"] += 1
+                    if res_df is not None and not res_df.empty:
+                        all_dfs.append(res_df)
+                        stats["per_site"][t[2]] = stats["per_site"].get(t[2], 0) + len(res_df)
+                except Exception as err:
+                    stats["tasks_failed"] += 1
+                    logger.warning(f"[Scraper] {t[2]} / '{t[3]}' / {t[0]} failed: {err}")
+        stats["tasks_timed_out"] = len(pending)
+        if pending:
+            logger.info(f"[Scraper] {len(pending)} scrape tasks exceeded the {SCRAPE_BUDGET_S}s budget; returning partial results")
+        executor.shutdown(wait=False, cancel_futures=True)
+        stats["timings"]["scrape_s"] = round(_time.time() - t_start, 1)
 
         if not all_dfs:
             return {
@@ -410,25 +806,21 @@ def search_jobs(req: SearchRequest,
                 "searched_title": req.title.strip(),
                 "searched_countries": countries_to_search,
                 "searched_sites": valid_sites,
-                "message": "No jobs found for this query on the selected boards/countries."
+                "stats": stats,
+                "message": "No jobs found for this query on the selected boards/countries.",
             }
 
         df = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
         df = df.fillna("")
+        stats["raw"] = len(df)
 
         raw_jobs = []
-        seen_keys = set()   # dedup by title+company
 
         for _, row in df.iterrows():
             title   = str(row.get("title", "")).strip()
             company = str(row.get("company", "")).strip()
             if not title:
                 continue
-
-            dedup_key = f"{title.lower()}|{company.lower()}"
-            if dedup_key in seen_keys:
-                continue
-            seen_keys.add(dedup_key)
 
             desc    = str(row.get("description", ""))
             job_url = str(row.get("job_url", ""))
@@ -438,12 +830,7 @@ def search_jobs(req: SearchRequest,
             if row.get("max_amount"):
                 salary += f"–${int(float(row['max_amount'])):,}"
 
-            initial_emails = []
-            if row.get("emails"):
-                for e in str(row["emails"]).replace(";", ",").split(","):
-                    c = e.strip().lower()
-                    if c and "@" in c:
-                        initial_emails.append({"email": c, "source": "found"})
+            initial_emails = _extract_row_emails(row, desc)
 
             date_raw = row.get("date_posted")
             age_hours = _compute_job_age_hours(date_raw)
@@ -485,21 +872,98 @@ def search_jobs(req: SearchRequest,
                 "company_domain": "",
                 "imported": False,
                 "country": str(row.get("_search_country", "")),
+                "listing_type": str(row.get("listing_type", "")),
+                "company_industry": str(row.get("company_industry", "")),
+                "is_international_eligible": bool(
+                    "international" in str(row.get("company_industry", "")).lower() or
+                    "international" in desc.lower() or
+                    req.international_only
+                ),
                 "score": None,
                 "matched_skills": [],
                 "missing_skills": [],
+                "matched_query": str(row.get("_query", "")),
+                "also_on": [str(row.get("site", ""))],
+                "relevance": best_relevance(all_queries, title, desc),
+                "_spam": is_spam(title, desc, company),
             })
 
-        # Fast parallel enrichment of missing job descriptions (e.g. LinkedIn guest API)
-        try:
-            with ThreadPoolExecutor(max_workers=10) as desc_executor:
-                raw_jobs = list(desc_executor.map(_enrich_job_description, raw_jobs))
-        except Exception as desc_err:
-            print(f"[Scraper] Parallel description enrichment warning: {desc_err}")
+        # ── Quality stage 1: spam removal + cross-board / cross-query merge ──
+        before_spam = len(raw_jobs)
+        raw_jobs = [j for j in raw_jobs if not j.pop("_spam", False)]
+        stats["spam_removed"] = before_spam - len(raw_jobs)
+        raw_jobs = dedup_and_merge(raw_jobs)
+        stats["after_dedup"] = len(raw_jobs)
 
-        # Multi-Layer Recruiter Email Discovery Engine
-        from recruiter_hunter import batch_enrich_jobs
-        jobs = batch_enrich_jobs(raw_jobs, max_workers=12)
+        # ── Quality stage 2: adaptive relevance filter ──
+        # Strong = the title really is the searched role (synonym-aware).
+        # Weak   = only the description matches; used to back-fill when strong results are scarce.
+        strong = [j for j in raw_jobs if j["relevance"] >= 40]
+        weak = sorted((j for j in raw_jobs if 20 <= j["relevance"] < 40), key=lambda j: -j["relevance"])
+        min_wanted = max(req.results_wanted, 15)
+        if len(strong) < min_wanted:
+            strong += weak[: min_wanted - len(strong)]
+        raw_jobs = strong
+        stats["after_relevance"] = len(raw_jobs)
+
+        # Cap work for the (expensive) enrichment stages: best candidates first.
+        for j in raw_jobs:
+            j["quality"] = quality_score(j)
+        raw_jobs.sort(key=lambda j: -j["quality"])
+        MAX_RESULTS = min(max(req.results_wanted * 6, 150), 250)
+        raw_jobs = raw_jobs[:MAX_RESULTS]
+
+        def _bounded_map(fn, items, workers, budget_s):
+            """Parallel map that never blocks longer than budget_s; unfinished items are kept as-is."""
+            ex = ThreadPoolExecutor(max_workers=workers)
+            futs = [ex.submit(fn, it) for it in items]
+            _wait(futs, timeout=budget_s)
+            out = []
+            for it, f in zip(items, futs):
+                if f.done() and not f.exception():
+                    out.append(f.result())
+                else:
+                    out.append(it)
+            ex.shutdown(wait=False, cancel_futures=True)
+            return out
+
+        # Fast parallel enrichment of missing job descriptions (e.g. LinkedIn guest API)
+        t_enrich = _time.time()
+        try:
+            raw_jobs = _bounded_map(_enrich_job_description, raw_jobs, 12, 25)
+        except Exception as desc_err:
+            logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
+        stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 1)
+
+        # Descriptions are now richer → refine relevance for jobs that were description-only matches.
+        for j in raw_jobs:
+            if j.get("relevance", 0) < 40 and j.get("description"):
+                j["relevance"] = max(j["relevance"], best_relevance(all_queries, j["title"], j["description"]))
+
+        # Multi-Layer Recruiter Email Discovery Engine (time-boxed so search stays fast)
+        t_hunt = _time.time()
+        from recruiter_hunter import enrich_job_emails
+
+        def _hunt(j: dict) -> dict:
+            direct = list(j.get("emails") or [])
+            try:
+                found = enrich_job_emails(dict(j)) or []
+            except Exception as hunt_err:
+                logger.warning(f"[RecruiterHunter] {j.get('company')}: {hunt_err}")
+                found = []
+            merged, seen_em = [], set()
+            for e in direct + found:
+                em = re.sub(r"[\[\]'\"\s]", "", (e.get("email") if isinstance(e, dict) else str(e))).lower()
+                if em and "@" in em and em not in seen_em:
+                    seen_em.add(em)
+                    merged.append(e if isinstance(e, dict) else {"email": em, "source": "found"})
+            j["emails"] = merged
+            if not j.get("company_domain") and merged:
+                j["company_domain"] = merged[0]["email"].split("@")[-1]
+            return j
+
+        jobs = _bounded_map(_hunt, raw_jobs, 20, 12)
+        stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 1)
 
         # Automatic High-Accuracy AI Matching if user has a CV
         cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
@@ -517,29 +981,34 @@ def search_jobs(req: SearchRequest,
                         j["missing_skills"] = bd.get("missing_tech", [])
                         j["tips"] = bd.get("tips", [])
                     except Exception as match_e:
-                        print(f"Match error on '{j.get('title')}': {match_e}")
+                        logger.debug(f"Match error on '{j.get('title')}': {match_e}")
                     return j
 
                 with ThreadPoolExecutor(max_workers=8) as matcher_executor:
                     jobs = list(matcher_executor.map(score_one_job, jobs))
-
-                # Auto-sort so highest matching jobs appear first
-                jobs.sort(key=lambda x: (x.get("score") is not None, x.get("score") or 0), reverse=True)
             except Exception as auto_err:
-                print(f"[Matching] Auto-match exception: {auto_err}")
+                logger.warning(f"[Matching] Auto-match exception: {auto_err}")
+
+        # ── Final ranking: CV fit (if available) blended with listing quality ──
+        for j in jobs:
+            j["quality"] = quality_score(j)
+            cv = j.get("score")
+            j["rank_score"] = round(0.55 * cv + 0.45 * j["quality"], 1) if cv is not None else float(j["quality"])
+        jobs.sort(key=lambda x: x["rank_score"], reverse=True)
+        stats["timings"]["total_s"] = round(_time.time() - t_start, 1)
 
         # Check user's applied / saved applications to annotate jobs
         apps = db.query(models.Application).filter(models.Application.user_id == current_user.id).all()
-        applied_urls = set()
-        applied_clean_urls = set()
-        applied_job_ids = set()
-        applied_title_comp = set()
-        applied_companies = set()
+        applied_urls: set = set()
+        applied_clean_urls: set = set()
+        applied_job_ids: set = set()
+        applied_title_comp: set = set()
+        applied_company_to_titles: dict = {}
 
-        saved_urls = set()
-        saved_clean_urls = set()
-        saved_job_ids = set()
-        saved_title_comp = set()
+        saved_urls: set = set()
+        saved_clean_urls: set = set()
+        saved_job_ids: set = set()
+        saved_title_comp: set = set()
 
         for a in apps:
             st = (a.status or "").lower()
@@ -551,12 +1020,12 @@ def search_jobs(req: SearchRequest,
             tc = f"{nt}|{nc}"
 
             if st != "saved":
-                # ANY status other than 'saved' (applied, sent, review, interview, offer, rejected, accepted) is an applied application!
                 if raw_url: applied_urls.add(raw_url)
                 if cl_url: applied_clean_urls.add(cl_url)
                 if jid: applied_job_ids.add(jid)
                 if nt and nc: applied_title_comp.add(tc)
-                if nc: applied_companies.add(nc)
+                if nc and nt:
+                    applied_company_to_titles.setdefault(nc, set()).add(nt)
             else:
                 if raw_url: saved_urls.add(raw_url)
                 if cl_url: saved_clean_urls.add(cl_url)
@@ -580,15 +1049,11 @@ def search_jobs(req: SearchRequest,
                 is_app = True
             elif j_tc and j_tc in applied_title_comp:
                 is_app = True
-            elif j_nc and j_nc in applied_companies and j_nt:
-                for tc in applied_title_comp:
-                    if "|" in tc:
-                        parts = tc.split("|", 1)
-                        if len(parts) == 2:
-                            at, ac = parts
-                            if ac == j_nc and (j_nt in at or at in j_nt):
-                                is_app = True
-                                break
+            elif j_nc and j_nt and j_nc in applied_company_to_titles:
+                for at in applied_company_to_titles[j_nc]:
+                    if j_nt in at or at in j_nt:
+                        is_app = True
+                        break
 
             is_sav = False
             if not is_app:
@@ -612,7 +1077,15 @@ def search_jobs(req: SearchRequest,
             if len(j.get("description", "")) > 4500:
                 j["description"] = j["description"][:4500]
 
-        return {"jobs": jobs, "total": len(jobs)}
+        return {
+            "jobs": jobs,
+            "total": len(jobs),
+            "searched_title": req.title.strip(),
+            "searched_countries": countries_to_search,
+            "searched_sites": valid_sites,
+            "queries_used": all_queries,
+            "stats": stats,
+        }
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -624,7 +1097,16 @@ def fetch_job_description(req: JobDescriptionRequest,
     """Fetch description on-demand for a specific job."""
     url = req.url or ""
     desc = ""
-    if "linkedin.com" in url or (req.job_id and str(req.job_id).isdigit()):
+    emails = []
+
+    # 1. Job Bank Canada specialized fetch (with JSF AJAX extraction for recruiter email)
+    if "jobbank.gc.ca" in url or (req.job_id and "jobbank" in str(req.job_id).lower()):
+        jb_res = _fetch_jobbank_details(req.job_id or url)
+        if jb_res.get("description"):
+            desc = jb_res["description"]
+        if jb_res.get("emails"):
+            emails = list(jb_res["emails"])
+    elif "linkedin.com" in url or (req.job_id and str(req.job_id).isdigit()):
         desc = _fetch_linkedin_description(req.job_id or url)
 
     if not desc and url.startswith("http"):
@@ -644,7 +1126,9 @@ def fetch_job_description(req: JobDescriptionRequest,
         except Exception:
             pass
 
-    emails = _extract_emails_from_text(desc)
+    for e in _extract_emails_from_text(desc):
+        if e not in emails:
+            emails.append(e)
 
     score = None
     breakdown = {}
@@ -678,6 +1162,51 @@ def import_from_url(req: ImportUrlRequest,
                     db: Session = Depends(get_db),
                     current_user: models.User = Depends(get_current_user)):
     """Scrape any job posting URL and extract emails + basic info."""
+    clean_url = req.url.strip()
+
+    # 1. Specialized instant handler for Job Bank Canada URLs
+    if "jobbank.gc.ca" in clean_url:
+        jb_data = _fetch_jobbank_details(clean_url)
+        if jb_data and jb_data.get("title"):
+            jb_emails = [{"email": e, "source": "found"} for e in jb_data.get("emails", [])]
+            score = None
+            breakdown = {}
+            matched_skills = []
+            missing_skills = []
+            tips = []
+            cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+            if cv_rec and cv_rec.text_content and jb_data.get("description"):
+                try:
+                    from cv_matcher import compute_match
+                    score, breakdown = compute_match(cv_rec.text_content, jb_data["description"], jb_data["title"])
+                    matched_skills = breakdown.get("matched_tech", [])
+                    missing_skills = breakdown.get("missing_tech", [])
+                    tips = breakdown.get("tips", [])
+                except Exception:
+                    pass
+            return {
+                "job": {
+                    "title": jb_data["title"],
+                    "company": jb_data["company"] or "Job Bank Employer",
+                    "location": jb_data.get("location", ""),
+                    "url": jb_data.get("url", clean_url),
+                    "job_url_direct": jb_data.get("job_url_direct", clean_url),
+                    "description": jb_data.get("description", ""),
+                    "site": "Job Bank (Canada)",
+                    "date_posted": "",
+                    "salary": jb_data.get("salary", ""),
+                    "emails": jb_emails,
+                    "easy_apply": jb_data.get("easy_apply", False),
+                    "is_direct_apply": jb_data.get("is_direct_apply", False),
+                    "company_domain": "",
+                    "imported": True,
+                    "score": score,
+                    "breakdown": breakdown,
+                    "matched_skills": matched_skills,
+                    "missing_skills": missing_skills,
+                    "tips": tips
+                }
+            }
     try:
         from bs4 import BeautifulSoup
         headers = {
@@ -876,19 +1405,10 @@ def easy_apply_job(req: EasyApplyRequest,
     cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
     cv_text = cv.text_content if cv else ""
 
+    # Automatic easy-apply strictly uses authentic original CV
     custom_pdf_bytes = None
     custom_pdf_name = None
     effective_score = req.match_score or 80
-
-    if req.customize_cv and cv_text:
-        try:
-            from cv_tailor import tailor_cv
-            tailor_res = tailor_cv(cv_text, title, company, desc or title)
-            custom_pdf_bytes = tailor_res["pdf_bytes"]
-            custom_pdf_name = tailor_res["filename"]
-            effective_score = tailor_res["tailored_score"]
-        except Exception as e:
-            print(f"[EasyApply] Warning tailoring CV: {e}")
 
     now = datetime.utcnow()
     site_label = (req.site or "Easy Apply").title()
@@ -979,19 +1499,10 @@ def batch_easy_apply_jobs(req: BatchEasyApplyJobsRequest,
                 models.Application.title.ilike(title)
             ).first()
 
+        # Automatic batch easy-apply strictly uses authentic original CV
         custom_pdf_bytes = None
         custom_pdf_name = None
         effective_score = item.match_score or 80
-
-        if req.customize_cv and cv_text:
-            try:
-                from cv_tailor import tailor_cv
-                tailor_res = tailor_cv(cv_text, title, company, desc or title)
-                custom_pdf_bytes = tailor_res["pdf_bytes"]
-                custom_pdf_name = tailor_res["filename"]
-                effective_score = tailor_res["tailored_score"]
-            except Exception:
-                pass
 
         site_label = (item.site or "Easy Apply").title()
         notes = f"Batch applied via Candidature Simplifiée ({site_label})" + (f" (Tailored ATS Match: {effective_score}%)" if custom_pdf_name else "")

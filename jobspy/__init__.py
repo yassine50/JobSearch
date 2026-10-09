@@ -12,6 +12,7 @@ from jobspy.google import Google
 from jobspy.indeed import Indeed
 from jobspy.linkedin import LinkedIn
 from jobspy.naukri import Naukri
+from jobspy.jobbank import JobBank
 from jobspy.model import JobType, Location, JobResponse, Country
 from jobspy.model import SalarySource, ScraperInput, Site
 from jobspy.util import (
@@ -346,6 +347,7 @@ def scrape_jobs_with_status(
         Site.BAYT: BaytScraper,
         Site.NAUKRI: Naukri,
         Site.BDJOBS: BDJobs,
+        Site.JOB_BANK: JobBank,
     }
     set_logger_level(verbose)
     job_type = get_enum_from_value(job_type) if job_type else None
@@ -375,6 +377,7 @@ def scrape_jobs_with_status(
         is_remote=is_remote,
         job_type=job_type,
         easy_apply=easy_apply,
+        international_only=kwargs.get("international_only", False),
         description_format=description_format,
         linkedin_fetch_description=linkedin_fetch_description,
         results_wanted=results_wanted,
@@ -390,6 +393,7 @@ def scrape_jobs_with_status(
         cap_name = site.value.capitalize()
         site_name = "ZipRecruiter" if cap_name == "Zip_recruiter" else cap_name
         site_name = "LinkedIn" if cap_name == "Linkedin" else cap_name
+        site_name = "JobBank" if cap_name in ("Job_bank", "Jobbank") else site_name
         create_logger(site_name).info(f"finished scraping")
         return site.value, scraped_data
 

@@ -12,6 +12,7 @@ from email.header import Header
 from .. import models
 from ..database import get_db
 from ..auth import get_current_user
+from ..email_templates import get_application_email, get_followup_email, detect_language
 
 router = APIRouter(prefix="/api/email", tags=["email"])
 
@@ -89,6 +90,10 @@ class TemplateRequest(BaseModel):
     to_name: str = "Hiring Team"
     company: str = ""
     job_title: str = ""
+    lang: Optional[str] = None
+    job_description: Optional[str] = ""
+    site: Optional[str] = None
+    url: Optional[str] = None
 
 class SendEmailRequest(BaseModel):
     to_email: str
@@ -101,6 +106,7 @@ class SendEmailRequest(BaseModel):
     job_title: Optional[str] = ""
     company: Optional[str] = ""
     job_description: Optional[str] = ""
+    customize_cv: Optional[bool] = False
 
 class RecipientItem(BaseModel):
     email: str
@@ -118,12 +124,16 @@ class AutoApplyRequest(BaseModel):
     match_score: Optional[int] = 0
     notes: Optional[str] = ""
     job_description: Optional[str] = ""
-    customize_cv: Optional[bool] = True
+    customize_cv: Optional[bool] = False
+    custom_subject: Optional[str] = None
+    custom_body: Optional[str] = None
+    lang: Optional[str] = None
+    site: Optional[str] = None
 
 class BatchAutoApplyRequest(BaseModel):
     jobs: List[AutoApplyRequest]
     delay_seconds: float = 1.0
-    customize_cv: Optional[bool] = True
+    customize_cv: Optional[bool] = False
 
 class SettingsRequest(BaseModel):
     smtp_host: str = "smtp.gmail.com"
@@ -172,6 +182,35 @@ def _dispatch_smtp(settings, current_user, to_email, to_name, subject, body, att
 @router.post("/template")
 def get_template(req: TemplateRequest,
                  current_user: models.User = Depends(get_current_user)):
+    target_lang = req.lang
+    if not target_lang and req.job_description:
+        target_lang = detect_language(f"{req.job_title} {req.company} {req.job_description}")
+
+    if req.template_type == "application":
+        subj, body, _ = get_application_email(
+            role_title=req.job_title,
+            company=req.company,
+            recruiter_name=req.to_name,
+            post_text=req.job_description,
+            sender_name=current_user.name,
+            sender_email=current_user.email,
+            lang=target_lang,
+            site=req.site,
+            url=req.url
+        )
+        return {"subject": subj, "body": body}
+
+    if req.template_type == "follow_up":
+        subj, body, _ = get_followup_email(
+            role_title=req.job_title,
+            company=req.company,
+            recruiter_name=req.to_name,
+            sender_name=current_user.name,
+            sender_email=current_user.email,
+            lang=target_lang
+        )
+        return {"subject": subj, "body": body}
+
     t = TEMPLATES.get(req.template_type)
     if not t:
         raise HTTPException(400, f"Unknown template: {req.template_type}")
@@ -215,43 +254,9 @@ def send_email(req: SendEmailRequest,
             ).first()
 
         if req.attach_cv:
-            if app_to_update and app_to_update.tailored_cv_data:
-                custom_pdf_bytes = app_to_update.tailored_cv_data
-                custom_pdf_name = app_to_update.tailored_cv_filename or f"CV_{req.company or 'Tailored'}.pdf"
-            else:
-                cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
-                if cv and cv.text_content:
-                    role_title = (req.job_title or (app_to_update.title if app_to_update else "")).strip()
-                    company = (req.company or (app_to_update.company if app_to_update else "")).strip()
-                    job_desc = req.job_description or (app_to_update.notes if app_to_update else "")
-                    if not role_title and req.subject:
-                        m = re.search(r"Application for\s+([^—–\-]+)", req.subject, re.IGNORECASE)
-                        if m:
-                            role_title = m.group(1).strip()
-                    if not company and app_to_update:
-                        company = app_to_update.company
-                    if not company:
-                        company = "Company"
-
-                    if role_title or company:
-                        try:
-                            from cv_tailor import tailor_cv
-                            tailor_res = tailor_cv(
-                                cv.text_content,
-                                role_title or "Software Engineer",
-                                company or "Company",
-                                job_desc or role_title or "Software Engineer"
-                            )
-                            custom_pdf_bytes = tailor_res.get("pdf_bytes")
-                            custom_pdf_name = tailor_res.get("filename")
-                            effective_score = tailor_res.get("tailored_score")
-                            if app_to_update:
-                                app_to_update.tailored_cv_data = custom_pdf_bytes
-                                app_to_update.tailored_cv_filename = custom_pdf_name
-                                if effective_score:
-                                    app_to_update.match_score = effective_score
-                        except Exception as t_err:
-                            print(f"[send_email] Auto-tailor CV warning: {t_err}")
+            # Automatic email send strictly attaches authentic original CV (cv.file_data)
+            custom_pdf_bytes = None
+            custom_pdf_name = None
 
         _dispatch_smtp(settings, current_user, req.to_email, req.to_name,
                        req.subject, req.body, req.attach_cv, db,
@@ -329,22 +334,11 @@ def auto_apply(req: AutoApplyRequest,
         raise HTTPException(400, "Please configure your Gmail SMTP settings first in Settings.")
 
     sender_name = settings.sender_name or current_user.name
-    subject = f"Application for {req.job_title} — {sender_name}"
 
+    # Automatic auto-apply strictly sends authentic original CV (cv.file_data)
     custom_pdf_bytes = None
     custom_pdf_name = None
     effective_score = req.match_score or 0
-
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
-    if req.customize_cv and cv and cv.text_content:
-        try:
-            from cv_tailor import tailor_cv
-            tailor_res = tailor_cv(cv.text_content, req.job_title, req.company, req.job_description or req.job_title)
-            custom_pdf_bytes = tailor_res["pdf_bytes"]
-            custom_pdf_name = tailor_res["filename"]
-            effective_score = tailor_res["tailored_score"]
-        except Exception as t_err:
-            print(f"[AutoApply] Tailoring warning: {t_err}")
 
     try:
         dispatched = []
@@ -353,22 +347,22 @@ def auto_apply(req: AutoApplyRequest,
         # 1. Iterate through all verified recruiter emails and send personalized email to each
         for i, r in enumerate(recipients_list):
             r_name = r.name if r.name and r.name.strip() else "Hiring Team"
-            body = f"""Dear {r_name} at {req.company},
-
-I am writing to express my strong interest in the {req.job_title} position.
-
-With strong technical experience and proven expertise, I specialize in building high-performance applications and clean, reliable software solutions. Having reviewed your role, I believe my background and technical skills make me an excellent candidate for your team.
-
-I have attached my resume for your review, detailing my accomplishments, technical stack, and shipped projects.
-
-I would welcome the opportunity to discuss how I can contribute to {req.company}. Thank you for your time and consideration.
-
-Best regards,
-{sender_name}
-{current_user.email}"""
+            auto_subj, auto_body, _ = get_application_email(
+                role_title=req.job_title,
+                company=req.company,
+                recruiter_name=r_name,
+                post_text=req.job_description,
+                sender_name=sender_name,
+                sender_email=current_user.email,
+                lang=req.lang,
+                site=req.site,
+                url=req.job_url
+            )
+            subj_to_send = req.custom_subject or auto_subj
+            body_to_send = req.custom_body or auto_body
 
             _dispatch_smtp(settings, current_user, r.email.strip(), r_name,
-                           subject, body, True, db,
+                           subj_to_send, body_to_send, True, db,
                            custom_attachment_bytes=custom_pdf_bytes,
                            custom_attachment_name=custom_pdf_name)
 
@@ -376,8 +370,8 @@ Best regards,
             logs_to_create.append({
                 "to_email": r.email.strip(),
                 "to_name": r_name,
-                "subject": subject,
-                "body": body
+                "subject": subj_to_send,
+                "body": body_to_send
             })
 
             # Gentle spacing between sends to multiple recruiters
@@ -499,21 +493,10 @@ def batch_auto_apply(req: BatchAutoApplyRequest,
             results.append({"company": item.company, "title": item.job_title, "status": "skipped", "error": "Recruiter email(s) are blacklisted (prior bounce/block)"})
             continue
 
-        subject = f"Application for {item.job_title} — {sender_name}"
-
+        # Automatic batch auto-apply strictly sends authentic original CV (cv.file_data)
         custom_pdf_bytes = None
         custom_pdf_name = None
         item_score = item.match_score or 0
-
-        if (req.customize_cv or item.customize_cv) and cv and cv.text_content:
-            try:
-                from cv_tailor import tailor_cv
-                tailor_res = tailor_cv(cv.text_content, item.job_title, item.company, item.job_description or item.job_title)
-                custom_pdf_bytes = tailor_res["pdf_bytes"]
-                custom_pdf_name = tailor_res["filename"]
-                item_score = tailor_res["tailored_score"]
-            except Exception as b_err:
-                print(f"[BatchAutoApply] Tailoring warning for {item.company}: {b_err}")
 
         try:
             job_dispatched = []
@@ -521,19 +504,19 @@ def batch_auto_apply(req: BatchAutoApplyRequest,
 
             for r_idx, r in enumerate(recipients_list):
                 r_name = r.name if r.name and r.name.strip() else "Hiring Team"
-                body = f"""Dear {r_name} at {item.company},
-
-I am writing to express my strong interest in the {item.job_title} position.
-
-With strong technical experience and proven expertise, I specialize in building high-performance applications and clean, reliable software solutions. Having reviewed your role, I believe my background and technical skills make me an excellent candidate for your team.
-
-I have attached my tailored resume for your review, detailing my accomplishments, technical stack, and shipped projects aligned directly with this role.
-
-I would welcome the opportunity to discuss how I can contribute to {item.company}. Thank you for your time and consideration.
-
-Best regards,
-{sender_name}
-{current_user.email}"""
+                auto_subj, auto_body, _ = get_application_email(
+                    role_title=item.job_title,
+                    company=item.company,
+                    recruiter_name=r_name,
+                    post_text=item.job_description,
+                    sender_name=sender_name,
+                    sender_email=current_user.email,
+                    lang=getattr(item, "lang", None),
+                    site=getattr(item, "site", None),
+                    url=item.job_url
+                )
+                subject = getattr(item, "custom_subject", None) or auto_subj
+                body = getattr(item, "custom_body", None) or auto_body
 
                 _dispatch_smtp(settings, current_user, r.email.strip(), r_name,
                                subject, body, True, db,
@@ -870,26 +853,18 @@ class FollowUpBatchRequest(BaseModel):
     attach_cv: bool = True
 
 def _build_followup_email(app: models.Application, user: models.User, sender_name: str, recipient_name: str) -> tuple[str, str]:
-    applied_date_str = app.applied_at.strftime('%B %d, %Y') if app.applied_at else "recently"
-    r_name = recipient_name if recipient_name and recipient_name.strip() and recipient_name != "Hiring Team" else f"Hiring Team at {app.company}"
-    
-    subject = f"Follow-up: Application for {app.title} — {sender_name}"
-    body = f"""Dear {r_name},
-
-I hope this email finds you well.
-
-I am following up on my application for the {app.title} position submitted on {applied_date_str}. I remain very enthusiastic about the opportunity to join {app.company} and contribute to your team.
-
-I understand your team is busy reviewing candidates, but I wanted to kindly check in on the status of my application and reiterate my strong interest in the role. Please let me know if you would like any additional information or work samples from my end.
-
-I have attached my resume again for your convenience.
-
-Thank you very much for your time and consideration.
-
-Best regards,
-{sender_name}
-{user.email}"""
-    return subject, body
+    applied_date_str = app.applied_at.strftime('%B %d, %Y') if app.applied_at else None
+    detected_lang = detect_language(f"{app.title} {app.company} {app.notes or ''}")
+    subj, body, _ = get_followup_email(
+        role_title=app.title,
+        company=app.company,
+        recruiter_name=recipient_name,
+        applied_date_str=applied_date_str,
+        sender_name=sender_name,
+        sender_email=user.email,
+        lang=detected_lang
+    )
+    return subj, body
 
 @router.get("/follow-up/candidates")
 def get_follow_up_candidates(days: int = 3,

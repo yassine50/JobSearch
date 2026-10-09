@@ -8,6 +8,103 @@ import {
   X, ShieldCheck, Sparkles, Send, ArrowRight
 } from 'lucide-react'
 
+const FR_INDICATORS = [
+  ' de ', ' le ', ' la ', ' les ', ' des ', ' un ', ' une ', ' du ', ' et ', ' pour ',
+  ' avec ', ' dans ', ' sur ', ' nous ', ' vous ', ' poste ', ' équipe ', ' profil ',
+  ' expérience ', ' compétences ', ' chez ', ' télétravail ', ' développeur ', ' développeuse ',
+  ' ingénieur ', ' recherchons ', ' rejoignez ', ' embauche ', ' candidature ', ' montréal ', ' québec '
+]
+
+function detectPostLanguage(text) {
+  if (!text) return 'en'
+  const t = ` ${text.toLowerCase()} `
+  if (['développeur', 'développeuse', 'recherchons', 'télétravail', 'candidature', 'montréal', 'québec'].some(k => t.includes(k))) {
+    return 'fr'
+  }
+  const matches = FR_INDICATORS.filter(ind => t.includes(ind)).length
+  return matches >= 2 ? 'fr' : 'en'
+}
+
+const PLATFORM_PHRASES = {
+  job_bank: {
+    en: 'referenced in your recent job posting on Job Bank',
+    fr: "suite à votre offre d'emploi sur Job Bank"
+  },
+  indeed: {
+    en: 'referenced in your recent job posting on Indeed',
+    fr: "suite à votre offre d'emploi sur Indeed"
+  },
+  linkedin: {
+    en: 'referenced in your recent publication on LinkedIn',
+    fr: 'suite à votre publication sur LinkedIn'
+  },
+  zip_recruiter: {
+    en: 'referenced in your recent job posting on ZipRecruiter',
+    fr: "suite à votre offre d'emploi sur ZipRecruiter"
+  },
+  glassdoor: {
+    en: 'referenced in your recent job posting on Glassdoor',
+    fr: "suite à votre offre d'emploi sur Glassdoor"
+  },
+  google: {
+    en: 'referenced in your recent job posting on Google Jobs',
+    fr: "suite à votre offre d'emploi sur Google Jobs"
+  },
+  generic: {
+    en: 'referenced in your recent job posting',
+    fr: "suite à votre récente offre d'emploi"
+  }
+}
+
+function detectPlatformSource(item) {
+  if (!item) return 'linkedin'
+  const combined = `${item.site || ''} ${item.source || ''} ${item.url || ''} ${item.post_url || ''} ${item.job_url || ''} ${item.job_url_direct || ''}`.toLowerCase()
+  if (combined.includes('job_bank') || combined.includes('jobbank') || combined.includes('guichet')) return 'job_bank'
+  if (combined.includes('indeed')) return 'indeed'
+  if (combined.includes('linkedin')) return 'linkedin'
+  if (combined.includes('zip_recruiter') || combined.includes('ziprecruiter')) return 'zip_recruiter'
+  if (combined.includes('glassdoor')) return 'glassdoor'
+  if (combined.includes('google')) return 'google'
+  return 'linkedin'
+}
+
+function generateEmailContent(targetLang, name, comp, title, platformKey = 'linkedin') {
+  const isGeneric = !name || ['hiring team', 'recruiter', 'unknown', 'team'].includes(name.trim().toLowerCase())
+  const phrases = PLATFORM_PHRASES[platformKey] || PLATFORM_PHRASES.generic
+
+  if (targetLang === 'fr') {
+    const salutation = isGeneric ? `Madame, Monsieur,\nÉquipe de recrutement de ${comp},` : `Bonjour ${name.trim()},`
+    return {
+      subject: `Candidature : ${title} — ${comp}`,
+      body: `${salutation}
+
+Je vous soumets par la présente ma candidature pour le poste de ${title}, ${phrases.fr}.
+
+Ayant pris connaissance de vos exigences techniques, mon profil correspond étroitement aux compétences que vous recherchez. Je conçois des solutions logicielles performantes, maintenables et évolutives, et je serais ravi de mettre mon expertise au service de vos prochains projets.
+
+Vous trouverez mon curriculum vitae ci-joint pour examen. Je me tiens à votre entière disposition pour un échange afin d'approfondir l'adéquation de mon parcours avec vos objectifs.
+
+En vous remerciant de l'attention que vous porterez à ma démarche, je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.
+
+Best regards / Cordialement,`
+    }
+  } else {
+    const salutation = isGeneric ? `Dear Hiring Team at ${comp},` : `Dear ${name.trim()} at ${comp},`
+    return {
+      subject: `Application: ${title} — ${comp}`,
+      body: `${salutation}
+
+I am writing to formally submit my application for the ${title} position ${phrases.en}.
+
+Having reviewed your technical requirements, my experience aligns closely with the skills your team is seeking. I specialize in building high-performance, maintainable software and would love to contribute to your upcoming projects and engineering milestones.
+
+I have attached my resume for your review. Thank you for your time and consideration, and I look forward to the opportunity to speak with you.
+
+Sincerely,`
+    }
+  }
+}
+
 export default function AutoApplyModal({
   isOpen,
   onClose,
@@ -17,35 +114,43 @@ export default function AutoApplyModal({
 }) {
   const toast = useToast()
   const [loading, setLoading] = useState(false)
+  const [lang, setLang] = useState('en')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [selectedEmail, setSelectedEmail] = useState('')
   const [recruiterName, setRecruiterName] = useState('')
-  const [customizeCv, setCustomizeCv] = useState(true)
 
   useEffect(() => {
     if (post) {
       const email = post.recruiter_emails?.[0]?.email || ''
       const name = post.author_name || 'Hiring Team'
       const comp = post.company || 'the team'
-      const title = post.role_title || 'Software Opportunity'
+      const title = post.role_title || post.title || 'Software Opportunity'
+      const fullText = `${post.full_text || ''} ${post.post_snippet || ''} ${post.description || ''} ${title} ${comp}`
 
+      const detectedLang = detectPostLanguage(fullText)
+      setLang(detectedLang)
+
+      const platform = detectPlatformSource(post)
+      const content = generateEmailContent(detectedLang, name, comp, title, platform)
       setSelectedEmail(email)
       setRecruiterName(name)
-      setSubject(`Application for ${title} — ${comp}`)
-      setBody(
-`Dear ${name} at ${comp},
-
-I came across your hiring publication on LinkedIn for the ${title} opportunity and wanted to reach out directly.
-
-Having reviewed your technical requirements, my experience aligns closely with the skills your team is seeking. I build high-performance, maintainable software and would love to contribute to your upcoming projects.
-
-I have attached my tailored resume for your review. Thank you for your time, and I look forward to speaking with you.
-
-Best regards,`
-      )
+      setSubject(content.subject)
+      setBody(content.body)
     }
   }, [post])
+
+  const handleToggleLang = (newLang) => {
+    if (newLang === lang) return
+    setLang(newLang)
+    const name = recruiterName || post?.author_name || 'Hiring Team'
+    const comp = post?.company || 'the team'
+    const title = post?.role_title || post?.title || 'Software Opportunity'
+    const platform = detectPlatformSource(post)
+    const content = generateEmailContent(newLang, name, comp, title, platform)
+    setSubject(content.subject)
+    setBody(content.body)
+  }
 
   if (!isOpen || !post) return null
 
@@ -70,9 +175,11 @@ Best regards,`
         recruiter_name: recruiterName,
         recruiter_email: selectedEmail,
         post_text: post.full_text || post.post_snippet || post.description || '',
-        customize_cv: customizeCv,
+        customize_cv: false,
         custom_subject: subject,
-        custom_body: body
+        custom_body: body,
+        lang: lang,
+        site: detectPlatformSource(post)
       })
 
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } })
@@ -189,7 +296,33 @@ Best regards,`
           {/* Message Body */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-300">Personalized Message</label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-300">Personalized Message</label>
+                <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-700/80">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleLang('en')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer ${
+                      lang === 'en'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    🇬🇧 EN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleLang('fr')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer ${
+                      lang === 'fr'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    🇫🇷 FR
+                  </button>
+                </div>
+              </div>
               <span className="text-[11px] text-slate-500 font-mono">{body.length} chars</span>
             </div>
             <textarea
@@ -200,43 +333,28 @@ Best regards,`
             />
           </div>
 
-          {/* Tailored CV Toggle & Bridged Skills */}
-          <div className="p-3.5 rounded-xl bg-slate-850 border border-slate-700/60 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-purple-600/20 text-purple-300 border border-purple-500/30">
-                  <Sparkles size={15} />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-white flex items-center gap-2">
-                    <span>Attach Tailored PDF Resume</span>
-                    {post.score != null && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-purple-950 border border-purple-700 text-purple-300">
-                        {post.score}% Match
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-[11px] text-slate-400">Dynamically optimizes your resume to bridge recruiter requirements</p>
-                </div>
+          {/* Resume Attachment: Authentic Verified PDF */}
+          <div className="p-3.5 rounded-xl bg-slate-850 border border-slate-700/60 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30">
+                <FileText size={16} />
               </div>
-              <input
-                type="checkbox"
-                checked={customizeCv}
-                onChange={e => setCustomizeCv(e.target.checked)}
-                className="w-4 h-4 rounded text-blue-600 bg-slate-900 border-slate-700 focus:ring-blue-500 cursor-pointer"
-              />
-            </div>
-
-            {customizeCv && post.missing_skills && post.missing_skills.length > 0 && (
-              <div className="p-2 rounded-lg bg-purple-950/40 border border-purple-800/40 text-[11px] text-purple-200 flex items-center gap-1.5 flex-wrap">
-                <span className="text-amber-300 font-semibold">Bridging keywords in PDF:</span>
-                {post.missing_skills.slice(0, 4).map((ms, i) => (
-                  <span key={i} className="px-1.5 py-0.2 rounded bg-purple-900/60 text-purple-300 border border-purple-700/50">
-                    +{ms}
+              <div>
+                <p className="text-xs font-semibold text-white flex items-center gap-2">
+                  <span>Attached: Authentic Verified Resume</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-700 text-emerald-300">
+                    CV_Yassine_Youssef.pdf
                   </span>
-                ))}
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  Your original, verified resume is attached directly without modifications or tailoring.
+                </p>
               </div>
-            )}
+            </div>
+            <div className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 rounded-lg">
+              <ShieldCheck size={13} />
+              <span>Original PDF</span>
+            </div>
           </div>
         </div>
 
@@ -256,7 +374,7 @@ Best regards,`
             className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} className="fill-slate-950" />}
-            <span>{loading ? 'Dispatching Application...' : 'Send Tailored Application'}</span>
+            <span>{loading ? 'Dispatching Application...' : 'Send Application'}</span>
           </button>
         </div>
       </motion.div>

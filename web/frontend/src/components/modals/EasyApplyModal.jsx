@@ -17,7 +17,6 @@ export default function EasyApplyModal({
 }) {
   const toast = useToast()
   const [loading, setLoading] = useState(false)
-  const [customizeCv, setCustomizeCv] = useState(true)
   const [pitch, setPitch] = useState('')
 
   useEffect(() => {
@@ -31,7 +30,7 @@ I am excited to submit my simplified application for the ${title} position.
 
 My background aligns closely with the technical and operational requirements of this role. I have extensive experience building scalable solutions and delivering high-impact software.
 
-I have attached my tailored resume for your consideration and look forward to discussing how I can contribute to ${comp}.
+I have attached my resume for your review and look forward to discussing how I can contribute to ${comp}.
 
 Best regards,`
       )
@@ -56,7 +55,7 @@ Best regards,`
         description: job.description || '',
         site: job.site || 'LinkedIn',
         match_score: score,
-        customize_cv: customizeCv,
+        customize_cv: false,
         custom_pitch: pitch,
         notes: 'Applied via Candidature Simplifiée.'
       })
@@ -173,23 +172,19 @@ Best regards,`
             />
           </div>
 
-          <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={customizeCv}
-              onChange={e => setCustomizeCv(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-700 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-            />
+          <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <div className="p-2 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30">
+              <FileText size={16} />
+            </div>
             <div className="text-xs">
               <span className="font-semibold text-emerald-300 flex items-center gap-1">
-                <Sparkles size={12} className="text-amber-400" />
-                Generate Tailored ATS Resume PDF
+                Authentic Verified Resume (CV_Yassine_Youssef.pdf)
               </span>
               <p className="text-[11px] text-slate-400">
-                Aligns technical keywords and project bullet points with {job.company}'s requirements.
+                Your original, verified resume is attached directly without modifications or tailoring.
               </p>
             </div>
-          </label>
+          </div>
         </div>
 
         {/* Footer */}

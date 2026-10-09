@@ -124,8 +124,9 @@ def dispatch_saved_applications(db: Session, user_id: int) -> Dict[str, Any]:
             continue
 
         subject = f"Application for {app.title} — {sender_name}"
-        custom_pdf_bytes = bytes(app.tailored_cv_data) if app.tailored_cv_data else None
-        custom_pdf_name = app.tailored_cv_filename or f"CV_{app.company.replace(' ', '_')}.pdf"
+        # Automated dispatch strictly uses authentic original CV (not tailored)
+        custom_pdf_bytes = None
+        custom_pdf_name = None
 
         app_dispatched_emails = []
         try:
@@ -172,7 +173,7 @@ Best regards,
             app.applied_at = now
             app.follow_up_date = now + timedelta(days=3)
             ts_str = now.strftime('%Y-%m-%d %H:%M')
-            app.notes = (app.notes or "") + f"\n[{ts_str}] 📤 Dispatched from queue to {', '.join(app_dispatched_emails)} (Tailored CV)"
+            app.notes = (app.notes or "") + f"\n[{ts_str}] 📤 Dispatched from queue to {', '.join(app_dispatched_emails)} (Original CV)"
             db.commit()
             sent_count += 1
             print(f"[AutoDispatcher] Successfully dispatched saved App #{app.id} ({app.company}) to {app_dispatched_emails}")

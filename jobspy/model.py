@@ -333,7 +333,8 @@ class Site(Enum):
     GOOGLE = "google"
     BAYT = "bayt"
     NAUKRI = "naukri"
-    BDJOBS = "bdjobs"  # Add this line
+    BDJOBS = "bdjobs"
+    JOB_BANK = "job_bank"
 
 
 class SalarySource(Enum):
@@ -352,6 +353,7 @@ class ScraperInput(BaseModel):
     is_remote: bool = False
     job_type: JobType | None = None
     easy_apply: bool | None = None
+    international_only: bool = False
     offset: int = 0
     linkedin_fetch_description: bool = False
     linkedin_company_ids: list[int] | None = None
