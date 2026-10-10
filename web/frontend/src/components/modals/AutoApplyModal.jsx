@@ -175,7 +175,7 @@ export default function AutoApplyModal({
         recruiter_name: recruiterName,
         recruiter_email: selectedEmail,
         post_text: post.full_text || post.post_snippet || post.description || '',
-        customize_cv: false,
+        customize_cv: true,
         custom_subject: subject,
         custom_body: body,
         lang: lang,
@@ -347,7 +347,7 @@ export default function AutoApplyModal({
                   </span>
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  Your original, verified resume is attached directly without modifications or tailoring.
+                  A copy of your resume tailored to this job is attached: missing job skills added, off-topic content removed, headline set to the role. Your original CV is never changed.
                 </p>
               </div>
             </div>

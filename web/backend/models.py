@@ -97,3 +97,18 @@ class EmailBlacklist(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="blacklisted_emails")
 
+
+class JobSighting(Base):
+    """
+    Global history of every posting seen in searches (career-ops scan-history).
+    Powers ghost-job detection: the same company+title re-posted under new URLs,
+    or a listing that has stayed open for months, is a strong ghost-posting signal.
+    """
+    __tablename__ = "job_sightings"
+    id = Column(Integer, primary_key=True, index=True)
+    fingerprint = Column(String, index=True, nullable=False)   # norm(company)|norm(title)
+    url_key     = Column(String, index=True, nullable=False)   # canonical URL
+    title       = Column(String); company = Column(String)
+    first_seen  = Column(DateTime, default=datetime.utcnow)
+    last_seen   = Column(DateTime, default=datetime.utcnow)
+    times_seen  = Column(Integer, default=1)

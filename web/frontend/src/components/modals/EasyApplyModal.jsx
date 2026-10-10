@@ -55,7 +55,7 @@ Best regards,`
         description: job.description || '',
         site: job.site || 'LinkedIn',
         match_score: score,
-        customize_cv: false,
+        customize_cv: true,
         custom_pitch: pitch,
         notes: 'Applied via Candidature Simplifiée.'
       })
@@ -181,7 +181,7 @@ Best regards,`
                 Authentic Verified Resume (CV_Yassine_Youssef.pdf)
               </span>
               <p className="text-[11px] text-slate-400">
-                Your original, verified resume is attached directly without modifications or tailoring.
+                A copy of your resume tailored to this job (missing skills added, off-topic content removed) is saved on the Tracker card. Download it there to upload on the job site. Your original CV is never changed.
               </p>
             </div>
           </div>

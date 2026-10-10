@@ -17,6 +17,7 @@ import PostReaderModal from '../modals/PostReaderModal.jsx'
 import JobFilterDrawer, { DEFAULT_FILTERS } from './JobFilterDrawer.jsx'
 import LocationPickerModal from '../hunter/LocationPickerModal.jsx'
 import JobDetailWorkbench from './JobDetailWorkbench.jsx'
+import JobSignalBadges from './JobSignalBadges.jsx'
 import client from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
 
@@ -25,6 +26,13 @@ const CORE_SITES = [
   { id: 'indeed', label: 'Indeed', color: 'bg-indigo-600' },
   { id: 'job_bank', label: '🇨🇦 Job Bank Canada', color: 'bg-red-600' },
   { id: 'google', label: 'Google Jobs', color: 'bg-rose-600' },
+  // Zero-auth open sources (ported from career-ops) — never blocked, always live data
+  { id: 'remote_boards', label: '🌍 Remote Boards (7)', color: 'bg-teal-600',
+    hint: 'Remotive, RemoteOK, Jobicy, Himalayas, We Work Remotely, Working Nomads, Arbeitnow' },
+  { id: 'ats', label: '🏢 Company Careers (ATS)', color: 'bg-violet-600',
+    hint: 'Greenhouse, Lever & Ashby career pages — direct from the employer, verified still open' },
+  { id: 'hackernews', label: '🟧 HN Who\'s Hiring', color: 'bg-orange-600',
+    hint: 'Latest Hacker News "Who is hiring?" thread' },
 ]
 
 const POPULAR_COUNTRIES = [
@@ -67,7 +75,6 @@ export default function JobBoardScraper({
   const [title, setTitle] = useState('')
   const [selectedCountries, setSelectedCountries] = useState(['Worldwide'])
   const [showLocationPicker, setShowLocationPicker] = useState(false)
-  const [selectedSites, setSelectedSites] = useState(['linkedin', 'indeed', 'job_bank'])
   const [resultsCount, setResultsCount] = useState(30)
   const [isRemote, setIsRemote] = useState(false)
   const [cvAnalyzing, setCvAnalyzing] = useState(false)
@@ -75,6 +82,14 @@ export default function JobBoardScraper({
 
   const [localJobs, setLocalJobs] = useState(jobs || [])
   const [hasSerperKey, setHasSerperKey] = useState(false)
+
+  // Every search automatically covers ALL sources — the user doesn't pick boards.
+  // Google Jobs is only included when a Serper key is configured (otherwise it returns nothing).
+  const selectedSites = useMemo(
+    () => CORE_SITES.map(s => s.id).filter(id => id !== 'google' || hasSerperKey),
+    [hasSerperKey]
+  )
+  const siteLabel = (id) => (CORE_SITES.find(s => s.id === id)?.label || id).replace(/^[^\w]+\s*/, '')
 
   // Auto-mark searched if jobs prop has items & sync local state
   useEffect(() => {
@@ -89,6 +104,15 @@ export default function JobBoardScraper({
       if (r.data?.has_serper) setHasSerperKey(true)
     }).catch(() => {})
   }, [])
+
+  // After each search finishes, tell the user where we searched and what each source returned
+  useEffect(() => {
+    const st = searchMeta?.stats
+    if (!st?.sites_searched?.length) return
+    const parts = st.sites_searched.map(id => `${siteLabel(id)} (${st.per_site?.[id] || 0})`)
+    toast(`🔎 Searched ${st.sites_searched.length} sources: ${parts.join(', ')}`, 'success')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMeta])
 
   const handleUpdateJob = (updatedJob) => {
     if (!updatedJob) return
@@ -242,7 +266,7 @@ export default function JobBoardScraper({
         }
       }
 
-      toast(`🎯 Analyzed your CV: Searching formal job boards for "${targetQuery}"...`, 'success')
+      toast(`🎯 CV analyzed — searching all ${selectedSites.length} sources for "${targetQuery}"...`, 'success')
       setHasSearched(true)
 
       onSearch({
@@ -298,11 +322,6 @@ export default function JobBoardScraper({
   const isWorldwide = selectedCountries.length === 1 && selectedCountries[0].toLowerCase() === 'worldwide'
   const locationLabel = isWorldwide ? 'Worldwide' : selectedCountries.join(', ')
 
-  const toggleSite = (s) => {
-    setSelectedSites(prev =>
-      prev.includes(s) ? (prev.length > 1 ? prev.filter(x => x !== s) : prev) : [...prev, s]
-    )
-  }
 
   // Filter out already applied jobs so the candidate never sees them again
   const unappliedJobs = useMemo(() => {
@@ -579,27 +598,6 @@ export default function JobBoardScraper({
             <ChevronDown size={12} className="text-slate-500 shrink-0" />
           </button>
 
-          {/* Status Badge (Identical to Photo 1) */}
-          <div
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-xs shrink-0 select-none"
-            title="Live scraping active across LinkedIn Jobs & Indeed"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-            <span className="truncate">Live LinkedIn</span>
-          </div>
-
-          {/* 1-Click Search with My CV */}
-          <button
-            type="button"
-            onClick={handleSearchByCv}
-            disabled={cvAnalyzing || loading}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold text-xs shadow-md shadow-purple-500/25 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 border border-purple-400/30"
-            title="Parse your CV and search formal listings"
-          >
-            {cvAnalyzing ? <Loader2 size={13} className="animate-spin text-white" /> : <Sparkles size={13} className="text-amber-300" />}
-            <span className="truncate">{cvAnalyzing ? 'Analyzing CV...' : 'Search with My CV'}</span>
-          </button>
-
           {/* Standard Search Button */}
           <button
             type="submit"
@@ -623,34 +621,6 @@ export default function JobBoardScraper({
         {/* LinkedIn-Standard Filter Bar (Boards + 14 Categories) */}
         <div className="flex items-center justify-between gap-3 pt-2.5 border-t border-slate-800/80 flex-wrap text-xs">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Boards Selector */}
-            <div className="flex items-center gap-1.5 mr-2">
-              <span className="text-slate-400 font-medium">Boards:</span>
-              {CORE_SITES.map(s => {
-                const active = selectedSites.includes(s.id)
-                const isGoogleUnconfigured = s.id === 'google' && !hasSerperKey
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => toggleSite(s.id)}
-                    title={isGoogleUnconfigured ? 'Google Jobs uses Serper API (free 2,500 queries/mo). Add key in Settings.' : s.label}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer border flex items-center gap-1.5 ${
-                      active
-                        ? 'bg-blue-600/20 text-blue-300 border-blue-500/60'
-                        : 'bg-slate-800 text-slate-400 border-slate-750 hover:text-white'
-                    }`}
-                  >
-                    <span>{s.label}</span>
-                    {isGoogleUnconfigured && (
-                      <span className="text-[10px] text-amber-400/90 bg-amber-950/60 border border-amber-800/40 px-1 py-0.2 rounded font-normal">
-                        Key in Settings
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
             {/* All Filters Button */}
             <button
               type="button"
@@ -737,22 +707,6 @@ export default function JobBoardScraper({
               <span>Verified Recruiter Email</span>
             </button>
 
-            {/* Quick Filter: Easy Apply */}
-            <button
-              type="button"
-              onClick={() => {
-                const next = { ...filters, easyApply: !filters.easyApply }
-                setFilters(next)
-                handleTriggerSearchWithFilters(next)
-              }}
-              className={`px-3 py-1.5 rounded-xl font-medium border transition cursor-pointer ${
-                filters.easyApply
-                  ? 'bg-blue-600/25 text-blue-300 border-blue-500/80'
-                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-              }`}
-            >
-              <span>Easy Apply</span>
-            </button>
 
             {/* Quick Filter: International Candidates (LMIA / Job Bank) */}
             <button
@@ -761,9 +715,6 @@ export default function JobBoardScraper({
                 const nextVal = !filters.internationalOnly
                 const next = { ...filters, internationalOnly: nextVal }
                 setFilters(next)
-                if (nextVal && !selectedSites.includes('job_bank')) {
-                  setSelectedSites(p => [...p, 'job_bank'])
-                }
                 handleTriggerSearchWithFilters(next)
               }}
               className={`px-3 py-1.5 rounded-xl font-medium border transition cursor-pointer flex items-center gap-1.5 ${
@@ -906,7 +857,7 @@ export default function JobBoardScraper({
               Scraping Live Job Boards for <span className="text-blue-400">"{title || 'Jobs'}"</span>
             </p>
             <p className="text-xs text-slate-400">
-              Querying <span className="text-purple-300 font-semibold">{selectedSites.map(s => s === 'linkedin' ? 'LinkedIn Jobs' : 'Indeed').join(' & ')}</span> across <span className="text-emerald-300 font-semibold">{selectedCountries.join(', ')}</span>...
+              Searching all sources automatically: <span className="text-purple-300 font-semibold">{selectedSites.map(siteLabel).join(', ')}</span> across <span className="text-emerald-300 font-semibold">{selectedCountries.join(', ')}</span>...
             </p>
             <p className="text-[11px] text-slate-500 italic">
               Automating recruiter email extraction & resume ATS alignment
@@ -925,6 +876,19 @@ export default function JobBoardScraper({
 
               {searchMeta?.stats && (
                 <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-[10px]">
+                  {searchMeta.stats.sites_searched?.length > 0 && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-slate-500 font-semibold mr-0.5">Searched in:</span>
+                      {searchMeta.stats.sites_searched.map(id => {
+                        const n = searchMeta.stats.per_site?.[id] || 0
+                        return (
+                          <span key={id} className={`px-1.5 py-0.5 rounded border ${n > 0 ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300' : 'bg-slate-800/60 border-slate-700 text-slate-500'}`}>
+                            {siteLabel(id)} · {n}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
                   {searchMeta.queries?.length > 1 && (
                     <div className="flex items-center gap-1 flex-wrap">
                       <span className="text-slate-500 font-semibold mr-0.5">Searched as:</span>
@@ -1023,6 +987,7 @@ export default function JobBoardScraper({
                           ✓ {job.also_on.length} boards
                         </span>
                       )}
+                      <JobSignalBadges job={job} />
                       {job.age_str && (
                         <>
                           <span className="text-slate-500">·</span>
@@ -1193,6 +1158,7 @@ export default function JobBoardScraper({
                             <span>🌐</span> LMIA / Global
                           </span>
                         )}
+                        <JobSignalBadges job={job} />
                         {job.age_str && (
                           <>
                             <span className="text-slate-500">·</span>

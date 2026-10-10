@@ -18,7 +18,7 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
       setLoading(true)
       setTailorData(null)
       const desc = job.description || job.full_text || job.post_snippet || job.title
-      client.post('/cv/tailor-preview', {
+      client.post('/cv/tailor', {
         job_title: job.title || job.role_title,
         company: job.company,
         job_description: desc
@@ -36,7 +36,7 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
     setDownloading(true)
     try {
       const desc = job.description || job.full_text || job.post_snippet || job.title
-      const res = await client.post('/cv/tailor-download', {
+      const res = await client.post('/cv/tailored-pdf', {
         job_title: job.title || job.role_title,
         company: job.company,
         job_description: desc

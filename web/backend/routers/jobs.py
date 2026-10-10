@@ -111,10 +111,16 @@ def _extract_job_id(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 def _clean_job_url(url: str) -> str:
+    """Canonical key for a posting URL. Must keep id-carrying query params
+    (Indeed ?jk=, LinkedIn currentJobId, Greenhouse gh_jid) — stripping the whole
+    query collapsed every Indeed job to 'indeed.com/viewjob' and one applied
+    Indeed job then hid all Indeed results."""
     if not url: return ""
-    u = url.split("?")[0].rstrip("/")
-    u = re.sub(r"^https?://(www\.|[a-z]{2}\.)?", "", u.lower())
-    return u
+    from ..search_engine import canonical_url
+    m = re.search(r"[?&]gh_jid=(\d+)", url)
+    if m:
+        return f"greenhouse:{m.group(1)}"
+    return canonical_url(url)
 
 def _norm_company(c: str) -> str:
     if not c: return ""
@@ -652,7 +658,8 @@ def search_jobs(req: SearchRequest,
     import pandas as pd
 
     # Filter to supported jobspy sites - enable multi-board scraping
-    SUPPORTED = {"linkedin", "indeed", "job_bank", "glassdoor", "google"}
+    # remote_boards / ats / hackernews are zero-auth open sources (see open_sources.py)
+    SUPPORTED = {"linkedin", "indeed", "job_bank", "glassdoor", "google", "remote_boards", "ats", "hackernews"}
     valid_sites = [s for s in req.sites if s in SUPPORTED] or ["linkedin", "indeed", "job_bank"]
     if req.international_only and "job_bank" not in valid_sites:
         valid_sites.append("job_bank")
@@ -686,6 +693,8 @@ def search_jobs(req: SearchRequest,
     from ..search_engine import (
         expand_queries, best_relevance, is_spam, dedup_and_merge, quality_score,
     )
+    from ..open_sources import fetch_open_source, OPEN_SITE_IDS
+    from ..sightings import record_and_annotate
     import time as _time
     from concurrent.futures import wait as _wait, FIRST_COMPLETED
 
@@ -722,13 +731,35 @@ def search_jobs(req: SearchRequest,
             if q not in all_queries:
                 all_queries.append(q)
         for site in sites:
+            if site in OPEN_SITE_IDS:
+                # Feeds/ATS are fetched once and filtered locally with every variant.
+                tasks.append((country_name, norm_key, site, variants, per_country, indeed_c, loc))
+                continue
             for vi, q in enumerate(variants[: SITE_VARIANT_LIMIT.get(site, 2)]):
                 want = per_country if vi == 0 else max(10, per_country // 2)
                 tasks.append((country_name, norm_key, site, q, want, indeed_c, loc))
     stats["tasks"] = len(tasks)
+    stats["sites_searched"] = sorted({t[2] for t in tasks})
+    stats["countries_searched"] = list(countries_to_search)
 
     def scrape_task(task):
         country_name, norm_key, site, q, want, indeed_c, loc = task
+        search_country = "Worldwide" if norm_key in ("worldwide", "global", "all", "") else country_name
+
+        # Zero-auth open sources: remote boards, company ATS (Greenhouse/Lever/Ashby), HN hiring
+        if site in OPEN_SITE_IDS:
+            rows = fetch_open_source(
+                site, list(q), country=search_country, location=req.location.strip(),
+                hours_old=hours_filter,
+                serper_key=os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", ""),
+            )
+            if not rows:
+                return None
+            df_o = pd.DataFrame(rows)
+            df_o["_search_country"] = search_country
+            df_o["_query"] = q[0]
+            return df_o
+
         # Indeed cannot search for literal 'Worldwide' or 'Global' as a city name
         site_loc = loc
         if site == "indeed" and str(loc).strip().lower() in ("worldwide", "global", "all"):
@@ -741,7 +772,7 @@ def search_jobs(req: SearchRequest,
                 g_jobs = _fetch_serper_google_jobs(q, location=loc, country=indeed_c, results_wanted=want, api_key=serper_key)
                 if g_jobs:
                     df_g = pd.DataFrame(g_jobs)
-                    df_g["_search_country"] = "Worldwide" if norm_key in ("worldwide", "global", "all", "") else country_name
+                    df_g["_search_country"] = search_country
                     df_g["_query"] = q
                     return df_g
 
@@ -773,7 +804,7 @@ def search_jobs(req: SearchRequest,
 
     try:
         all_dfs = []
-        executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 10))
+        executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 16))
         fut_map = {executor.submit(scrape_task, t): t for t in tasks}
         pending = set(fut_map)
         deadline = t_start + SCRAPE_BUDGET_S
@@ -825,10 +856,15 @@ def search_jobs(req: SearchRequest,
             desc    = str(row.get("description", ""))
             job_url = str(row.get("job_url", ""))
             salary  = ""
-            if row.get("min_amount"):
-                salary = f"${int(float(row['min_amount'])):,}"
-            if row.get("max_amount"):
-                salary += f"–${int(float(row['max_amount'])):,}"
+            try:
+                if row.get("min_amount"):
+                    salary = f"${int(float(row['min_amount'])):,}"
+                if row.get("max_amount") and float(row["max_amount"]) != float(row.get("min_amount") or 0):
+                    salary += f"–${int(float(row['max_amount'])):,}"
+            except (TypeError, ValueError):
+                salary = ""
+            if not salary and row.get("salary_text"):
+                salary = str(row.get("salary_text"))[:60]
 
             initial_emails = _extract_row_emails(row, desc)
 
@@ -989,11 +1025,31 @@ def search_jobs(req: SearchRequest,
             except Exception as auto_err:
                 logger.warning(f"[Matching] Auto-match exception: {auto_err}")
 
+        # ── career-ops signals: repost history, posting legitimacy, work-authorization gates ──
+        t_sig = _time.time()
+        record_and_annotate(db, jobs)
+        from ..job_evaluator import assess_legitimacy, assess_work_auth
+        for j in jobs:
+            try:
+                lg = assess_legitimacy(j, j.get("sighting"))
+                j["legitimacy"] = {"tier": lg["tier"], "risk": lg["risk"],
+                                   "flags": [s["finding"] for s in lg["signals"] if s["impact"] >= 0.5]}
+                wa = assess_work_auth(j)
+                j["work_auth"] = {"blockers": [b["label"] for b in wa["blockers"]],
+                                  "positives": wa["positives"][:3]}
+            except Exception as sig_err:
+                logger.debug(f"[Signals] {j.get('title')}: {sig_err}")
+        stats["timings"]["signals_s"] = round(_time.time() - t_sig, 1)
+
         # ── Final ranking: CV fit (if available) blended with listing quality ──
         for j in jobs:
             j["quality"] = quality_score(j)
             cv = j.get("score")
             j["rank_score"] = round(0.55 * cv + 0.45 * j["quality"], 1) if cv is not None else float(j["quality"])
+            # Ghost / suspicious postings sink (career-ops Block G)
+            tier = (j.get("legitimacy") or {}).get("tier")
+            j["rank_score"] -= 15 if tier == "Suspicious" else (5 if tier == "Proceed with Caution" else 0)
+            j["rank_score"] -= 3 * min(j.get("repost_count") or 0, 3)
         jobs.sort(key=lambda x: x["rank_score"], reverse=True)
         stats["timings"]["total_s"] = round(_time.time() - t_start, 1)
 
@@ -1032,6 +1088,19 @@ def search_jobs(req: SearchRequest,
                 if jid: saved_job_ids.add(jid)
                 if nt and nc: saved_title_comp.add(tc)
 
+        # Every recruiter address already applied to (sent emails + addresses noted on Tracker cards)
+        applied_emails: set = set()
+        for a in apps:
+            if (a.status or "").lower() != "saved" and a.notes:
+                applied_emails.update(m.lower() for m in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+\w", a.notes))
+        for (to_email,) in db.query(models.EmailLog.to_email).filter(
+                models.EmailLog.user_id == current_user.id,
+                models.EmailLog.status != "failed").all():
+            if to_email:
+                applied_emails.add(to_email.strip().lower())
+        applied_emails.discard((current_user.email or "").lower())
+        hidden_by_email = 0
+
         for j in jobs:
             j_raw_url = (j.get("url") or j.get("job_url_direct") or "").strip().lower()
             j_cl_url = _clean_job_url(j_raw_url)
@@ -1054,6 +1123,13 @@ def search_jobs(req: SearchRequest,
                     if j_nt in at or at in j_nt:
                         is_app = True
                         break
+            if not is_app and applied_emails:
+                j_emails = {((e.get("email") or "") if isinstance(e, dict) else str(e or "")).strip().lower()
+                            for e in (j.get("emails") or [])}
+                j_emails.discard("")
+                if j_emails & applied_emails:
+                    is_app = True
+                    hidden_by_email += 1
 
             is_sav = False
             if not is_app:
@@ -1070,7 +1146,10 @@ def search_jobs(req: SearchRequest,
             j["is_saved"] = is_sav
 
         # Exclude already applied jobs so candidate never sees them again
+        before_hide = len(jobs)
         jobs = [j for j in jobs if not j.get("is_applied")]
+        stats["hidden_already_applied"] = before_hide - len(jobs)
+        stats["hidden_by_email"] = hidden_by_email
 
         # Preserve rich description lengths (up to 4500 chars) for full requirements view
         for j in jobs:
@@ -1405,14 +1484,22 @@ def easy_apply_job(req: EasyApplyRequest,
     cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
     cv_text = cv.text_content if cv else ""
 
-    # Automatic easy-apply strictly uses authentic original CV
+    # User-clicked Easy Apply: honest per-job tailored COPY saved on the Tracker card
+    # (download it there to upload on the job site). Original CV is never modified.
     custom_pdf_bytes = None
     custom_pdf_name = None
-    effective_score = req.match_score or 80
+    effective_score = req.match_score or 0
+    original_score = None
+    if req.customize_cv:
+        from ..tailoring import honest_tailored_attachment
+        custom_pdf_bytes, custom_pdf_name, original_score, t_score = honest_tailored_attachment(
+            cv, title, company, desc)
+        if custom_pdf_bytes and t_score is not None:
+            effective_score = t_score
 
     now = datetime.utcnow()
     site_label = (req.site or "Easy Apply").title()
-    notes = f"Applied via Candidature Simplifiée ({site_label})" + (f" (Tailored ATS Match: {effective_score}%)" if custom_pdf_name else "")
+    notes = f"Applied via Candidature Simplifiée ({site_label})" + (f" (Tailored CV: match {original_score}% → {effective_score}%)" if custom_pdf_name else "")
     if req.notes:
         notes += f"\n{req.notes}"
 
@@ -1422,7 +1509,7 @@ def easy_apply_job(req: EasyApplyRequest,
         existing.follow_up_date = now + timedelta(days=5)
         if url and not existing.url:
             existing.url = url
-        existing.match_score = effective_score
+        existing.match_score = effective_score or existing.match_score
         existing.notes = notes
         if custom_pdf_bytes:
             existing.tailored_cv_filename = custom_pdf_name
@@ -1499,19 +1586,26 @@ def batch_easy_apply_jobs(req: BatchEasyApplyJobsRequest,
                 models.Application.title.ilike(title)
             ).first()
 
-        # Automatic batch easy-apply strictly uses authentic original CV
+        # User-clicked batch Easy Apply: honest per-job tailored COPY saved on the Tracker card
         custom_pdf_bytes = None
         custom_pdf_name = None
-        effective_score = item.match_score or 80
+        effective_score = item.match_score or 0
+        original_score = None
+        if req.customize_cv and item.customize_cv:
+            from ..tailoring import honest_tailored_attachment
+            custom_pdf_bytes, custom_pdf_name, original_score, t_score = honest_tailored_attachment(
+                cv, title, company, desc)
+            if custom_pdf_bytes and t_score is not None:
+                effective_score = t_score
 
         site_label = (item.site or "Easy Apply").title()
-        notes = f"Batch applied via Candidature Simplifiée ({site_label})" + (f" (Tailored ATS Match: {effective_score}%)" if custom_pdf_name else "")
+        notes = f"Batch applied via Candidature Simplifiée ({site_label})" + (f" (Tailored CV: match {original_score}% → {effective_score}%)" if custom_pdf_name else "")
 
         if existing:
             existing.status = "applied"
             existing.applied_at = now
             existing.follow_up_date = now + timedelta(days=5)
-            existing.match_score = effective_score
+            existing.match_score = effective_score or existing.match_score
             existing.notes = notes
             if custom_pdf_bytes:
                 existing.tailored_cv_filename = custom_pdf_name
@@ -1563,3 +1657,77 @@ def delete_saved(job_id: int, db: Session=Depends(get_db),
     if not job: raise HTTPException(404,"Not found")
     db.delete(job); db.commit()
     return {"message":"Deleted"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# career-ops integrations: "should I apply?" evaluation + liveness check
+# ─────────────────────────────────────────────────────────────────────────────
+class EvaluateJobRequest(BaseModel):
+    title: str
+    company: str = ""
+    location: str = ""
+    url: str = ""
+    job_url_direct: Optional[str] = ""
+    description: str = ""
+    salary: Optional[str] = ""
+    date_posted: Optional[str] = ""
+    age_hours: Optional[float] = None
+    site: Optional[str] = ""
+    check_liveness: bool = True
+
+
+class LivenessRequest(BaseModel):
+    urls: List[str]
+
+
+@router.post("/evaluate")
+def evaluate_job_route(req: EvaluateJobRequest,
+                       db: Session = Depends(get_db),
+                       current_user: models.User = Depends(get_current_user)):
+    """Full A–G evaluation (career-ops oferta.md) → 1–5 score and Apply / Consider / Skip verdict."""
+    from ..job_evaluator import evaluate_job
+    from ..sightings import lookup
+    from ..liveness import check_liveness
+
+    job = req.dict()
+    if job.get("age_hours") is None and job.get("date_posted"):
+        job["age_hours"] = _compute_job_age_hours(job["date_posted"])
+    # Descriptions arrive truncated from search results — refetch when thin.
+    if len((job.get("description") or "").strip()) < 300 and job.get("url"):
+        try:
+            job = _enrich_job_description({**job, "site": job.get("site") or ""})
+        except Exception:
+            pass
+
+    cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    cv_text = cv_rec.text_content if cv_rec and cv_rec.text_content else ""
+    live = None
+    if req.check_liveness:
+        target = job.get("job_url_direct") or job.get("url") or ""
+        if target:
+            live = check_liveness(target)
+    result = evaluate_job(job, cv_text, sighting=lookup(db, job), liveness=live)
+    result["liveness"] = live
+    return result
+
+
+@router.post("/liveness")
+def liveness_route(req: LivenessRequest, current_user: models.User = Depends(get_current_user)):
+    """Is the posting still open? (career-ops liveness-core) — active / expired / uncertain per URL."""
+    from ..liveness import check_many
+    if not req.urls:
+        raise HTTPException(400, "No URLs provided")
+    return {"results": check_many(req.urls)}
+
+
+@router.get("/open-sources")
+def open_sources_info(current_user: models.User = Depends(get_current_user)):
+    """List the zero-auth sources and ATS companies the 'remote_boards' / 'ats' sites cover."""
+    from ..open_sources import REMOTE_BOARDS, load_ats_companies
+    companies = load_ats_companies()
+    return {
+        "remote_boards": REMOTE_BOARDS,
+        "ats_companies": len(companies),
+        "ats_vendors": sorted({c["vendor"] for c in companies}),
+        "serper_ats_discovery": bool(os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")),
+    }

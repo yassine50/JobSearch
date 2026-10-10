@@ -6,6 +6,7 @@ import {
   Loader2, RotateCcw
 } from 'lucide-react'
 import client from '../../api/client.js'
+import ApplyVerdictPanel from './ApplyVerdictPanel.jsx'
 
 export default function JobDetailWorkbench({
   job,
@@ -305,6 +306,9 @@ export default function JobDetailWorkbench({
           </button>
         </div>
       </div>
+
+      {/* career-ops: "Should I apply?" evaluation */}
+      <ApplyVerdictPanel job={job} />
 
       {/* Recruiter Email Banner */}
       {primaryEmail ? (

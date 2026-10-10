@@ -124,7 +124,7 @@ class AutoApplyRequest(BaseModel):
     match_score: Optional[int] = 0
     notes: Optional[str] = ""
     job_description: Optional[str] = ""
-    customize_cv: Optional[bool] = False
+    customize_cv: Optional[bool] = True    # honest per-job tailoring (re-order only)
     custom_subject: Optional[str] = None
     custom_body: Optional[str] = None
     lang: Optional[str] = None
@@ -133,7 +133,7 @@ class AutoApplyRequest(BaseModel):
 class BatchAutoApplyRequest(BaseModel):
     jobs: List[AutoApplyRequest]
     delay_seconds: float = 1.0
-    customize_cv: Optional[bool] = False
+    customize_cv: Optional[bool] = True
 
 class SettingsRequest(BaseModel):
     smtp_host: str = "smtp.gmail.com"
@@ -335,10 +335,19 @@ def auto_apply(req: AutoApplyRequest,
 
     sender_name = settings.sender_name or current_user.name
 
-    # Automatic auto-apply strictly sends authentic original CV (cv.file_data)
+    # User-clicked Auto-Apply: attach an honest per-job tailored COPY (re-ordered, nothing added).
+    # Falls back to the original CV (cv.file_data) when tailoring is off, fails, or doesn't help.
     custom_pdf_bytes = None
     custom_pdf_name = None
     effective_score = req.match_score or 0
+    original_score = None
+    if req.customize_cv:
+        from ..tailoring import honest_tailored_attachment
+        cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+        custom_pdf_bytes, custom_pdf_name, original_score, t_score = honest_tailored_attachment(
+            cv, req.job_title, req.company, req.job_description)
+        if custom_pdf_bytes and t_score is not None:
+            effective_score = t_score
 
     try:
         dispatched = []
@@ -438,11 +447,13 @@ def auto_apply(req: AutoApplyRequest,
         recruiter_names = [d["name"] if d["name"] != "Hiring Team" else d["email"] for d in dispatched]
         return {
             "success": True,
-            "message": f"Successfully applied to {req.company}! Sent to all {len(dispatched)} recruiter(s) ({', '.join(recruiter_names)})" + (" (CV Tailored 100%)" if custom_pdf_bytes else ""),
+            "message": f"Successfully applied to {req.company}! Sent to all {len(dispatched)} recruiter(s) ({', '.join(recruiter_names)})" + (f" — tailored CV attached (match {original_score}% → {effective_score}%)" if custom_pdf_bytes else " — original CV attached"),
             "application_id": app.id,
             "recipients_count": len(dispatched),
             "recipients": dispatched,
             "to_email": dispatched[0]["email"],
+            "tailored": bool(custom_pdf_bytes),
+            "original_score": original_score,
             "tailored_score": effective_score
         }
     except Exception as e:
@@ -493,10 +504,17 @@ def batch_auto_apply(req: BatchAutoApplyRequest,
             results.append({"company": item.company, "title": item.job_title, "status": "skipped", "error": "Recruiter email(s) are blacklisted (prior bounce/block)"})
             continue
 
-        # Automatic batch auto-apply strictly sends authentic original CV (cv.file_data)
+        # User-clicked batch: honest per-job tailored COPY; original CV on fallback
         custom_pdf_bytes = None
         custom_pdf_name = None
         item_score = item.match_score or 0
+        item_orig_score = None
+        if req.customize_cv and item.customize_cv:
+            from ..tailoring import honest_tailored_attachment
+            custom_pdf_bytes, custom_pdf_name, item_orig_score, t_score = honest_tailored_attachment(
+                cv, item.job_title, item.company, item.job_description)
+            if custom_pdf_bytes and t_score is not None:
+                item_score = t_score
 
         try:
             job_dispatched = []
@@ -597,7 +615,10 @@ def batch_auto_apply(req: BatchAutoApplyRequest,
                 "to_emails": job_dispatched,
                 "status": "sent",
                 "app_id": app.id,
-                "recipients_count": len(job_dispatched)
+                "recipients_count": len(job_dispatched),
+                "tailored": bool(custom_pdf_bytes),
+                "original_score": item_orig_score,
+                "tailored_score": item_score
             })
             applied_count += 1
 

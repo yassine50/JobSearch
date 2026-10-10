@@ -196,7 +196,7 @@ def search_posts(req: PostSearchRequest,
 
     logs = db.query(models.EmailLog).filter(
         models.EmailLog.user_id == current_user.id,
-        models.EmailLog.status == "sent"
+        models.EmailLog.status != "failed"
     ).all()
     for l in logs:
         if l.to_email:

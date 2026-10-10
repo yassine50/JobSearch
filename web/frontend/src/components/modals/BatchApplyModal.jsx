@@ -101,7 +101,7 @@ export default function BatchApplyModal({
             recruiter_name: item.name,
             recruiter_email: item.email,
             post_text: item.raw.full_text || item.raw.post_snippet || '',
-            customize_cv: false,
+            customize_cv: true,
             site: item.raw?.site || 'linkedin'
           }))
         }
@@ -114,7 +114,7 @@ export default function BatchApplyModal({
       } else {
         // Formal Job Boards batch auto-apply
         const payload = {
-          customize_cv: false,
+          customize_cv: true,
           jobs: selectedList.map(item => ({
             job_title: item.title,
             company: item.company,
@@ -282,7 +282,7 @@ export default function BatchApplyModal({
                   <span>Deliverability & Spam Guard Active</span>
                 </div>
                 <p className="leading-relaxed">
-                  Emails are sent directly from your verified Gmail address with personalized greeting, relevant subject line, and unique ATS tailored PDF resume attached.
+                  Emails are sent directly from your verified Gmail address with personalized greeting, relevant subject line, and a per-job tailored copy of your resume (missing job skills added, off-topic content removed).
                 </p>
               </div>
             </>

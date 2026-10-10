@@ -245,36 +245,54 @@ class TailorCvRequest(BaseModel):
 def tailor_user_cv(req: TailorCvRequest,
                    db: Session = Depends(get_db),
                    current_user: models.User = Depends(get_current_user)):
-    """Analyzes target job, bridges missing skills, and returns tailored summary, bridged skills, and new scores."""
+    """Preview tailoring: returns scores + bridged skills without generating the PDF."""
     cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
     if not cv or not cv.text_content:
         raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
-    from cv_tailor import tailor_cv
-    res = tailor_cv(cv.text_content, req.job_title, req.company, req.job_description)
-    return {
-        "original_score": res["original_score"],
-        "tailored_score": res["tailored_score"],
-        "bridged_skills": res["bridged_skills"],
-        "target_headline": res["target_headline"],
-        "tailored_summary": res["tailored_summary"],
-        "filename": res["filename"],
-        "tailored_text": res["tailored_text"]
-    }
+    try:
+        from web.backend.tailoring import honest_tailored_attachment
+        pdf_bytes, filename, original_score, tailored_score = honest_tailored_attachment(
+            cv, req.job_title, req.company, req.job_description
+        )
+        # Compute bridged skills for UI display
+        from cv_matcher import compute_match
+        orig_score_val, orig_bd = compute_match(cv.text_content, req.job_description, req.job_title)
+        missing = orig_bd.get("missing_tech", [])
+        return {
+            "original_score": original_score or orig_score_val,
+            "tailored_score": tailored_score or orig_score_val,
+            "bridged_skills": missing[:12],
+            "target_headline": req.job_title,
+            "tailored_summary": f"CV tailored for {req.job_title} at {req.company}",
+            "filename": filename,
+            "tailored_text": ""
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 @router.post("/tailored-pdf")
 def download_tailored_pdf(req: TailorCvRequest,
                           db: Session = Depends(get_db),
                           current_user: models.User = Depends(get_current_user)):
-    """Generates and downloads the executive ATS-compliant PDF resume tailored for this role."""
+    """Generates and downloads the ATS-optimised tailored PDF using full-match mode."""
     from fastapi.responses import Response
     cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
     if not cv or not cv.text_content:
         raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
-    from cv_tailor import tailor_cv
-    res = tailor_cv(cv.text_content, req.job_title, req.company, req.job_description)
-    return Response(
-        content=res["pdf_bytes"],
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=\"{res['filename']}\""}
-    )
+    try:
+        from web.backend.tailoring import honest_tailored_attachment
+        pdf_bytes, filename, original_score, tailored_score = honest_tailored_attachment(
+            cv, req.job_title, req.company, req.job_description
+        )
+        if not pdf_bytes:
+            raise HTTPException(500, "PDF generation failed — no output returned.")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 

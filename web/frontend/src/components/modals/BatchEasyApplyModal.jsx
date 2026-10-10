@@ -85,10 +85,10 @@ export default function BatchEasyApplyModal({
           description: item.description,
           site: item.site,
           match_score: item.score,
-          customize_cv: false,
+          customize_cv: true,
           notes: 'Auto-applied via Candidature Simplifiée batch engine.'
         })),
-        customize_cv: false
+        customize_cv: true
       }
 
       // Step-by-step progress simulation for realistic feedback
@@ -274,7 +274,7 @@ export default function BatchEasyApplyModal({
                   <span>What happens next?</span>
                 </div>
                 <p>
-                  Each selected position is processed with an ATS-tailored resume, recorded in your Application Tracker with status <span className="text-emerald-300 font-semibold">"Applied"</span>, and automatically filtered out of your future search feeds.
+                  Each selected position is processed with a per-job tailored copy of your resume (missing job skills added, off-topic content removed), recorded in your Application Tracker with status <span className="text-emerald-300 font-semibold">"Applied"</span>, and automatically filtered out of your future search feeds.
                 </p>
               </div>
             </>
