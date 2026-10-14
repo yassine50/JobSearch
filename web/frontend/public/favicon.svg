@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="cvm-grad" x1="0" y1="64" x2="64" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="50%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#9333EA"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#cvm-grad)"/>
+  <rect x="2" y="2" width="60" height="60" rx="14" stroke="white" stroke-opacity="0.22" stroke-width="2"/>
+  <path d="M26 20H22C18.6863 20 16 22.6863 16 26V38C16 41.3137 18.6863 44 22 44H26" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <path d="M31 33L37 39L49 25" stroke="#34D399" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

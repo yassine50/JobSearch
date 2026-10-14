@@ -1,0 +1,250 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: rgba(51, 65, 85, 0.4);
+  }
+
+  body {
+    background-color: #050811;
+    color: #f8fafc;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+}
+
+/* Linear / Raycast Style Refined Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.4);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.65);
+}
+
+/* Ambient Background Grid & Aurora Mesh */
+.bg-grid-pattern {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(148, 163, 184, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
+}
+
+@keyframes auroraDrift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(25px, -18px, 0) scale(1.06);
+  }
+  66% {
+    transform: translate3d(-18px, 15px, 0) scale(0.96);
+  }
+}
+
+.aurora-orb-1 {
+  animation: auroraDrift 16s ease-in-out infinite;
+}
+.aurora-orb-2 {
+  animation: auroraDrift 22s ease-in-out infinite reverse;
+}
+.aurora-orb-3 {
+  animation: auroraDrift 19s ease-in-out 2s infinite;
+}
+
+/* Premium Glassmorphism & Specular Surfaces */
+.glass-panel {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.78) 0%, rgba(9, 13, 24, 0.90) 100%);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(71, 85, 105, 0.45);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    0 12px 32px -8px rgba(0, 0, 0, 0.55);
+}
+
+.glass-card {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.82) 0%, rgba(9, 14, 28, 0.92) 100%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+    0 8px 24px -6px rgba(0, 0, 0, 0.45);
+  transition:
+    border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-dropdown {
+  background: rgba(10, 15, 29, 0.96);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.08),
+    0 24px 48px -12px rgba(0, 0, 0, 0.8);
+}
+
+.glass-input {
+  background: rgba(6, 10, 20, 0.85);
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  color: #f8fafc;
+  box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.35);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.75);
+  box-shadow:
+    inset 0 2px 4px 0 rgba(0, 0, 0, 0.35),
+    0 0 0 3px rgba(59, 130, 246, 0.18),
+    0 0 20px -4px rgba(59, 130, 246, 0.25);
+}
+
+/* Specular Top Accent Glow Line with Gentle Shimmer Drift */
+@keyframes beamPulse {
+  0%, 100% {
+    opacity: 0.65;
+    transform: scaleX(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1.04);
+  }
+}
+
+.glow-line-top {
+  position: absolute;
+  top: 0;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(96, 165, 250, 0.75),
+    rgba(168, 85, 247, 0.75),
+    rgba(56, 189, 248, 0.65),
+    transparent
+  );
+  animation: beamPulse 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Gradient Typography Tokens with Subtle Light Flow */
+@keyframes gradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.text-gradient-blue {
+  background: linear-gradient(135deg, #60a5fa 0%, #818cf8 35%, #c084fc 70%, #60a5fa 100%);
+  background-size: 200% auto;
+  animation: gradientShift 7s ease-in-out infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-emerald {
+  background: linear-gradient(135deg, #34d399 0%, #2dd4bf 50%, #38bdf8 100%);
+  background-size: 200% auto;
+  animation: gradientShift 7s ease-in-out infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-hover:hover {
+  transform: translateY(-4px);
+  border-color: rgba(99, 102, 241, 0.55);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.12),
+    0 18px 36px -8px rgba(0, 0, 0, 0.65),
+    0 0 26px -4px rgba(59, 130, 246, 0.2);
+}
+
+/* Shimmer Button Effect */
+@keyframes shimmerSweep {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  100% {
+    transform: translateX(220%) skewX(-18deg);
+  }
+}
+
+.shimmer-btn {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer-btn::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.18),
+    transparent
+  );
+  transform: translateX(-120%) skewX(-18deg);
+  animation: shimmerSweep 4.5s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  pointer-events: none;
+}
+
+/* Subtle Shimmer & Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in {
+  animation: fadeIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+.pulse-glow {
+  animation: pulseGlow 2.5s ease-in-out infinite;
+}
+
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+.animate-float {
+  animation: floatSlow 4s ease-in-out infinite;
+}
+
+@keyframes spinSlow {
+  to { transform: rotate(360deg); }
+}
+.spinner-slow {
+  animation: spinSlow 1.4s linear infinite;
+}

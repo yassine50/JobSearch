@@ -1,0 +1,457 @@
+[
+ {
+  "name": "Anthropic",
+  "vendor": "greenhouse",
+  "slug": "anthropic"
+ },
+ {
+  "name": "PolyAI",
+  "vendor": "greenhouse",
+  "slug": "polyai"
+ },
+ {
+  "name": "Parloa",
+  "vendor": "greenhouse",
+  "slug": "parloa"
+ },
+ {
+  "name": "Intercom",
+  "vendor": "greenhouse",
+  "slug": "intercom"
+ },
+ {
+  "name": "Hume AI",
+  "vendor": "greenhouse",
+  "slug": "humeai"
+ },
+ {
+  "name": "ElevenLabs",
+  "vendor": "ashby",
+  "slug": "elevenlabs"
+ },
+ {
+  "name": "Deepgram",
+  "vendor": "ashby",
+  "slug": "deepgram"
+ },
+ {
+  "name": "Vapi",
+  "vendor": "ashby",
+  "slug": "vapi"
+ },
+ {
+  "name": "Bland AI",
+  "vendor": "ashby",
+  "slug": "bland"
+ },
+ {
+  "name": "Airtable",
+  "vendor": "greenhouse",
+  "slug": "airtable"
+ },
+ {
+  "name": "Vercel",
+  "vendor": "greenhouse",
+  "slug": "vercel"
+ },
+ {
+  "name": "Temporal",
+  "vendor": "greenhouse",
+  "slug": "temporal"
+ },
+ {
+  "name": "Arize AI",
+  "vendor": "greenhouse",
+  "slug": "arizeai"
+ },
+ {
+  "name": "RunPod",
+  "vendor": "greenhouse",
+  "slug": "runpod"
+ },
+ {
+  "name": "Weights & Biases (CoreWeave)",
+  "vendor": "greenhouse",
+  "slug": "coreweave"
+ },
+ {
+  "name": "Weights & Biases (CoreWeave)",
+  "vendor": "lever",
+  "slug": "wandb"
+ },
+ {
+  "name": "Glean",
+  "vendor": "greenhouse",
+  "slug": "gleanwork"
+ },
+ {
+  "name": "Ada",
+  "vendor": "greenhouse",
+  "slug": "ada"
+ },
+ {
+  "name": "Sierra",
+  "vendor": "ashby",
+  "slug": "sierra"
+ },
+ {
+  "name": "Decagon",
+  "vendor": "ashby",
+  "slug": "decagon"
+ },
+ {
+  "name": "Lindy",
+  "vendor": "ashby",
+  "slug": "lindy"
+ },
+ {
+  "name": "Speechmatics",
+  "vendor": "greenhouse",
+  "slug": "speechmatics"
+ },
+ {
+  "name": "n8n",
+  "vendor": "ashby",
+  "slug": "n8n"
+ },
+ {
+  "name": "Zapier",
+  "vendor": "ashby",
+  "slug": "zapier"
+ },
+ {
+  "name": "Boomi",
+  "vendor": "greenhouse",
+  "slug": "boomilp"
+ },
+ {
+  "name": "Cohere",
+  "vendor": "ashby",
+  "slug": "cohere"
+ },
+ {
+  "name": "LangChain",
+  "vendor": "ashby",
+  "slug": "langchain"
+ },
+ {
+  "name": "Pinecone",
+  "vendor": "ashby",
+  "slug": "pinecone"
+ },
+ {
+  "name": "Mistral AI",
+  "vendor": "lever",
+  "slug": "mistral"
+ },
+ {
+  "name": "Palantir",
+  "vendor": "lever",
+  "slug": "palantir"
+ },
+ {
+  "name": "Later",
+  "vendor": "greenhouse",
+  "slug": "later"
+ },
+ {
+  "name": "Safari AI",
+  "vendor": "greenhouse",
+  "slug": "safariai"
+ },
+ {
+  "name": "Hootsuite",
+  "vendor": "greenhouse",
+  "slug": "hootsuite"
+ },
+ {
+  "name": "Klue",
+  "vendor": "ashby",
+  "slug": "klue"
+ },
+ {
+  "name": "Glacis AI",
+  "vendor": "ashby",
+  "slug": "glacis-ai"
+ },
+ {
+  "name": "Sanctuary AI",
+  "vendor": "lever",
+  "slug": "sanctuary"
+ },
+ {
+  "name": "Attio",
+  "vendor": "ashby",
+  "slug": "attio"
+ },
+ {
+  "name": "Tinybird",
+  "vendor": "ashby",
+  "slug": "tinybird"
+ },
+ {
+  "name": "Clarity AI",
+  "vendor": "lever",
+  "slug": "clarity-ai"
+ },
+ {
+  "name": "Travelperk",
+  "vendor": "ashby",
+  "slug": "perk"
+ },
+ {
+  "name": "Aleph Alpha",
+  "vendor": "ashby",
+  "slug": "AlephAlpha"
+ },
+ {
+  "name": "DeepL",
+  "vendor": "ashby",
+  "slug": "DeepL"
+ },
+ {
+  "name": "Black Forest Labs",
+  "vendor": "greenhouse",
+  "slug": "blackforestlabs"
+ },
+ {
+  "name": "Helsing",
+  "vendor": "greenhouse",
+  "slug": "helsing"
+ },
+ {
+  "name": "Celonis",
+  "vendor": "greenhouse",
+  "slug": "celonis"
+ },
+ {
+  "name": "Contentful",
+  "vendor": "greenhouse",
+  "slug": "contentful"
+ },
+ {
+  "name": "GetYourGuide",
+  "vendor": "greenhouse",
+  "slug": "getyourguide"
+ },
+ {
+  "name": "HelloFresh",
+  "vendor": "greenhouse",
+  "slug": "hellofresh"
+ },
+ {
+  "name": "N26",
+  "vendor": "greenhouse",
+  "slug": "n26"
+ },
+ {
+  "name": "Trade Republic",
+  "vendor": "greenhouse",
+  "slug": "traderepublicbank"
+ },
+ {
+  "name": "SumUp",
+  "vendor": "greenhouse",
+  "slug": "sumup"
+ },
+ {
+  "name": "Qonto",
+  "vendor": "lever",
+  "slug": "qonto"
+ },
+ {
+  "name": "Forto",
+  "vendor": "ashby",
+  "slug": "forto"
+ },
+ {
+  "name": "Lakera",
+  "vendor": "ashby",
+  "slug": "lakera.ai"
+ },
+ {
+  "name": "Scandit",
+  "vendor": "greenhouse",
+  "slug": "scandit"
+ },
+ {
+  "name": "Cradle",
+  "vendor": "ashby",
+  "slug": "cradlebio"
+ },
+ {
+  "name": "Photoroom",
+  "vendor": "ashby",
+  "slug": "photoroom"
+ },
+ {
+  "name": "Pigment",
+  "vendor": "lever",
+  "slug": "pigment"
+ },
+ {
+  "name": "Diabolocom",
+  "vendor": "lever",
+  "slug": "diabolocom"
+ },
+ {
+  "name": "Wayve",
+  "vendor": "greenhouse",
+  "slug": "wayve"
+ },
+ {
+  "name": "Isomorphic Labs",
+  "vendor": "greenhouse",
+  "slug": "isomorphiclabs"
+ },
+ {
+  "name": "PhysicsX",
+  "vendor": "greenhouse",
+  "slug": "physicsx"
+ },
+ {
+  "name": "Stability AI",
+  "vendor": "greenhouse",
+  "slug": "stabilityai"
+ },
+ {
+  "name": "Synthesia",
+  "vendor": "ashby",
+  "slug": "synthesia"
+ },
+ {
+  "name": "Synthesia",
+  "vendor": "greenhouse",
+  "slug": "synthesia"
+ },
+ {
+  "name": "Faculty",
+  "vendor": "ashby",
+  "slug": "faculty"
+ },
+ {
+  "name": "Causaly",
+  "vendor": "ashby",
+  "slug": "causaly"
+ },
+ {
+  "name": "Lovable",
+  "vendor": "ashby",
+  "slug": "lovable"
+ },
+ {
+  "name": "Legora",
+  "vendor": "ashby",
+  "slug": "legora"
+ },
+ {
+  "name": "Spotify",
+  "vendor": "lever",
+  "slug": "spotify"
+ },
+ {
+  "name": "Bolt",
+  "vendor": "ashby",
+  "slug": "bolt"
+ },
+ {
+  "name": "Mollie",
+  "vendor": "ashby",
+  "slug": "mollie"
+ },
+ {
+  "name": "Hotjar",
+  "vendor": "lever",
+  "slug": "contentsquare"
+ },
+ {
+  "name": "Corti",
+  "vendor": "ashby",
+  "slug": "corti"
+ },
+ {
+  "name": "Pleo",
+  "vendor": "ashby",
+  "slug": "pleo"
+ },
+ {
+  "name": "Templafy",
+  "vendor": "greenhouse",
+  "slug": "templafy"
+ },
+ {
+  "name": "Amplemarket",
+  "vendor": "greenhouse",
+  "slug": "amplemarket"
+ },
+ {
+  "name": "Perplexity",
+  "vendor": "ashby",
+  "slug": "perplexity"
+ },
+ {
+  "name": "Clay Labs",
+  "vendor": "ashby",
+  "slug": "claylabs"
+ },
+ {
+  "name": "Runway",
+  "vendor": "greenhouse",
+  "slug": "runwayml"
+ },
+ {
+  "name": "Hightouch",
+  "vendor": "greenhouse",
+  "slug": "hightouch"
+ },
+ {
+  "name": "WorkOS",
+  "vendor": "ashby",
+  "slug": "workos"
+ },
+ {
+  "name": "Supabase",
+  "vendor": "ashby",
+  "slug": "supabase"
+ },
+ {
+  "name": "Resend",
+  "vendor": "ashby",
+  "slug": "resend"
+ },
+ {
+  "name": "Clerk",
+  "vendor": "ashby",
+  "slug": "clerk"
+ },
+ {
+  "name": "Inngest",
+  "vendor": "ashby",
+  "slug": "inngest"
+ },
+ {
+  "name": "PlanetScale",
+  "vendor": "greenhouse",
+  "slug": "planetscale"
+ },
+ {
+  "name": "Getir",
+  "vendor": "lever",
+  "slug": "getir"
+ },
+ {
+  "name": "Moniepoint",
+  "vendor": "greenhouse",
+  "slug": "moniepoint"
+ },
+ {
+  "name": "Jumia",
+  "vendor": "greenhouse",
+  "slug": "jumia"
+ },
+ {
+  "name": "Andela",
+  "vendor": "ashby",
+  "slug": "andela"
+ }
+]

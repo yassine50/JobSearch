@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#050811"/>
+      <stop offset="50%" stop-color="#0B132B"/>
+      <stop offset="100%" stop-color="#050811"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="50%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#9333EA"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#60A5FA"/>
+      <stop offset="50%" stop-color="#818CF8"/>
+      <stop offset="100%" stop-color="#C084FC"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="180" cy="110" r="260" fill="#2563EB" fill-opacity="0.16"/>
+  <circle cx="1020" cy="520" r="280" fill="#7C3AED" fill-opacity="0.15"/>
+  <rect x="64" y="64" width="1072" height="502" rx="32" fill="#0B1120" fill-opacity="0.82" stroke="#3B82F6" stroke-opacity="0.28" stroke-width="2"/>
+  <rect x="112" y="116" width="68" height="68" rx="18" fill="url(#brand)"/>
+  <text x="146" y="162" text-anchor="middle" fill="#FFFFFF" font-family="Inter, system-ui, sans-serif" font-size="36" font-weight="900">C</text>
+  <text x="200" y="152" fill="#FFFFFF" font-family="Inter, system-ui, sans-serif" font-size="32" font-weight="800">CVtoMatch.com</text>
+  <text x="200" y="178" fill="#60A5FA" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="700" letter-spacing="2">AI RESUME MATCHER &amp; LINKEDIN RECRUITER RADAR</text>
+  <text x="112" y="278" fill="#FFFFFF" font-family="Inter, system-ui, sans-serif" font-size="56" font-weight="900">Match Your CV to Any Job.</text>
+  <text x="112" y="346" fill="url(#accent)" font-family="Inter, system-ui, sans-serif" font-size="52" font-weight="900">Reach Hiring Managers Directly.</text>
+  <text x="112" y="412" fill="#94A3B8" font-family="Inter, system-ui, sans-serif" font-size="23" font-weight="500">6-Factor ATS Resume Scoring • Live LinkedIn Hiring Posts • Verified MX Emails • Auto-Track</text>
+  <rect x="112" y="458" width="250" height="54" rx="14" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.4"/>
+  <text x="237" y="492" text-anchor="middle" fill="#34D399" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">94% ATS Match Score</text>
+  <rect x="382" y="458" width="290" height="54" rx="14" fill="#3B82F6" fill-opacity="0.15" stroke="#3B82F6" stroke-opacity="0.4"/>
+  <text x="527" y="492" text-anchor="middle" fill="#60A5FA" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">DNS MX Verified Emails</text>
+  <rect x="692" y="458" width="280" height="54" rx="14" fill="#8B5CF6" fill-opacity="0.15" stroke="#8B5CF6" stroke-opacity="0.4"/>
+  <text x="832" y="492" text-anchor="middle" fill="#C084FC" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">IMAP Inbox Auto-Sync</text>
+</svg>
