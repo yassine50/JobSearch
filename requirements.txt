@@ -5,12 +5,16 @@ python-jose[cryptography]
 bcrypt==4.0.1
 python-multipart
 aiofiles
-jobspy
 tls_client
 ddgs
 PyPDF2
 python-docx
+reportlab
+dnspython
+urllib3
 pandas
+numpy
+pydantic
 scikit-learn
 beautifulsoup4
 requests
