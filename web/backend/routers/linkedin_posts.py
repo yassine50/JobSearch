@@ -164,8 +164,14 @@ def search_posts(req: PostSearchRequest,
     cv_text = cv.text_content if cv else ""
     cv_years = extract_post_required_years(cv_text) if cv_text else None
     
-    # Load user's application tracker and email logs to determine applied / saved status
-    apps = db.query(models.Application).filter(models.Application.user_id == current_user.id).all()
+    # Load user's application tracker and email logs using lightweight column projections
+    app_rows = db.query(
+        models.Application.status,
+        models.Application.url,
+        models.Application.title,
+        models.Application.company,
+        models.Application.notes,
+    ).filter(models.Application.user_id == current_user.id).all()
     applied_urls = set()
     applied_title_company = set()
     applied_company_set = set()
@@ -173,11 +179,11 @@ def search_posts(req: PostSearchRequest,
     saved_urls = set()
     saved_title_company = set()
 
-    for a in apps:
-        status_norm = (a.status or "").lower()
-        url_norm = (a.url or "").strip().lower()
-        title_norm = (a.title or "").strip().lower()
-        comp_norm = (a.company or "").strip().lower()
+    for st_val, url_val, title_val, comp_val, notes_val in app_rows:
+        status_norm = (st_val or "").lower()
+        url_norm = (url_val or "").strip().lower()
+        title_norm = (title_val or "").strip().lower()
+        comp_norm = (comp_val or "").strip().lower()
         tc_key = f"{title_norm}|{comp_norm}"
 
         if status_norm != "saved":
@@ -187,8 +193,8 @@ def search_posts(req: PostSearchRequest,
                 applied_title_company.add(tc_key)
             if comp_norm:
                 applied_company_set.add(comp_norm)
-            if a.notes:
-                for em in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", a.notes.lower()):
+            if notes_val:
+                for em in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", notes_val.lower()):
                     applied_emails.add(em)
         elif status_norm == "saved":
             if url_norm:
@@ -196,13 +202,12 @@ def search_posts(req: PostSearchRequest,
             if title_norm and comp_norm:
                 saved_title_company.add(tc_key)
 
-    logs = db.query(models.EmailLog).filter(
+    for (to_email,) in db.query(models.EmailLog.to_email).filter(
         models.EmailLog.user_id == current_user.id,
         models.EmailLog.status != "failed"
-    ).all()
-    for l in logs:
-        if l.to_email:
-            applied_emails.add(l.to_email.strip().lower())
+    ).all():
+        if to_email:
+            applied_emails.add(to_email.strip().lower())
 
     for p in posts:
         desc = p.get("full_text") or p.get("post_snippet") or p.get("role_title")

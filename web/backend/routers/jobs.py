@@ -11,8 +11,10 @@ import json
 import logging
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("jobsearcher.jobs")
+_JOBS_POOL = ThreadPoolExecutor(max_workers=8)
 
 def _compute_job_age_hours(date_val: Any) -> Optional[float]:
     if not date_val:
@@ -779,9 +781,9 @@ def search_jobs(req: SearchRequest,
     from concurrent.futures import wait as _wait, FIRST_COMPLETED
 
     t_start = _time.time()
-    SCRAPE_BUDGET_S = 14      # tight wall-clock budget for scraping fan-out
+    SCRAPE_BUDGET_S = 6.2     # tight wall-clock budget for scraping fan-out
     # How many phrasings of the role each board is queried with
-    SITE_VARIANT_LIMIT = {"indeed": 2, "linkedin": 1, "job_bank": 1, "glassdoor": 1, "google": 1}
+    SITE_VARIANT_LIMIT = {"indeed": 1, "linkedin": 1, "job_bank": 1, "glassdoor": 1, "google": 1}
     stats = {"tasks": 0, "tasks_ok": 0, "tasks_failed": 0, "tasks_timed_out": 0,
              "raw": 0, "after_dedup": 0, "after_relevance": 0, "spam_removed": 0,
              "per_site": {}, "queries": {}, "timings": {}}
@@ -800,12 +802,13 @@ def search_jobs(req: SearchRequest,
         ] or list(effective_sites)
         return norm_key, indeed_c, loc, sites
 
-    # Build the fan-out task list
+    # Build the fan-out task list (deduplicating global open feeds across countries)
     tasks = []
+    seen_open_sites = set()
     all_queries: List[str] = [req.title.strip()]
     for country_name in countries_to_search:
         norm_key, indeed_c, loc, sites = _country_ctx(country_name)
-        variants = expand_queries(req.title.strip(), norm_key, max_variants=3) or [req.title.strip()]
+        variants = expand_queries(req.title.strip(), norm_key, max_variants=2) or [req.title.strip()]
         stats["queries"][country_name] = variants
         for q in variants:
             if q not in all_queries:
@@ -814,6 +817,9 @@ def search_jobs(req: SearchRequest,
             if site == "official_apis" and not _official_active:
                 continue
             if site in OPEN_SITE_IDS:
+                if site in seen_open_sites:
+                    continue
+                seen_open_sites.add(site)
                 # Feeds/ATS are fetched once and filtered locally with every variant.
                 tasks.append((country_name, norm_key, site, variants, per_country, indeed_c, loc))
                 continue
@@ -897,8 +903,7 @@ def search_jobs(req: SearchRequest,
             stats["tasks_ok"] = len(tasks)
         else:
             _check_and_count_search_quota(current_user)
-            executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 12))
-            fut_map = {executor.submit(scrape_task, t): t for t in tasks}
+            fut_map = {_JOBS_POOL.submit(scrape_task, t): t for t in tasks}
             pending = set(fut_map)
             deadline = t_start + SCRAPE_BUDGET_S
             while pending:
@@ -918,9 +923,10 @@ def search_jobs(req: SearchRequest,
                         stats["tasks_failed"] += 1
                         logger.warning(f"[Scraper] {t[2]} / '{t[3]}' / {t[0]} failed: {err}")
             stats["tasks_timed_out"] = len(pending)
+            for fut in pending:
+                fut.cancel()
             if pending:
                 logger.info(f"[Scraper] {len(pending)} scrape tasks exceeded the {SCRAPE_BUDGET_S}s budget; returning partial results")
-            executor.shutdown(wait=False, cancel_futures=True)
             if all_dfs:
                 combined = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
                 _search_cache_put(cache_key, combined, stats["per_site"])
@@ -1047,28 +1053,33 @@ def search_jobs(req: SearchRequest,
         raw_jobs = raw_jobs[:MAX_RESULTS]
         del df, all_dfs
 
-        def _bounded_map(fn, items, workers, budget_s):
-            """Parallel map that never blocks longer than budget_s; unfinished items are kept as-is."""
+        def _bounded_map(fn, items, budget_s):
+            """Parallel map on shared _JOBS_POOL that never blocks longer than budget_s."""
             if not items:
                 return []
-            ex = ThreadPoolExecutor(max_workers=workers)
-            futs = [ex.submit(fn, it) for it in items]
+            futs = [_JOBS_POOL.submit(fn, it) for it in items]
             _wait(futs, timeout=budget_s)
             out = []
             for it, f in zip(items, futs):
                 if f.done() and not f.exception():
                     out.append(f.result())
                 else:
+                    f.cancel()
                     out.append(it)
-            ex.shutdown(wait=False, cancel_futures=True)
             return out
 
-        # Fast parallel enrichment of missing job descriptions on top 20 candidates (network-bound),
-        # while remaining candidates get instant local description email extraction.
+        # Fast parallel enrichment ONLY for top candidates missing descriptions (skip when already present)
         t_enrich = _time.time()
         try:
-            top_slice = _bounded_map(_enrich_job_description, raw_jobs[:20], 12, 3.5)
-            raw_jobs = top_slice + raw_jobs[20:]
+            missing_desc_indices = [
+                idx for idx, j in enumerate(raw_jobs[:12])
+                if len(j.get("description") or "") < 140
+            ][:8]
+            if missing_desc_indices:
+                def _enrich_idx(idx: int):
+                    raw_jobs[idx] = _enrich_job_description(raw_jobs[idx])
+                    return raw_jobs[idx]
+                _bounded_map(_enrich_idx, missing_desc_indices, 2.0)
         except Exception as desc_err:
             logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
         stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 2)
@@ -1079,7 +1090,7 @@ def search_jobs(req: SearchRequest,
                 j["relevance"] = max(j["relevance"], best_relevance(all_queries, j["title"], j["description"]))
 
         # Multi-Layer Recruiter Email Discovery Engine (instant local + cached pass on all jobs,
-        # plus time-boxed deep hunt on top 6 jobs missing emails)
+        # plus time-boxed deep hunt on top 3 jobs missing emails)
         t_hunt = _time.time()
         from recruiter_hunter import enrich_job_emails
 
@@ -1102,8 +1113,8 @@ def search_jobs(req: SearchRequest,
             except Exception:
                 pass
 
-        # Deep hunt only on up to 6 top-ranked jobs that don't yet have an email
-        deep_indices = [idx for idx, j in enumerate(raw_jobs[:12]) if not j.get("emails")][:6]
+        # Deep hunt only on up to 3 top-ranked jobs that don't yet have an email
+        deep_indices = [idx for idx, j in enumerate(raw_jobs[:8]) if not j.get("emails")][:3]
         if deep_indices:
             def _deep_hunt(idx: int):
                 j = raw_jobs[idx]
@@ -1112,17 +1123,17 @@ def search_jobs(req: SearchRequest,
                 except Exception:
                     pass
                 return j
-            _bounded_map(_deep_hunt, deep_indices, 6, 2.5)
+            _bounded_map(_deep_hunt, deep_indices, 1.2)
 
         jobs = raw_jobs
         stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 2)
 
         # Automatic High-Accuracy AI Matching if user has a CV (uses cached CV profile & fast TF-IDF)
-        cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
-        if cv_rec and cv_rec.text_content and jobs:
+        cv_rec = db.query(models.CvUpload.text_content).filter(models.CvUpload.user_id == current_user.id).first()
+        if cv_rec and cv_rec[0] and jobs:
             try:
                 from cv_matcher import compute_match
-                cv_text = cv_rec.text_content
+                cv_text = cv_rec[0]
                 for j in jobs:
                     try:
                         s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
@@ -1164,8 +1175,14 @@ def search_jobs(req: SearchRequest,
         jobs.sort(key=lambda x: x["rank_score"], reverse=True)
         stats["timings"]["total_s"] = round(_time.time() - t_start, 1)
 
-        # Check user's applied / saved applications to annotate jobs
-        apps = db.query(models.Application).filter(models.Application.user_id == current_user.id).all()
+        # Check user's applied / saved applications to annotate jobs (column projection only)
+        apps = db.query(
+            models.Application.status,
+            models.Application.url,
+            models.Application.company,
+            models.Application.title,
+            models.Application.notes,
+        ).filter(models.Application.user_id == current_user.id).all()
         applied_urls: set = set()
         applied_clean_urls: set = set()
         applied_job_ids: set = set()

@@ -69,9 +69,13 @@ SYSTEM_AUTOMATED_PREFIXES = {
 
 # Connection-pooled HTTP Session for high-concurrency requests
 _POST_SESSION = requests.Session()
-_http_adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=1)
+_http_adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=0)
 _POST_SESSION.mount("https://", _http_adapter)
 _POST_SESSION.mount("http://", _http_adapter)
+
+# Shared bounded worker pool + thread-local DDGS reuse to keep VPS RAM and CPU footprint minimal
+_HUNTER_POOL = ThreadPoolExecutor(max_workers=8)
+_TLS_DDGS = threading.local()
 
 
 def generate_stable_post_id(clean_url: str) -> str:
@@ -2000,13 +2004,17 @@ def fetch_deep_linkedin_postings(
         has_ddgs = False
 
     def fetch_ddgs_query(q: str) -> List[Tuple[str, str, str]]:
-        """Primary multi-backend harvester via DDGS(verify=False)."""
+        """Primary multi-backend harvester via thread-local DDGS(verify=False) reuse."""
         results_out: List[Tuple[str, str, str]] = []
         if not has_ddgs:
             return results_out
         with _DDGS_SEMAPHORE:
             try:
-                raw_list = list(DDGS(verify=False).text(q, max_results=22, timelimit=None))
+                ddgs_inst = getattr(_TLS_DDGS, "client", None)
+                if ddgs_inst is None:
+                    ddgs_inst = DDGS(verify=False)
+                    _TLS_DDGS.client = ddgs_inst
+                raw_list = list(ddgs_inst.text(q, max_results=20, timelimit=None))
                 for item in raw_list:
                     href = (item.get("href") or "").strip()
                     if not href:
@@ -2018,7 +2026,7 @@ def fetch_deep_linkedin_postings(
                             body = clean_linkedin_boilerplate(item.get("body") or "")
                             results_out.append((clean, title, body))
             except Exception:
-                pass
+                _TLS_DDGS.client = None
         return results_out
 
     def fetch_brave_and_yahoo_query(q: str, b_offset: int = 1, use_brave_tf: bool = True) -> List[Tuple[str, str, str]]:
@@ -2035,9 +2043,9 @@ def fetch_deep_linkedin_postings(
                     tf_param = brave_tf if use_brave_tf else ""
                     b_url = f"https://search.brave.com/search?q={q_enc}{tf_param}"
                     if HAS_CURL_CFFI:
-                        r_brave = c_requests.get(b_url, impersonate="chrome120", timeout=4.0)
+                        r_brave = c_requests.get(b_url, impersonate="chrome120", timeout=2.8)
                     else:
-                        r_brave = _POST_SESSION.get(b_url, headers=hdrs, timeout=4.0, verify=False)
+                        r_brave = _POST_SESSION.get(b_url, headers=hdrs, timeout=2.8, verify=False)
                     if r_brave.status_code == 200 and r_brave.text:
                         soup = BeautifulSoup(r_brave.text, "html.parser")
                         for div in soup.select("div.snippet"):
@@ -2062,9 +2070,9 @@ def fetch_deep_linkedin_postings(
             try:
                 url = f"https://search.yahoo.com/search?p={q_enc}&b={b_offset}{yahoo_age if use_brave_tf else ''}"
                 if HAS_CURL_CFFI:
-                    r = c_requests.get(url, impersonate="chrome120", headers=hdrs, timeout=3.5, verify=False)
+                    r = c_requests.get(url, impersonate="chrome120", headers=hdrs, timeout=2.8, verify=False)
                 else:
-                    r = _POST_SESSION.get(url, headers=hdrs, timeout=3.5, verify=False)
+                    r = _POST_SESSION.get(url, headers=hdrs, timeout=2.8, verify=False)
                 if r.status_code == 200 and r.text:
                     soup = BeautifulSoup(r.text, "html.parser")
                     for a in soup.find_all("a", href=True):
@@ -2081,11 +2089,11 @@ def fetch_deep_linkedin_postings(
 
     harvested_by_key: Dict[str, Dict[str, Any]] = {}
     safe_page = max(1, page)
-    target_harvest = max(limit * 2, 24)
+    target_harvest = min(max(limit, 18), 26)
 
-    start_idx = ((safe_page - 1) * 6) % max(len(unique_tasks), 1)
+    start_idx = ((safe_page - 1) * 5) % max(len(unique_tasks), 1)
     ordered_tasks = unique_tasks[start_idx:] + unique_tasks[:start_idx]
-    batch_tasks = ordered_tasks[:10]
+    batch_tasks = ordered_tasks[:6]
 
     def _ingest_harvest_items(items: List[Tuple[str, str, str]], prio: Tuple[int, int, int]) -> None:
         for u, title_txt, snip_txt in items:
@@ -2104,8 +2112,6 @@ def fetch_deep_linkedin_postings(
                 continue
 
             snow = decode_linkedin_snowflake_age(clean_u)
-            # If user requested a specific time_range and the Snowflake ID proves this post is older,
-            # deprioritize or skip if way older (we still keep exact age metadata).
             age_hours_val = snow["age_hours"] if snow else None
 
             post_id = generate_stable_post_id(clean_u)
@@ -2136,20 +2142,18 @@ def fetch_deep_linkedin_postings(
                 if title_txt and not existing.get("search_title"):
                     existing["search_title"] = title_txt
 
-    pool = ThreadPoolExecutor(max_workers=12)
     future_map = {}
-    # Submit DDGS queries for top 7 diverse task queries
-    for idx, (q_str, prio) in enumerate(batch_tasks[:7]):
-        fut_ddg = pool.submit(fetch_ddgs_query, q_str)
+    # Submit top 4 DDGS queries + top 2 Brave/Yahoo queries onto shared _HUNTER_POOL
+    for idx, (q_str, prio) in enumerate(batch_tasks[:4]):
+        fut_ddg = _HUNTER_POOL.submit(fetch_ddgs_query, q_str)
         future_map[fut_ddg] = (prio[0], prio[1], prio[2] + idx)
 
-    # Submit throttled Brave + Yahoo queries for top 4 task queries
-    for idx, (q_str, prio) in enumerate(batch_tasks[:4]):
-        fut_by = pool.submit(fetch_brave_and_yahoo_query, q_str, 1, True)
+    for idx, (q_str, prio) in enumerate(batch_tasks[:2]):
+        fut_by = _HUNTER_POOL.submit(fetch_brave_and_yahoo_query, q_str, 1, True)
         future_map[fut_by] = (prio[0], prio[1], prio[2] + idx)
 
     try:
-        for fut in as_completed(future_map.keys(), timeout=6.5):
+        for fut in as_completed(future_map.keys(), timeout=3.6):
             try:
                 prio = future_map[fut]
                 results = fut.result()
@@ -2162,7 +2166,9 @@ def fetch_deep_linkedin_postings(
     except Exception:
         pass
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        for fut in future_map:
+            if not fut.done():
+                fut.cancel()
 
     # Sort harvested posts:
     # 1. Posts confirmed within target_max_age_h come first
@@ -2448,15 +2454,7 @@ def scrape_single_post_details(
         for em in snippet_emails:
             _add_verified_email(em, "post_snippet", author_name)
 
-    # 2c. Unroll lnkd.in shortlinks in post body & comments to uncover external apply URL, domain, or mailto
-    combined_for_links = full_text + ("\n" + "\n".join(comments_collected[:5]) if comments_collected else "")
-    unrolled = unroll_linkedin_shortlinks(combined_for_links, blacklisted_set)
-    external_apply_url = unrolled.get("external_apply_url") or ""
-    unrolled_domain = unrolled.get("company_domain") or ""
-    for u_em in unrolled.get("emails") or []:
-        _add_verified_email(u_em, "unrolled_link", author_name)
-
-    # 3. STRICT RECRUITMENT & HIRING INTENT GATE (never bypassed)
+    # 3. STRICT RECRUITMENT & HIRING INTENT GATE (never bypassed — runs BEFORE any external link unrolling)
     analysis_context = f"{og_title} {url_slug_text}".strip()
     is_recruiting, reason, hiring_signals = analyze_recruitment_intent(
         text=full_text,
@@ -2484,7 +2482,38 @@ def scrape_single_post_details(
             else:
                 return None
 
-    # 5. Intelligent Company Name Resolution (without blind Clearbit email guessing)
+    # 5. Location detection & accuracy filter (runs BEFORE external link unrolling)
+    combined_for_fit = f"{full_text} {og_title} {url_slug_text}".strip()
+    is_loc_matched = check_location_match(combined_for_fit, author_headline, target_location, target_locations)
+    detected_loc = extract_post_location(combined_for_fit, author_headline, target_location, target_locations)
+
+    active_locs = [l.strip().lower() for l in (target_locations or ([target_location] if target_location else [])) if l and l.strip()]
+    if active_locs and not any(l in ("", "all", "worldwide", "anywhere") for l in active_locs):
+        if not is_loc_matched:
+            return None
+
+    # 6. Strict Role & Skill Fit Gate (runs BEFORE external link unrolling)
+    is_fit, fit_score, matched_skills, extracted_title = check_role_and_skill_fit(
+        full_text=combined_for_fit,
+        author_headline=author_headline,
+        clean_role=clean_role or post_item.get("role_title", ""),
+        tags=tags
+    )
+    if not is_fit:
+        return None
+
+    # 7. Unroll lnkd.in shortlinks ONLY for posts that passed all gates and lack a direct email
+    external_apply_url = ""
+    unrolled_domain = ""
+    combined_for_links = full_text + ("\n" + "\n".join(comments_collected[:5]) if comments_collected else "")
+    if not found_emails and "lnkd.in/" in combined_for_links:
+        unrolled = unroll_linkedin_shortlinks(combined_for_links, blacklisted_set)
+        external_apply_url = unrolled.get("external_apply_url") or ""
+        unrolled_domain = unrolled.get("company_domain") or ""
+        for u_em in unrolled.get("emails") or []:
+            _add_verified_email(u_em, "unrolled_link", author_name)
+
+    # 8. Intelligent Company Name Resolution (without blind Clearbit email guessing)
     if not _is_valid_company_candidate(company_name):
         company_candidate = ""
         m_explicit = re.search(r"(?:🏢\s*Company|Company|Organization|Organisation|Client)\s*[:—–-]\s*([A-Z0-9][A-Za-z0-9\s&.,'-]{2,35})", full_text, re.I)
@@ -2525,26 +2554,6 @@ def scrape_single_post_details(
 
     # Sort verified emails: post_body before post_comment, then by tier_rank (1=direct_corporate, 2=role_corporate, 3=freemail_recruiter)
     found_emails.sort(key=lambda e: (0 if e.get("source") == "post_body" else 1, e.get("tier_rank", 4)))
-
-    # 6. Location detection & accuracy filter
-    combined_for_fit = f"{full_text} {og_title} {url_slug_text}".strip()
-    is_loc_matched = check_location_match(combined_for_fit, author_headline, target_location, target_locations)
-    detected_loc = extract_post_location(combined_for_fit, author_headline, target_location, target_locations)
-
-    active_locs = [l.strip().lower() for l in (target_locations or ([target_location] if target_location else [])) if l and l.strip()]
-    if active_locs and not any(l in ("", "all", "worldwide", "anywhere") for l in active_locs):
-        if not is_loc_matched:
-            return None
-
-    # 7. Strict Role & Skill Fit Gate (with Primary Role vs. Mentioned Keyword & Laundry-List checks)
-    is_fit, fit_score, matched_skills, extracted_title = check_role_and_skill_fit(
-        full_text=combined_for_fit,
-        author_headline=author_headline,
-        clean_role=clean_role or post_item.get("role_title", ""),
-        tags=tags
-    )
-    if not is_fit:
-        return None
 
     # 8. Author Authority Scoring & Experience Extraction
     author_authority, authority_delta = classify_author_authority(author_name, author_headline, url)
@@ -2629,12 +2638,14 @@ def save_verified_posts_to_db(posts: List[Dict[str, Any]], clean_role: str) -> N
     if not posts:
         return
     try:
-        from .database import SessionLocal, engine
+        from .database import SessionLocal
         from . import models
-        models.VerifiedRecruiterPost.__table__.create(bind=engine, checkfirst=True)
         db = SessionLocal()
         try:
             seen_in_batch: Set[str] = set()
+            valid_items = []
+            urls_batch = []
+            ids_batch = []
             for p in posts:
                 p_url = (p.get("post_url") or "").strip()
                 p_id = (p.get("id") or generate_stable_post_id(p_url)).strip()
@@ -2642,14 +2653,26 @@ def save_verified_posts_to_db(posts: List[Dict[str, Any]], clean_role: str) -> N
                     continue
                 seen_in_batch.add(p_url)
                 seen_in_batch.add(p_id)
-                existing = (
-                    db.query(models.VerifiedRecruiterPost)
-                    .filter(
-                        (models.VerifiedRecruiterPost.post_url == p_url)
-                        | (models.VerifiedRecruiterPost.post_id == p_id)
-                    )
-                    .first()
+                valid_items.append((p, p_url, p_id))
+                urls_batch.append(p_url)
+                ids_batch.append(p_id)
+
+            if not valid_items:
+                return
+
+            existing_rows = (
+                db.query(models.VerifiedRecruiterPost)
+                .filter(
+                    models.VerifiedRecruiterPost.post_url.in_(urls_batch)
+                    | models.VerifiedRecruiterPost.post_id.in_(ids_batch)
                 )
+                .all()
+            )
+            by_url = {r.post_url: r for r in existing_rows if r.post_url}
+            by_id = {r.post_id: r for r in existing_rows if r.post_id}
+
+            for p, p_url, p_id in valid_items:
+                existing = by_url.get(p_url) or by_id.get(p_id)
                 emails_json = json.dumps(p.get("recruiter_emails") or [])
                 skills_json = json.dumps(p.get("matched_skills") or [])
                 signals_json = json.dumps(p.get("hiring_signals") or [])
@@ -2713,15 +2736,14 @@ def load_verified_posts_from_db(
     """
     loaded: List[Dict[str, Any]] = []
     try:
-        from .database import SessionLocal, engine
+        from .database import SessionLocal
         from . import models
-        models.VerifiedRecruiterPost.__table__.create(bind=engine, checkfirst=True)
         db = SessionLocal()
         try:
             rows = (
                 db.query(models.VerifiedRecruiterPost)
                 .order_by(models.VerifiedRecruiterPost.discovered_at.desc())
-                .limit(250)
+                .limit(180)
                 .all()
             )
             active_locs = [l.strip() for l in (target_locs or []) if l and l.strip().lower() not in ("", "all", "worldwide", "anywhere")]
@@ -3195,27 +3217,25 @@ def search_linkedin_recruiter_posts(
             return voyager_posts
 
     # 1. Deep Multi-Angle LinkedIn Harvester (recruiter posts only)
-    harvest_limit = min(max(limit * 2, 28), 50)
+    harvest_limit = min(max(limit + 6, 20), 28)
     found_posts = fetch_deep_linkedin_postings(
         clean_role, target_locs, limit=harvest_limit, page=page, time_range=time_range
     )
 
-    # 2. Concurrently scrape and deep-mine candidate posts with strict age & intent gates
+    # 2. Concurrently scrape and deep-mine candidate posts on shared _HUNTER_POOL
     detailed_posts: List[Dict[str, Any]] = []
     max_to_scrape = min(len(found_posts), harvest_limit)
     posts_to_scrape = found_posts[:max_to_scrape]
-    max_workers = min(max(len(posts_to_scrape), 1), 24)
 
     if posts_to_scrape:
-        executor = ThreadPoolExecutor(max_workers=max_workers)
         futures = {
-            executor.submit(
+            _HUNTER_POOL.submit(
                 scrape_single_post_details, p, blacklisted_set, max_age_hours, location, target_locs, clean_role, tags
             ): p
             for p in posts_to_scrape
         }
         try:
-            for fut in as_completed(futures, timeout=6.5):
+            for fut in as_completed(futures, timeout=3.8):
                 try:
                     res = fut.result()
                     if not res:
@@ -3228,7 +3248,9 @@ def search_linkedin_recruiter_posts(
         except (TimeoutError, FuturesTimeoutError, Exception):
             pass
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
 
     # Persist newly verified live posts into SQLite index BEFORE merging
     if detailed_posts:
@@ -3246,23 +3268,20 @@ def search_linkedin_recruiter_posts(
     if db_verified_posts:
         detailed_posts.extend(db_verified_posts)
 
-    # If a narrow recency window (e.g. 24h / week / month) still yielded fewer than 3 posts due to search engine
-    # indexing lag, expand to recent verified posts (capped at 90 days / 2160h — never ancient multi-year posts),
-    # while still enforcing 100% strict recruitment intent and role fit, and keeping their true age_str.
+    # Fast fallback if narrow recency window yielded fewer than 3 posts
     if len(detailed_posts) < 3 and max_age_hours is not None and posts_to_scrape:
         existing_urls = {p.get("post_url") for p in detailed_posts}
         relaxed_max_age = min(max(max_age_hours * 4.0, 720.0), 2160.0)
-        remaining_candidates = [p for p in posts_to_scrape if p.get("post_url") not in existing_urls]
+        remaining_candidates = [p for p in posts_to_scrape if p.get("post_url") not in existing_urls][:12]
         if remaining_candidates:
-            fb_executor = ThreadPoolExecutor(max_workers=min(len(remaining_candidates), 16))
             fallback_futures = {
-                fb_executor.submit(
+                _HUNTER_POOL.submit(
                     scrape_single_post_details, p, blacklisted_set, relaxed_max_age, location, target_locs, clean_role, tags
                 ): p
                 for p in remaining_candidates
             }
             try:
-                for fut in as_completed(fallback_futures, timeout=4.5):
+                for fut in as_completed(fallback_futures, timeout=2.2):
                     try:
                         res = fut.result()
                         if not res:
@@ -3276,7 +3295,9 @@ def search_linkedin_recruiter_posts(
             except Exception:
                 pass
             finally:
-                fb_executor.shutdown(wait=False, cancel_futures=True)
+                for fut in fallback_futures:
+                    if not fut.done():
+                        fut.cancel()
 
     # 3. Deduplicate reposts that share identical normalized commentary text or URL
     deduped_posts: List[Dict[str, Any]] = []

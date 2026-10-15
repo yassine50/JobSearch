@@ -43,11 +43,30 @@ from jobspy.util import (
 
 log = create_logger("LinkedIn")
 
+_SHARED_LINKEDIN_SESSION = None
+_JOB_URL_DIRECT_RE = re.compile(r'(?<=\?url=)[^"]+')
+
+
+def _get_shared_linkedin_session():
+    global _SHARED_LINKEDIN_SESSION
+    if _SHARED_LINKEDIN_SESSION is None:
+        s = create_session(
+            proxies=None,
+            ca_cert=None,
+            is_tls=False,
+            has_retry=False,
+            delay=0,
+            clear_cookies=False,
+        )
+        s.headers.update(headers)
+        _SHARED_LINKEDIN_SESSION = s
+    return _SHARED_LINKEDIN_SESSION
+
 
 class LinkedIn(Scraper):
     base_url = "https://www.linkedin.com"
-    delay = 0.25
-    band_delay = 0.25
+    delay = 0.05
+    band_delay = 0.05
     jobs_per_page = 25
 
     def __init__(
@@ -57,18 +76,21 @@ class LinkedIn(Scraper):
         Initializes LinkedInScraper with the LinkedIn job search url
         """
         super().__init__(Site.LINKEDIN, proxies=proxies, ca_cert=ca_cert)
-        self.session = create_session(
-            proxies=self.proxies,
-            ca_cert=ca_cert,
-            is_tls=False,
-            has_retry=True,
-            delay=1,
-            clear_cookies=True,
-        )
-        self.session.headers.update(headers)
+        if not self.proxies and not ca_cert:
+            self.session = _get_shared_linkedin_session()
+        else:
+            self.session = create_session(
+                proxies=self.proxies,
+                ca_cert=ca_cert,
+                is_tls=False,
+                has_retry=False,
+                delay=0,
+                clear_cookies=True,
+            )
+            self.session.headers.update(headers)
         self.scraper_input = None
         self.country = "worldwide"
-        self.job_url_direct_regex = re.compile(r'(?<=\?url=)[^"]+')
+        self.job_url_direct_regex = _JOB_URL_DIRECT_RE
 
     def scrape(self, scraper_input: ScraperInput) -> JobResponse:
         """
@@ -84,7 +106,7 @@ class LinkedIn(Scraper):
         seconds_old = (
             scraper_input.hours_old * 3600 if scraper_input.hours_old else None
         )
-        max_pages = max(1, min(3, math.ceil(scraper_input.results_wanted / 15)))
+        max_pages = 1 if scraper_input.results_wanted <= 25 else 2
         continue_search = (
             lambda: len(job_list) < scraper_input.results_wanted and start < 1000 and request_count < max_pages
         )
@@ -120,7 +142,7 @@ class LinkedIn(Scraper):
                 response = self.session.get(
                     f"{self.base_url}/jobs-guest/jobs/api/seeMoreJobPostings/search?",
                     params=params,
-                    timeout=6,
+                    timeout=4.2,
                 )
                 if response.status_code not in range(200, 400):
                     if response.status_code == 429:

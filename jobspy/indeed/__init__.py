@@ -25,6 +25,17 @@ from jobspy.util import (
 
 log = create_logger("Indeed")
 
+_SHARED_INDEED_SESSION = None
+
+
+def _get_shared_indeed_session():
+    global _SHARED_INDEED_SESSION
+    if _SHARED_INDEED_SESSION is None:
+        _SHARED_INDEED_SESSION = create_session(
+            proxies=None, ca_cert=None, is_tls=False, has_retry=False, clear_cookies=False
+        )
+    return _SHARED_INDEED_SESSION
+
 
 class Indeed(Scraper):
     def __init__(
@@ -35,9 +46,12 @@ class Indeed(Scraper):
         """
         super().__init__(Site.INDEED, proxies=proxies)
 
-        self.session = create_session(
-            proxies=self.proxies, ca_cert=ca_cert, is_tls=False
-        )
+        if not self.proxies and not ca_cert:
+            self.session = _get_shared_indeed_session()
+        else:
+            self.session = create_session(
+                proxies=self.proxies, ca_cert=ca_cert, is_tls=False, has_retry=False
+            )
         self.scraper_input = None
         self.jobs_per_page = 100
         self.num_workers = 10
@@ -112,14 +126,13 @@ class Indeed(Scraper):
         api_headers_temp = api_headers.copy()
         api_headers_temp["indeed-co"] = self.api_country_code
 
-        # Retry up to 2 times in case of transient blocks
-        for attempt in range(2):
+        for attempt in range(1):
             try:
                 response = self.session.post(
                     self.api_url,
                     headers=api_headers_temp,
                     json=payload,
-                    timeout=6.5,
+                    timeout=4.5,
                     verify=False,
                 )
                 if not response.ok:

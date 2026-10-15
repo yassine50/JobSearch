@@ -50,34 +50,56 @@ OPEN_SITE_IDS = {"remote_boards", "ats", "hackernews", "official_apis"}
 
 # ── Shared connection-pooled HTTP session (reuses TLS handshakes across calls) ──
 _OPEN_SESSION = requests.Session()
-_open_adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=1)
+_open_adapter = requests.adapters.HTTPAdapter(pool_connections=24, pool_maxsize=24, max_retries=0)
 _OPEN_SESSION.mount("https://", _open_adapter)
 _OPEN_SESSION.mount("http://", _open_adapter)
 
-# ── Thread-safe TTL cache (sized at 120 so 28 ATS boards + 7 remote feeds never thrash) ──
+# Shared bounded worker pool to prevent nested thread explosion on 2-vCPU VPS
+_OPEN_POOL = ThreadPoolExecutor(max_workers=8)
+
+# ── Thread-safe TTL caches ──
 _cache: Dict[str, tuple] = {}
+_parsed_cache: Dict[str, tuple] = {}
 _cache_lock = threading.Lock()
 
 
-def _get(url: str, as_json: bool = True, params: Optional[dict] = None, ttl: int = CACHE_TTL_S):
+def _get(url: str, as_json: bool = True, params: Optional[dict] = None, ttl: int = CACHE_TTL_S, cache_raw: bool = True):
     key = url + ("?" + json.dumps(params, sort_keys=True) if params else "")
     now = time.time()
-    with _cache_lock:
-        hit = _cache.get(key)
-        if hit and now - hit[0] < ttl:
-            return hit[1]
-    r = _OPEN_SESSION.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
+    if cache_raw:
+        with _cache_lock:
+            hit = _cache.get(key)
+            if hit and now - hit[0] < ttl:
+                return hit[1]
+    r = _OPEN_SESSION.get(url, params=params, headers=HEADERS, timeout=4.5)
     if r.status_code == 404:
         data = None
     else:
         r.raise_for_status()
         data = r.json() if as_json else r.text
-    with _cache_lock:
-        if len(_cache) >= 120:
-            for k in sorted(_cache, key=lambda k: _cache[k][0])[:30]:
-                _cache.pop(k, None)
-        _cache[key] = (now, data)
+    if cache_raw:
+        with _cache_lock:
+            if len(_cache) >= 60:
+                for k in sorted(_cache, key=lambda k: _cache[k][0])[:20]:
+                    _cache.pop(k, None)
+            _cache[key] = (now, data)
     return data
+
+
+def _get_parsed(cache_key: str, builder: Callable[[], List[dict]], ttl: int = CACHE_TTL_S) -> List[dict]:
+    """Caches already-parsed compact row dicts so multi-MB raw JSON/XML is freed immediately and never re-parsed."""
+    now = time.time()
+    with _cache_lock:
+        hit = _parsed_cache.get(cache_key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    rows = builder() or []
+    with _cache_lock:
+        if len(_parsed_cache) >= 80:
+            for k in sorted(_parsed_cache, key=lambda k: _parsed_cache[k][0])[:20]:
+                _parsed_cache.pop(k, None)
+        _parsed_cache[cache_key] = (now, rows)
+    return rows
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -89,12 +111,12 @@ _NL_RE = re.compile(r"\n\s*\n+")
 def html_to_text(raw: str) -> str:
     if not raw:
         return ""
-    if len(raw) > 12000:
-        raw = raw[:12000]
+    if len(raw) > 8000:
+        raw = raw[:8000]
     raw = html.unescape(raw) if "&" in raw else raw
     text = _TAG_RE.sub(" ", raw)
     text = html.unescape(text)
-    return _NL_RE.sub("\n\n", _WS_RE.sub(" ", text)).strip()[:4000]
+    return _NL_RE.sub("\n\n", _WS_RE.sub(" ", text)).strip()[:2400]
 
 
 def _iso_date(value) -> str:
@@ -153,25 +175,33 @@ def _remotive(query: str) -> List[dict]:
 
 
 def _remoteok(query: str) -> List[dict]:
-    data = _get("https://remoteok.com/api") or []
-    out = []
-    for j in data:
-        if not isinstance(j, dict) or not j.get("position"):
-            continue  # first element is the legal notice
-        out.append(_row("remoteok", j.get("position"), j.get("company"), j.get("location") or "Remote",
-                        j.get("url"), html_to_text(j.get("description", "")), _iso_date(j.get("date")),
-                        apply_url=j.get("apply_url") or j.get("url"),
-                        min_amount=j.get("salary_min") or None, max_amount=j.get("salary_max") or None,
-                        is_remote=True))
-    return out
+    def _build():
+        data = _get("https://remoteok.com/api", cache_raw=False) or []
+        out = []
+        for j in data:
+            if not isinstance(j, dict) or not j.get("position"):
+                continue
+            out.append(_row("remoteok", j.get("position"), j.get("company"), j.get("location") or "Remote",
+                            j.get("url"), html_to_text(j.get("description", "")), _iso_date(j.get("date")),
+                            apply_url=j.get("apply_url") or j.get("url"),
+                            min_amount=j.get("salary_min") or None, max_amount=j.get("salary_max") or None,
+                            is_remote=True))
+        return out
+    return _get_parsed("feed:remoteok", _build)
 
 
 def _jobicy(query: str) -> List[dict]:
     tag = re.sub(r"\s+", " ", query.lower()).strip()
-    data = _get("https://jobicy.com/api/v2/remote-jobs", params={"count": 100, "tag": tag}) or {}
+    data = _get("https://jobicy.com/api/v2/remote-jobs", params={"count": 80, "tag": tag}) or {}
     jobs = data.get("jobs") or []
-    if not jobs:  # tag search is strict — fall back to the latest feed and filter locally
-        jobs = (_get("https://jobicy.com/api/v2/remote-jobs", params={"count": 100}) or {}).get("jobs") or []
+    if not jobs:
+        return _get_parsed("feed:jobicy_all", lambda: [
+            _row("jobicy", j.get("jobTitle"), j.get("companyName"), j.get("jobGeo") or "Remote", j.get("url"),
+                 html_to_text(j.get("jobDescription") or j.get("jobExcerpt") or ""), _iso_date(j.get("pubDate")),
+                 min_amount=j.get("annualSalaryMin") or None, max_amount=j.get("annualSalaryMax") or None,
+                 is_remote=True)
+            for j in ((_get("https://jobicy.com/api/v2/remote-jobs", params={"count": 80}, cache_raw=False) or {}).get("jobs") or [])
+        ])
     return [
         _row("jobicy", j.get("jobTitle"), j.get("companyName"), j.get("jobGeo") or "Remote", j.get("url"),
              html_to_text(j.get("jobDescription") or j.get("jobExcerpt") or ""), _iso_date(j.get("pubDate")),
@@ -189,7 +219,15 @@ def _himalayas(query: str) -> List[dict]:
     except Exception:
         jobs = []
     if not jobs:
-        jobs = (_get("https://himalayas.app/jobs/api", params={"limit": 50}) or {}).get("jobs") or []
+        return _get_parsed("feed:himalayas_all", lambda: [
+            _row("himalayas", j.get("title"), j.get("companyName"),
+                 ", ".join(l for l in (j.get("locationRestrictions") or []) if isinstance(l, str)) or "Remote (Worldwide)",
+                 j.get("applicationLink") or j.get("guid"),
+                 html_to_text(j.get("description") or j.get("excerpt") or ""), _iso_date(j.get("pubDate")),
+                 min_amount=j.get("minSalary") or None, max_amount=j.get("maxSalary") or None,
+                 is_remote=True)
+            for j in ((_get("https://himalayas.app/jobs/api", params={"limit": 50}, cache_raw=False) or {}).get("jobs") or [])
+        ])
     out = []
     for j in jobs:
         locs = j.get("locationRestrictions") or []
@@ -203,43 +241,49 @@ def _himalayas(query: str) -> List[dict]:
 
 
 def _weworkremotely(query: str) -> List[dict]:
-    xml_text = _get("https://weworkremotely.com/remote-jobs.rss", as_json=False) or ""
-    out = []
-    try:
-        root = ET.fromstring(xml_text.encode("utf-8"))
-    except Exception:
+    def _build():
+        xml_text = _get("https://weworkremotely.com/remote-jobs.rss", as_json=False, cache_raw=False) or ""
+        out = []
+        try:
+            root = ET.fromstring(xml_text.encode("utf-8"))
+        except Exception:
+            return out
+        for item in root.iter("item"):
+            raw_title = (item.findtext("title") or "").strip()
+            company, _, role = raw_title.partition(":")
+            if not role:
+                company, role = "", raw_title
+            out.append(_row("weworkremotely", role.strip(), company.strip(),
+                            (item.findtext("region") or "Remote").strip(), (item.findtext("link") or "").strip(),
+                            html_to_text(item.findtext("description") or ""), _iso_date(item.findtext("pubDate")),
+                            is_remote=True))
         return out
-    for item in root.iter("item"):
-        raw_title = (item.findtext("title") or "").strip()
-        company, _, role = raw_title.partition(":")
-        if not role:
-            company, role = "", raw_title
-        out.append(_row("weworkremotely", role.strip(), company.strip(),
-                        (item.findtext("region") or "Remote").strip(), (item.findtext("link") or "").strip(),
-                        html_to_text(item.findtext("description") or ""), _iso_date(item.findtext("pubDate")),
-                        is_remote=True))
-    return out
+    return _get_parsed("feed:weworkremotely", _build)
 
 
 def _workingnomads(query: str) -> List[dict]:
-    data = (_get("https://www.workingnomads.com/api/exposed_jobs/") or [])[:200]
-    return [
-        _row("workingnomads", j.get("title"), j.get("company_name"), j.get("location") or "Remote", j.get("url"),
-             html_to_text(j.get("description", "")), _iso_date(j.get("pub_date")), is_remote=True)
-        for j in data if isinstance(j, dict)
-    ]
+    def _build():
+        data = (_get("https://www.workingnomads.com/api/exposed_jobs/", cache_raw=False) or [])[:160]
+        return [
+            _row("workingnomads", j.get("title"), j.get("company_name"), j.get("location") or "Remote", j.get("url"),
+                 html_to_text(j.get("description", "")), _iso_date(j.get("pub_date")), is_remote=True)
+            for j in data if isinstance(j, dict)
+        ]
+    return _get_parsed("feed:workingnomads", _build)
 
 
 def _arbeitnow(query: str) -> List[dict]:
-    out = []
-    data = _get("https://www.arbeitnow.com/api/job-board-api", params={"page": 1}) or {}
-    for j in data.get("data", []):
-        remote = bool(j.get("remote"))
-        loc = ", ".join(x for x in [j.get("location") or "", "Remote" if remote else ""] if x)
-        out.append(_row("arbeitnow", j.get("title"), j.get("company_name"), loc, j.get("url"),
-                        html_to_text(j.get("description", "")), _iso_date(j.get("created_at")),
-                        is_remote=remote))
-    return out
+    def _build():
+        out = []
+        data = _get("https://www.arbeitnow.com/api/job-board-api", params={"page": 1}, cache_raw=False) or {}
+        for j in data.get("data", []):
+            remote = bool(j.get("remote"))
+            loc = ", ".join(x for x in [j.get("location") or "", "Remote" if remote else ""] if x)
+            out.append(_row("arbeitnow", j.get("title"), j.get("company_name"), loc, j.get("url"),
+                            html_to_text(j.get("description", "")), _iso_date(j.get("created_at")),
+                            is_remote=remote))
+        return out
+    return _get_parsed("feed:arbeitnow", _build)
 
 
 REMOTE_FETCHERS: Dict[str, Callable[[str], List[dict]]] = {
@@ -250,41 +294,41 @@ REMOTE_FETCHERS: Dict[str, Callable[[str], List[dict]]] = {
 
 # ── Hacker News "Who is hiring?" ───────────────────────────────────────────────
 def _hackernews(query: str) -> List[dict]:
-    search = _get("https://hn.algolia.com/api/v1/search_by_date",
-                  params={"tags": "story,author_whoishiring", "hitsPerPage": 5}) or {}
-    story = next((h for h in search.get("hits", []) if "who is hiring" in (h.get("title") or "").lower()), None)
-    if not story:
-        return []
-    thread = _get(f"https://hn.algolia.com/api/v1/items/{story['objectID']}") or {}
-    thread_url = f"https://news.ycombinator.com/item?id={story['objectID']}"
-    out = []
-    for c in thread.get("children", []) or []:
-        text = html_to_text(c.get("text") or "")
-        if len(text) < 80:
-            continue
-        first = text.split("\n", 1)[0]
-        parts = [p.strip() for p in first.split("|") if p.strip()]
-        company = parts[0] if parts else ""
-        role = parts[1] if len(parts) > 1 else first[:120]
-        location = parts[2] if len(parts) > 2 else ""
-        m = re.search(r"https?://[^\s<>\"')]+", text)
-        comment_url = f"https://news.ycombinator.com/item?id={c.get('id')}"
-        out.append(_row("hackernews", role, company[:80], location, comment_url, text,
-                        _iso_date(c.get("created_at_i") or c.get("created_at")),
-                        apply_url=m.group(0) if m else thread_url,
-                        is_remote="remote" in first.lower()))
-    return out
+    def _build():
+        search = _get("https://hn.algolia.com/api/v1/search_by_date",
+                      params={"tags": "story,author_whoishiring", "hitsPerPage": 5}, cache_raw=False) or {}
+        story = next((h for h in search.get("hits", []) if "who is hiring" in (h.get("title") or "").lower()), None)
+        if not story:
+            return []
+        thread = _get(f"https://hn.algolia.com/api/v1/items/{story['objectID']}", cache_raw=False) or {}
+        thread_url = f"https://news.ycombinator.com/item?id={story['objectID']}"
+        out = []
+        for c in thread.get("children", []) or []:
+            text = html_to_text(c.get("text") or "")
+            if len(text) < 80:
+                continue
+            first = text.split("\n", 1)[0]
+            parts = [p.strip() for p in first.split("|") if p.strip()]
+            company = parts[0] if parts else ""
+            role = parts[1] if len(parts) > 1 else first[:120]
+            location = parts[2] if len(parts) > 2 else ""
+            m = re.search(r"https?://[^\s<>\"')]+", text)
+            comment_url = f"https://news.ycombinator.com/item?id={c.get('id')}"
+            out.append(_row("hackernews", role, company[:80], location, comment_url, text,
+                            _iso_date(c.get("created_at_i") or c.get("created_at")),
+                            apply_url=m.group(0) if m else thread_url,
+                            is_remote="remote" in first.lower()))
+        return out
+    return _get_parsed("feed:hackernews", _build)
 
 
 # ── ATS (Greenhouse / Lever / Ashby) ───────────────────────────────────────────
 _ATS_FILE = os.path.join(os.path.dirname(__file__), "ats_companies.json")
-_EXTRA_ATS = [  # broad tech employers on top of the career-ops AI list
-    ("greenhouse", "stripe"), ("greenhouse", "airbnb"), ("greenhouse", "discord"), ("greenhouse", "robinhood"),
-    ("greenhouse", "figma"), ("greenhouse", "gitlab"), ("greenhouse", "reddit"), ("greenhouse", "dropbox"),
-    ("greenhouse", "cloudflare"), ("greenhouse", "datadog"), ("greenhouse", "instacart"), ("greenhouse", "lyft"),
-    ("greenhouse", "pinterest"), ("greenhouse", "duolingo"), ("greenhouse", "coinbase"), ("greenhouse", "twilio"),
-    ("lever", "palantir"), ("lever", "spotify"), ("ashby", "openai"), ("ashby", "notion"), ("ashby", "ramp"),
-    ("ashby", "linear"),
+_EXTRA_ATS = [
+    ("greenhouse", "stripe"), ("greenhouse", "airbnb"), ("greenhouse", "discord"),
+    ("greenhouse", "figma"), ("greenhouse", "gitlab"), ("greenhouse", "cloudflare"),
+    ("greenhouse", "datadog"), ("greenhouse", "coinbase"), ("lever", "spotify"),
+    ("ashby", "openai"), ("ashby", "notion"), ("ashby", "linear"),
 ]
 
 
@@ -302,9 +346,10 @@ def load_ats_companies() -> List[dict]:
 
 
 def _greenhouse_board(slug: str, company: str = "") -> List[dict]:
-    # Fetch lightweight index without content=true (~20KB vs 10MB per board)
-    data = _get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs") or {}
-    return [_greenhouse_row(j, slug, company) for j in data.get("jobs", [])]
+    def _build():
+        data = _get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs", cache_raw=False) or {}
+        return [_greenhouse_row(j, slug, company) for j in data.get("jobs", [])]
+    return _get_parsed(f"ats:gh:{slug}", _build)
 
 
 def _greenhouse_row(j: dict, slug: str, company: str = "") -> dict:
@@ -318,24 +363,28 @@ def _greenhouse_row(j: dict, slug: str, company: str = "") -> dict:
 
 
 def _lever_board(slug: str, company: str = "") -> List[dict]:
-    data = _get(f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"}) or []
-    return [_lever_row(j, slug, company) for j in data if isinstance(j, dict)]
+    def _build():
+        data = _get(f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"}, cache_raw=False) or []
+        return [_lever_row(j, slug, company) for j in data if isinstance(j, dict)]
+    return _get_parsed(f"ats:lever:{slug}", _build)
 
 
 def _lever_row(j: dict, slug: str, company: str = "") -> dict:
     sr = j.get("salaryRange") or {}
     desc = j.get("descriptionPlain") or html_to_text(j.get("description", ""))
     return _row("lever", j.get("text"), company or _pretty_slug(slug),
-                (j.get("categories") or {}).get("location", ""), j.get("hostedUrl"), desc[:3500],
+                (j.get("categories") or {}).get("location", ""), j.get("hostedUrl"), desc[:2400],
                 _iso_date(j.get("createdAt")), apply_url=j.get("applyUrl"),
                 min_amount=sr.get("min"), max_amount=sr.get("max"),
                 is_remote=(j.get("workplaceType") == "remote"))
 
 
 def _ashby_board(slug: str, company: str = "") -> List[dict]:
-    data = _get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
-                params={"includeCompensation": "true"}) or {}
-    return [_ashby_row(j, slug, company) for j in data.get("jobs", []) if j.get("isListed", True)]
+    def _build():
+        data = _get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
+                    params={"includeCompensation": "true"}, cache_raw=False) or {}
+        return [_ashby_row(j, slug, company) for j in data.get("jobs", []) if j.get("isListed", True)]
+    return _get_parsed(f"ats:ashby:{slug}", _build)
 
 
 def _ashby_row(j: dict, slug: str, company: str = "") -> dict:
@@ -343,7 +392,7 @@ def _ashby_row(j: dict, slug: str, company: str = "") -> dict:
     if j.get("isRemote") and "remote" not in loc.lower():
         loc = f"{loc}, Remote".strip(", ")
     row = _row("ashby", j.get("title"), company or _pretty_slug(slug), loc, j.get("jobUrl"),
-               (j.get("descriptionPlain") or html_to_text(j.get("descriptionHtml", "")))[:3500],
+               (j.get("descriptionPlain") or html_to_text(j.get("descriptionHtml", "")))[:2400],
                _iso_date(j.get("publishedAt")), apply_url=j.get("applyUrl"), is_remote=bool(j.get("isRemote")))
     comp = (j.get("compensation") or {}).get("compensationTierSummary")
     if comp:
@@ -400,59 +449,53 @@ def _serper_ats_discovery(query: str, location: str, api_key: str, hours_old: Op
     if hours_old:
         tbs = "qdr:d" if hours_old <= 24 else ("qdr:w" if hours_old <= 168 else "qdr:m")
     else:
-        tbs = "qdr:m"  # career-ops rule: postings older than ~60 days are mostly ghosts
+        tbs = "qdr:m"
 
     def one_host(host: str) -> List[str]:
         payload = {"q": f'site:{host} "{query}"{loc}', "num": 10, "tbs": tbs}
         r = _OPEN_SESSION.post("https://google.serper.dev/search", json=payload,
-                               headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=5.0)
+                               headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=3.8)
         if r.status_code != 200:
             return []
         return [i.get("link", "") for i in r.json().get("organic", [])]
 
     urls: List[str] = []
-    ex_hosts = ThreadPoolExecutor(max_workers=len(SERPER_ATS_HOSTS))
-    futs_h = [ex_hosts.submit(one_host, h) for h in SERPER_ATS_HOSTS]
-    wait(futs_h, timeout=5.5)
+    futs_h = [_OPEN_POOL.submit(one_host, h) for h in SERPER_ATS_HOSTS]
+    wait(futs_h, timeout=4.0)
     for fh in futs_h:
         if fh.done() and not fh.exception():
             for link in fh.result():
                 if parse_ats_url(link) and link not in urls:
                     urls.append(link)
-    ex_hosts.shutdown(wait=False, cancel_futures=True)
 
     if not urls:
         return []
-    ex = ThreadPoolExecutor(max_workers=12)
-    futs = [ex.submit(fetch_ats_posting, u) for u in urls[:25]]
-    wait(futs, timeout=6.0)
+    futs = [_OPEN_POOL.submit(fetch_ats_posting, u) for u in urls[:16]]
+    wait(futs, timeout=4.0)
     rows = [f.result() for f in futs if f.done() and not f.exception() and f.result()]
-    ex.shutdown(wait=False, cancel_futures=True)
     return rows
 
 
 def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
-    companies = load_ats_companies()[:28]
+    companies = load_ats_companies()[:16]
 
     def one(c):
         try:
             rows = BOARD_FETCHERS[c["vendor"]](c["slug"], c.get("name", ""))
-            return [r for r in rows if relevant(r)]
+            return [dict(r) for r in rows if relevant(r)]
         except Exception as e:
             logger.debug(f"[ATS] board {c['vendor']}/{c['slug']}: {e}")
             return []
 
     out: List[dict] = []
-    ex = ThreadPoolExecutor(max_workers=14)
-    futs = [ex.submit(one, c) for c in companies]
-    wait(futs, timeout=6.5)
+    futs = [_OPEN_POOL.submit(one, c) for c in companies]
+    wait(futs, timeout=4.2)
     for f in futs:
         if f.done() and not f.exception():
             out.extend(f.result())
-    ex.shutdown(wait=False, cancel_futures=True)
 
-    # Enrich descriptions for matched Greenhouse rows (up to 12) in parallel
-    gh_missing = [r for r in out if not r.get("description") and r.get("_gh_slug") and r.get("_gh_id")][:12]
+    # Enrich descriptions for matched Greenhouse rows (up to 6) in parallel
+    gh_missing = [r for r in out if not r.get("description") and r.get("_gh_slug") and r.get("_gh_id")][:6]
     if gh_missing:
         def _fill_gh(r):
             try:
@@ -461,10 +504,8 @@ def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
                     r["description"] = html_to_text(j["content"])
             except Exception:
                 pass
-        ex_gh = ThreadPoolExecutor(max_workers=min(len(gh_missing), 8))
-        gh_futs = [ex_gh.submit(_fill_gh, r) for r in gh_missing]
-        wait(gh_futs, timeout=3.0)
-        ex_gh.shutdown(wait=False, cancel_futures=True)
+        gh_futs = [_OPEN_POOL.submit(_fill_gh, r) for r in gh_missing]
+        wait(gh_futs, timeout=2.0)
 
     for r in out:
         r.pop("_gh_slug", None)
@@ -526,16 +567,14 @@ def make_strict_matcher(queries: List[str]) -> Callable[[dict], bool]:
         for q_low, role, distinct, distinct_raw in specs:
             if q_low and re.search(r"\b" + re.escape(q_low) + r"\b", t_low):
                 return True
-            # Exact distinctive words in the title ("Senior Flutter Engineer") …
             if all(t in t_raw for t in distinct_raw):
                 return True
-            # … or synonyms of them (flutter ≈ mobile) *together with* the role noun.
             if all(c in t_cls for c in distinct) and role and role in t_cls:
                 return True
             if role and role in t_cls:
                 if d_counts is None:
                     d_counts = {}
-                    for t in tokenize((row.get("description") or "")[:6000]):
+                    for t in tokenize((row.get("description") or "")[:4000]):
                         d_counts[t] = d_counts.get(t, 0) + 1
                 if all(d_counts.get(t, 0) >= 3 for t in distinct_raw):
                     return True
@@ -559,29 +598,22 @@ def fetch_open_source(site: str, queries: List[str], *,
 
     rows: List[dict] = []
     if site == "remote_boards":
-        ex = ThreadPoolExecutor(max_workers=len(REMOTE_FETCHERS))
-        futs = {ex.submit(fn, query): name for name, fn in REMOTE_FETCHERS.items()}
-        wait(futs, timeout=6.5)
+        futs = {_OPEN_POOL.submit(fn, query): name for name, fn in REMOTE_FETCHERS.items()}
+        wait(futs, timeout=4.2)
         for f, name in futs.items():
             if f.done() and not f.exception():
                 rows.extend(f.result())
             elif f.done():
                 logger.info(f"[OpenSources] {name} failed: {f.exception()}")
-        ex.shutdown(wait=False, cancel_futures=True)
     elif site == "hackernews":
         rows = _hackernews(query)
     elif site == "ats":
-        ex = ThreadPoolExecutor(max_workers=2)
-        futs = [ex.submit(_ats_direct, query, relevant)]
+        rows.extend(_ats_direct(query, relevant))
         if serper_key:
-            futs.append(ex.submit(_serper_ats_discovery, query, location or country, serper_key, hours_old))
-        wait(futs, timeout=8.0)
-        for f in futs:
-            if f.done() and not f.exception():
-                rows.extend(f.result())
-            elif f.done():
-                logger.info(f"[OpenSources] ATS sub-task failed: {f.exception()}")
-        ex.shutdown(wait=False, cancel_futures=True)
+            try:
+                rows.extend(_serper_ats_discovery(query, location or country, serper_key, hours_old))
+            except Exception as e:
+                logger.info(f"[OpenSources] Serper ATS discovery failed: {e}")
     elif site == "official_apis":
         from .official_apis import fetch_official
         rows = fetch_official(query, country=country, location=location, hours_old=hours_old)
@@ -596,9 +628,10 @@ def fetch_open_source(site: str, queries: List[str], *,
         if key in seen:
             continue
         seen.add(key)
-        if r.get("salary_text") and not r.get("min_amount"):
-            nums = [int(n.replace(",", "")) for n in re.findall(r"\d{2,3}(?:,\d{3})+|\d{5,6}", r["salary_text"])]
+        r_copy = dict(r)
+        if r_copy.get("salary_text") and not r_copy.get("min_amount"):
+            nums = [int(n.replace(",", "")) for n in re.findall(r"\d{2,3}(?:,\d{3})+|\d{5,6}", r_copy["salary_text"])]
             if nums:
-                r["min_amount"], r["max_amount"] = min(nums), max(nums)
-        out.append(r)
+                r_copy["min_amount"], r_copy["max_amount"] = min(nums), max(nums)
+        out.append(r_copy)
     return out

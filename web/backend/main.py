@@ -108,12 +108,13 @@ def _render_keep_alive_worker():
 
 
 def _warm_open_feeds_worker():
-    """Pre-warms remote job boards & HN Who is Hiring feed in the background so first search is fast."""
+    """Pre-warms remote job boards, HN Who is Hiring, and ATS feeds in the background so first search is fast."""
     time.sleep(1.5)
     try:
         from .open_sources import fetch_open_source
         fetch_open_source("remote_boards", ["software engineer"])
         fetch_open_source("hackernews", ["software engineer"])
+        fetch_open_source("ats", ["software engineer"])
     except Exception:
         pass
 
