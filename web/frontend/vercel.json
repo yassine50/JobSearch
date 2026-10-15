@@ -28,7 +28,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://job-searcher-api-ux4i.onrender.com/api/:path*"
+      "destination": "http://34.55.247.158/api/:path*"
     },
     {
       "source": "/((?!api/|favicon\\.svg|og-banner\\.svg|robots\\.txt|sitemap\\.xml|site\\.webmanifest|assets/).*)",

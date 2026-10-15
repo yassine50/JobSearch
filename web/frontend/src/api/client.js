@@ -1,8 +1,10 @@
 import axios from 'axios'
 
 const RAW_API_URL = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
-const baseURL = RAW_API_URL
-  ? (RAW_API_URL.endsWith('/api') ? RAW_API_URL : `${RAW_API_URL}/api`)
+// Ignore legacy onrender.com env var so Vercel's /api/* rewrite routes directly to the fast VPS (34.55.247.158)
+const EFFECTIVE_API_URL = RAW_API_URL.includes('onrender.com') ? '' : RAW_API_URL
+const baseURL = EFFECTIVE_API_URL
+  ? (EFFECTIVE_API_URL.endsWith('/api') ? EFFECTIVE_API_URL : `${EFFECTIVE_API_URL}/api`)
   : '/api'
 
 const client = axios.create({ baseURL })
