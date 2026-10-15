@@ -1,6 +1,4 @@
 {
-  "cleanUrls": true,
-  "trailingSlash": false,
   "headers": [
     {
       "source": "/sitemap.xml",
@@ -31,7 +29,7 @@
       "destination": "http://34.55.247.158/api/:path*"
     },
     {
-      "source": "/((?!api/|favicon\\.svg|og-banner\\.svg|robots\\.txt|sitemap\\.xml|site\\.webmanifest|assets/).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
