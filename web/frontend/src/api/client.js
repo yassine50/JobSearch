@@ -99,6 +99,70 @@ client.interceptors.request.use(cfg => {
   return cfg
 })
 
+function _trackPlatformAction(res) {
+  try {
+    const method = (res.config?.method || 'get').toLowerCase()
+    if (method === 'get') return
+    const url = String(res.config?.url || '')
+    let body = {}
+    if (res.config?.data && typeof res.config.data === 'string') {
+      try { body = JSON.parse(res.config.data) } catch { body = {} }
+    } else if (res.config?.data && typeof res.config.data === 'object') {
+      body = res.config.data
+    }
+
+    const fire = (eventName, params = {}) => {
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', eventName, params)
+      }
+      if (typeof window.clarity === 'function') {
+        window.clarity('event', eventName)
+      }
+    }
+
+    if (url.includes('/auth/register')) {
+      fire('sign_up', { method: 'email', role: body.role || 'seeker' })
+    } else if (url.includes('/auth/login')) {
+      fire('login', { method: 'email' })
+    } else if (url.includes('/linkedin-posts/search')) {
+      fire('search_linkedin_posts', {
+        search_term: body.role || '',
+        location: body.location || 'Worldwide',
+        results_count: Array.isArray(res.data?.posts) ? res.data.posts.length : 0,
+      })
+    } else if (url.includes('/jobs/search')) {
+      fire('search_job_boards', {
+        search_term: body.title || '',
+        country: body.country || 'Worldwide',
+        results_count: Array.isArray(res.data?.jobs) ? res.data.jobs.length : 0,
+      })
+    } else if (url.includes('/cv/upload')) {
+      fire('upload_cv', { filename: res.data?.filename || 'resume' })
+    } else if (url.includes('/cv/match')) {
+      fire('calculate_ats_match', { score: res.data?.score || 0 })
+    } else if (url.includes('/coverletter/tailor-cv')) {
+      fire('tailor_cv_pdf', { job_title: body.job_title || '' })
+    } else if (url.includes('/coverletter/generate')) {
+      fire('generate_cover_letter', { job_title: body.job_title || '' })
+    } else if (url.includes('/email/send') || url.includes('/email/quick-apply') || url.includes('/email/batch-send')) {
+      fire('send_recruiter_email', { endpoint: url })
+    } else if (url.includes('/tracker/sync-inbox')) {
+      fire('sync_imap_inbox')
+    } else if (url.includes('/tracker') || url.includes('/jobs/save')) {
+      fire('track_job_application', { status: body.status || 'saved' })
+    } else if (url.includes('/recruiter/search')) {
+      fire('search_recruiter_candidates', {
+        job_title: body.job_title || '',
+        results_count: Array.isArray(res.data?.candidates) ? res.data.candidates.length : 0,
+      })
+    } else if (url.includes('/settings')) {
+      fire('update_platform_settings')
+    }
+  } catch {
+    // Never block API responses on analytics
+  }
+}
+
 client.interceptors.response.use(
   res => {
     const method = (res.config?.method || 'get').toLowerCase()
@@ -107,6 +171,7 @@ client.interceptors.response.use(
     } else if (method !== 'get') {
       // Any mutation marks cached GET timestamps stale so next GET revalidates from server
       _cacheTs.clear()
+      _trackPlatformAction(res)
     }
     return res
   },

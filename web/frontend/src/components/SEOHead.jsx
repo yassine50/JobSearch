@@ -164,7 +164,47 @@ export default function SEOHead() {
       document.head.appendChild(canonicalEl)
     }
     canonicalEl.setAttribute('href', cfg.canonical)
+
+    // Track SPA route view + dedicated page tag in Google Analytics 4 (G-Q9TZ5QCLB0) & Microsoft Clarity
+    try {
+      const ROUTE_TAG_MAP = {
+        '/': 'view_landing_home',
+        '/ats-resume-checker': 'view_landing_ats_checker',
+        '/linkedin-recruiter-posts': 'view_landing_linkedin_radar',
+        '/ai-cover-letter-generator': 'view_landing_cover_letter',
+        '/job-application-tracker': 'view_landing_job_tracker',
+        '/recruiter-talent-sourcing': 'view_landing_recruiter_xray',
+        '/dashboard': 'view_app_dashboard',
+        '/seeker': 'view_app_opportunity_hunter',
+        '/tracker': 'view_app_kanban_tracker',
+        '/coverletter': 'view_app_cover_letter_studio',
+        '/cover-letter': 'view_app_cover_letter_studio',
+        '/email': 'view_app_email_outreach',
+        '/recruiter': 'view_app_recruiter_xray',
+        '/settings': 'view_app_settings',
+      }
+      const routeEventName = ROUTE_TAG_MAP[cleanPath] || 'view_page'
+
+      if (typeof window.gtag === 'function') {
+        window.gtag('config', 'G-Q9TZ5QCLB0', {
+          page_path: cleanPath,
+          page_title: cfg.title,
+          page_location: window.location.href,
+        })
+        window.gtag('event', routeEventName, {
+          page_path: cleanPath,
+          page_title: cfg.title,
+        })
+      }
+      if (typeof window.clarity === 'function') {
+        window.clarity('set', 'page', cleanPath)
+        window.clarity('event', routeEventName)
+      }
+    } catch {
+      // Ignore analytics errors if blocked by browser extension
+    }
   }, [pathname])
 
   return null
 }
+
