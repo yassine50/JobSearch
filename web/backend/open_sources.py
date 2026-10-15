@@ -67,22 +67,28 @@ def _get(url: str, as_json: bool = True, params: Optional[dict] = None, ttl: int
         r.raise_for_status()
         data = r.json() if as_json else r.text
     with _cache_lock:
+        if len(_cache) >= 20:
+            for k in sorted(_cache, key=lambda k: _cache[k][0])[:8]:
+                _cache.pop(k, None)
         _cache[key] = (now, data)
     return data
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"[ \t\xa0]+")
+_NL_RE = re.compile(r"\n\s*\n+")
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def html_to_text(raw: str) -> str:
     if not raw:
         return ""
-    raw = html.unescape(raw) if "&lt;" in raw else raw
-    try:
-        from bs4 import BeautifulSoup
-        text = BeautifulSoup(raw, "html.parser").get_text("\n")
-    except Exception:
-        text = re.sub(r"<[^>]+>", " ", raw)
+    if len(raw) > 12000:
+        raw = raw[:12000]
+    raw = html.unescape(raw) if "&" in raw else raw
+    text = _TAG_RE.sub(" ", raw)
     text = html.unescape(text)
-    return re.sub(r"\n\s*\n+", "\n\n", re.sub(r"[ \t\xa0]+", " ", text)).strip()
+    return _NL_RE.sub("\n\n", _WS_RE.sub(" ", text)).strip()[:4000]
 
 
 def _iso_date(value) -> str:
@@ -210,7 +216,7 @@ def _weworkremotely(query: str) -> List[dict]:
 
 
 def _workingnomads(query: str) -> List[dict]:
-    data = _get("https://www.workingnomads.com/api/exposed_jobs/") or []
+    data = (_get("https://www.workingnomads.com/api/exposed_jobs/") or [])[:200]
     return [
         _row("workingnomads", j.get("title"), j.get("company_name"), j.get("location") or "Remote", j.get("url"),
              html_to_text(j.get("description", "")), _iso_date(j.get("pub_date")), is_remote=True)
@@ -414,7 +420,7 @@ def _serper_ats_discovery(query: str, location: str, api_key: str, hours_old: Op
 
 
 def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
-    companies = load_ats_companies()
+    companies = load_ats_companies()[:28]
 
     def one(c):
         try:
@@ -425,9 +431,9 @@ def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
             return []
 
     out: List[dict] = []
-    ex = ThreadPoolExecutor(max_workers=16)
+    ex = ThreadPoolExecutor(max_workers=6)
     futs = [ex.submit(one, c) for c in companies]
-    wait(futs, timeout=18)
+    wait(futs, timeout=14)
     for f in futs:
         if f.done() and not f.exception():
             out.extend(f.result())

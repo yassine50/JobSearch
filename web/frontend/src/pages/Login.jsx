@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/AuthContext.jsx'
 import { SEO_ROUTE_CONFIG } from '../components/SEOHead.jsx'
+import BrandLogo from '../components/BrandLogo.jsx'
 import client from '../api/client.js'
 import {
   Sparkles, ShieldCheck, Zap, Mail, Radar, ArrowRight,
@@ -205,6 +206,10 @@ export default function Login() {
   const [lf, setLf] = useState({ email: '', password: '' })
   const [rf, setRf] = useState({ name: '', email: '', password: '', role: 'seeker' })
 
+  useEffect(() => {
+    client.get('/health').catch(() => {})
+  }, [])
+
   // Interactive ATS Match Preview state
   const [selectedPreset, setSelectedPreset] = useState(DEMO_PRESETS[0].id)
   const [customCvSkills, setCustomCvSkills] = useState(DEMO_PRESETS[0].cvSkills)
@@ -358,18 +363,8 @@ export default function Login() {
       {/* STICKY MARKETING & SEO HEADER */}
       <header className="sticky top-0 z-40 border-b border-white/[0.07] bg-[#050811]/85 backdrop-blur-2xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-3 group shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 flex items-center justify-center text-lg font-black shadow-lg shadow-blue-500/30 border border-white/20 group-hover:scale-105 transition-transform">
-              C
-            </div>
-            <div>
-              <span className="text-lg font-extrabold tracking-tight block leading-none text-white">
-                CVtoMatch
-              </span>
-              <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest block mt-0.5">
-                AI Resume &amp; Career OS
-              </span>
-            </div>
+          <Link to="/" className="group shrink-0">
+            <BrandLogo size="md" />
           </Link>
 
           {/* Crawl-Friendly Topic Cluster & Section Navigation */}
@@ -1179,11 +1174,8 @@ export default function Login() {
         <div className="max-w-7xl mx-auto px-4 sm:px-8 py-12">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
             <div className="md:col-span-2">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center font-black text-base text-white">
-                  C
-                </div>
-                <span className="text-lg font-extrabold text-white">CVtoMatch.com</span>
+              <div className="mb-3">
+                <BrandLogo size="md" />
               </div>
               <p className="text-xs text-slate-400 leading-relaxed max-w-md">
                 CVtoMatch is an AI Career Intelligence &amp; Talent Sourcing platform combining 6-factor NLP resume-to-job matching, live LinkedIn hiring post discovery with DNS MX-verified emails, multi-board job aggregation, AI cover letter generation, and IMAP inbox-synced application tracking.

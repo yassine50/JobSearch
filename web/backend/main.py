@@ -1,4 +1,7 @@
 import os
+import time
+import threading
+import urllib.request
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -24,7 +27,7 @@ from .routers import (
 Base.metadata.create_all(bind=engine)
 init_db()
 
-app = FastAPI(title="Job Searcher API", version="2.0.0")
+app = FastAPI(title="CVtoMatch API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,7 +49,7 @@ ROUTERS = [
     auth.router,
     jobs.router,
     cv.router,
-    recruiter.router,
+    recruiter,
     gmail_oauth.router,
     email.router,
     tracker.router,
@@ -55,7 +58,18 @@ ROUTERS = [
     power.router,
 ]
 
-for router in ROUTERS:
+for router in [
+    auth.router,
+    jobs.router,
+    cv.router,
+    recruiter.router,
+    gmail_oauth.router,
+    email.router,
+    tracker.router,
+    coverletter.router,
+    linkedin_posts.router,
+    power.router,
+]:
     app.include_router(router)
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -68,8 +82,34 @@ assets_dir = os.path.join(dist_dir, "assets")
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
+
+
+def _render_keep_alive_worker():
+    """Pings Render's external URL every 10 minutes so the free instance stays warm."""
+    target_base = (
+        os.getenv("RENDER_EXTERNAL_URL")
+        or os.getenv("BACKEND_PUBLIC_URL")
+        or "https://job-searcher-api-ux4i.onrender.com"
+    ).rstrip("/")
+    health_url = f"{target_base}/health"
+    while True:
+        time.sleep(600)  # 10 minutes
+        try:
+            req = urllib.request.Request(health_url, headers={"User-Agent": "CVtoMatch-KeepAlive/1.0"})
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+        except Exception:
+            pass
+
+
+@app.on_event("startup")
+def start_keep_alive():
+    if os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"):
+        t = threading.Thread(target=_render_keep_alive_worker, daemon=True)
+        t.start()
 
 
 # Serve built React SPA in production

@@ -301,8 +301,8 @@ def _search_cache_get(key: str):
 def _search_cache_put(key: str, df, per_site: dict):
     import time as _t
     with _search_cache_lock:
-        if len(_search_cache) > 200:  # keep memory bounded
-            for k in sorted(_search_cache, key=lambda k: _search_cache[k][0])[:50]:
+        if len(_search_cache) > 15:  # keep memory bounded for 512MB Render container
+            for k in sorted(_search_cache, key=lambda k: _search_cache[k][0])[:6]:
                 _search_cache.pop(k, None)
         _search_cache[key] = (_t.time(), df.copy(), dict(per_site))
 
@@ -894,7 +894,7 @@ def search_jobs(req: SearchRequest,
             stats["tasks_ok"] = len(tasks)
         else:
             _check_and_count_search_quota(current_user)
-            executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 16))
+            executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 6))
             fut_map = {executor.submit(scrape_task, t): t for t in tasks}
             pending = set(fut_map)
             deadline = t_start + SCRAPE_BUDGET_S
@@ -1040,8 +1040,11 @@ def search_jobs(req: SearchRequest,
         for j in raw_jobs:
             j["quality"] = quality_score(j)
         raw_jobs.sort(key=lambda j: -j["quality"])
-        MAX_RESULTS = min(max(req.results_wanted * 6, 150), 250)
+        MAX_RESULTS = min(max(req.results_wanted * 3, 60), 90)
         raw_jobs = raw_jobs[:MAX_RESULTS]
+        import gc
+        del df, all_dfs
+        gc.collect()
 
         def _bounded_map(fn, items, workers, budget_s):
             """Parallel map that never blocks longer than budget_s; unfinished items are kept as-is."""
@@ -1060,7 +1063,7 @@ def search_jobs(req: SearchRequest,
         # Fast parallel enrichment of missing job descriptions (e.g. LinkedIn guest API)
         t_enrich = _time.time()
         try:
-            raw_jobs = _bounded_map(_enrich_job_description, raw_jobs, 12, 25)
+            raw_jobs = _bounded_map(_enrich_job_description, raw_jobs, 6, 18)
         except Exception as desc_err:
             logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
         stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 1)
@@ -1092,8 +1095,9 @@ def search_jobs(req: SearchRequest,
                 j["company_domain"] = merged[0]["email"].split("@")[-1]
             return j
 
-        jobs = _bounded_map(_hunt, raw_jobs, 20, 12)
+        jobs = _bounded_map(_hunt, raw_jobs, 8, 10)
         stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 1)
+        gc.collect()
 
         # Automatic High-Accuracy AI Matching if user has a CV
         cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()

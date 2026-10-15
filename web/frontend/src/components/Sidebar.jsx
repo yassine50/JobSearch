@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/AuthContext.jsx'
+import BrandLogo from './BrandLogo.jsx'
 import {
   LayoutDashboard, Users, KanbanSquare,
   FileText, Mail, Settings, LogOut, Menu, X, Sparkles, Radar, ChevronRight, Search
@@ -37,22 +38,9 @@ function NavContent({ onClose }) {
       <div className="flex items-center justify-between px-2 mb-5 relative z-10">
         <div
           onClick={() => navigate('/dashboard')}
-          className="flex items-center gap-3.5 cursor-pointer group"
+          className="cursor-pointer group"
         >
-          <div className="relative shrink-0">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 flex items-center justify-center text-base font-black text-white shadow-lg shadow-blue-500/25 group-hover:scale-105 transition-transform border border-white/20">
-              C
-            </div>
-            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#070B18] animate-pulse" title="AI Engine Active" />
-          </div>
-          <div className="min-w-0">
-            <span className="font-extrabold text-[15px] tracking-tight text-white block leading-tight group-hover:text-blue-300 transition-colors">
-              CVtoMatch
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400/90 flex items-center gap-1 mt-1">
-              <Sparkles size={9} className="text-amber-400 shrink-0" /> AI Resume &amp; Job Radar
-            </span>
-          </div>
+          <BrandLogo size="md" />
         </div>
         {onClose && (
           <button
@@ -208,15 +196,7 @@ export default function Sidebar() {
 
       {/* Mobile Top Bar */}
       <header className="md:hidden fixed top-0 left-0 right-0 z-30 bg-[#070B18]/90 backdrop-blur-xl border-b border-white/[0.07] px-4 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-xs font-black text-white shadow-md shadow-blue-500/20">
-            C
-          </div>
-          <div>
-            <span className="font-bold text-sm text-white block leading-none">CVtoMatch</span>
-            <span className="text-[9px] text-blue-400 font-semibold">AI Resume &amp; Job Radar</span>
-          </div>
-        </div>
+        <BrandLogo size="sm" />
         <button
           onClick={() => setOpen(true)}
           className="text-slate-300 hover:text-white transition p-2 rounded-xl bg-white/5 hover:bg-white/10"
