@@ -1,4 +1,6 @@
 import os
+import shutil
+import sqlite3
 import logging
 from sqlalchemy import create_engine, text, event
 from sqlalchemy.ext.declarative import declarative_base
@@ -10,6 +12,95 @@ logger = logging.getLogger("jobsearcher.database")
 
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "jobsearcher.db"))
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
+
+
+def _ensure_healthy_sqlite_db(db_path: str) -> None:
+    """Detect and auto-repair WAL mismatch or malformed SQLite B-tree pages on startup."""
+    if not os.path.exists(db_path):
+        return
+
+    def _is_ok(path: str) -> bool:
+        try:
+            conn = sqlite3.connect(path, timeout=5)
+            try:
+                res = conn.execute("PRAGMA quick_check").fetchone()
+                return bool(res and res[0] == "ok")
+            finally:
+                conn.close()
+        except Exception:
+            return False
+
+    if _is_ok(db_path):
+        return
+
+    logger.warning(f"[database] Detected malformed SQLite state on {db_path}; attempting automatic recovery...")
+    # Step 1: Remove stale/mismatched -wal and -shm files caused by git reset/cp while WAL was open
+    for suffix in ("-wal", "-shm"):
+        sidecar = f"{db_path}{suffix}"
+        if os.path.exists(sidecar):
+            try:
+                os.remove(sidecar)
+            except Exception:
+                pass
+
+    # Step 2: Try REINDEX in case only a secondary index B-tree was affected
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        try:
+            conn.execute("REINDEX")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    if _is_ok(db_path):
+        logger.info("[database] SQLite database recovered cleanly after WAL reset / REINDEX.")
+        return
+
+    # Step 3: Salvage all readable tables into a brand-new SQLite database file
+    repaired_path = f"{db_path}.repaired"
+    backup_corrupt = f"{db_path}.corrupt.bak"
+    try:
+        if os.path.exists(repaired_path):
+            os.remove(repaired_path)
+        src = sqlite3.connect(db_path)
+        dst = sqlite3.connect(repaired_path)
+        try:
+            tables = [
+                r[0] for r in src.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
+                ).fetchall()
+            ]
+            for tbl in tables:
+                try:
+                    create_sql = src.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+                    ).fetchone()[0]
+                    dst.execute(create_sql)
+                    rows = src.execute(f'SELECT * FROM "{tbl}"').fetchall()
+                    if rows:
+                        placeholders = ",".join(["?"] * len(rows[0]))
+                        dst.executemany(f'INSERT OR IGNORE INTO "{tbl}" VALUES ({placeholders})', rows)
+                    dst.commit()
+                except Exception as tbl_err:
+                    logger.warning(f"[database] Skipping unreadable rows in {tbl}: {tbl_err}")
+        finally:
+            src.close()
+            dst.close()
+        shutil.move(db_path, backup_corrupt)
+        shutil.move(repaired_path, db_path)
+        logger.info("[database] Rebuilt clean SQLite database from readable tables.")
+    except Exception as rec_err:
+        logger.error(f"[database] Salvage rebuild failed ({rec_err}); resetting corrupt file.")
+        try:
+            shutil.move(db_path, backup_corrupt)
+        except Exception:
+            pass
+
+
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    _ensure_healthy_sqlite_db(DB_PATH)
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,

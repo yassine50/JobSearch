@@ -1129,9 +1129,9 @@ def search_jobs(req: SearchRequest,
         stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 2)
 
         # Automatic High-Accuracy AI Matching if user has a CV (uses cached CV profile & fast TF-IDF)
-        cv_rec = db.query(models.CvUpload.text_content).filter(models.CvUpload.user_id == current_user.id).first()
-        if cv_rec and cv_rec[0] and jobs:
-            try:
+        try:
+            cv_rec = db.query(models.CvUpload.text_content).filter(models.CvUpload.user_id == current_user.id).first()
+            if cv_rec and cv_rec[0] and jobs:
                 from cv_matcher import compute_match
                 cv_text = cv_rec[0]
                 for j in jobs:
@@ -1144,12 +1144,15 @@ def search_jobs(req: SearchRequest,
                         j["tips"] = bd.get("tips", [])
                     except Exception as match_e:
                         logger.debug(f"Match error on '{j.get('title')}': {match_e}")
-            except Exception as auto_err:
-                logger.warning(f"[Matching] Auto-match exception: {auto_err}")
+        except Exception as auto_err:
+            logger.warning(f"[Matching] Auto-match exception: {auto_err}")
 
         # ── career-ops signals: repost history, posting legitimacy, work-authorization gates ──
         t_sig = _time.time()
-        record_and_annotate(db, jobs)
+        try:
+            record_and_annotate(db, jobs)
+        except Exception:
+            pass
         from ..job_evaluator import assess_legitimacy, assess_work_auth
         for j in jobs:
             try:
@@ -1176,13 +1179,6 @@ def search_jobs(req: SearchRequest,
         stats["timings"]["total_s"] = round(_time.time() - t_start, 1)
 
         # Check user's applied / saved applications to annotate jobs (column projection only)
-        apps = db.query(
-            models.Application.status,
-            models.Application.url,
-            models.Application.company,
-            models.Application.title,
-            models.Application.notes,
-        ).filter(models.Application.user_id == current_user.id).all()
         applied_urls: set = set()
         applied_clean_urls: set = set()
         applied_job_ids: set = set()
@@ -1193,39 +1189,48 @@ def search_jobs(req: SearchRequest,
         saved_clean_urls: set = set()
         saved_job_ids: set = set()
         saved_title_comp: set = set()
-
-        for a in apps:
-            st = (a.status or "").lower()
-            raw_url = (a.url or "").strip().lower()
-            cl_url = _clean_job_url(raw_url)
-            jid = _extract_job_id(raw_url)
-            nc = _norm_company(a.company or "")
-            nt = _norm_title(a.title or "")
-            tc = f"{nt}|{nc}"
-
-            if st != "saved":
-                if raw_url: applied_urls.add(raw_url)
-                if cl_url: applied_clean_urls.add(cl_url)
-                if jid: applied_job_ids.add(jid)
-                if nt and nc: applied_title_comp.add(tc)
-                if nc and nt:
-                    applied_company_to_titles.setdefault(nc, set()).add(nt)
-            else:
-                if raw_url: saved_urls.add(raw_url)
-                if cl_url: saved_clean_urls.add(cl_url)
-                if jid: saved_job_ids.add(jid)
-                if nt and nc: saved_title_comp.add(tc)
-
-        # Every recruiter address already applied to (sent emails + addresses noted on Tracker cards)
         applied_emails: set = set()
-        for a in apps:
-            if (a.status or "").lower() != "saved" and a.notes:
-                applied_emails.update(m.lower() for m in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+\w", a.notes))
-        for (to_email,) in db.query(models.EmailLog.to_email).filter(
-                models.EmailLog.user_id == current_user.id,
-                models.EmailLog.status != "failed").all():
-            if to_email:
-                applied_emails.add(to_email.strip().lower())
+
+        try:
+            apps = db.query(
+                models.Application.status,
+                models.Application.url,
+                models.Application.company,
+                models.Application.title,
+                models.Application.notes,
+            ).filter(models.Application.user_id == current_user.id).all()
+
+            for a in apps:
+                st = (a.status or "").lower()
+                raw_url = (a.url or "").strip().lower()
+                cl_url = _clean_job_url(raw_url)
+                jid = _extract_job_id(raw_url)
+                nc = _norm_company(a.company or "")
+                nt = _norm_title(a.title or "")
+                tc = f"{nt}|{nc}"
+
+                if st != "saved":
+                    if raw_url: applied_urls.add(raw_url)
+                    if cl_url: applied_clean_urls.add(cl_url)
+                    if jid: applied_job_ids.add(jid)
+                    if nt and nc: applied_title_comp.add(tc)
+                    if nc and nt:
+                        applied_company_to_titles.setdefault(nc, set()).add(nt)
+                    if a.notes:
+                        applied_emails.update(m.lower() for m in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+\w", a.notes))
+                else:
+                    if raw_url: saved_urls.add(raw_url)
+                    if cl_url: saved_clean_urls.add(cl_url)
+                    if jid: saved_job_ids.add(jid)
+                    if nt and nc: saved_title_comp.add(tc)
+
+            for (to_email,) in db.query(models.EmailLog.to_email).filter(
+                    models.EmailLog.user_id == current_user.id,
+                    models.EmailLog.status != "failed").all():
+                if to_email:
+                    applied_emails.add(to_email.strip().lower())
+        except Exception:
+            pass
         applied_emails.discard((current_user.email or "").lower())
         hidden_by_email = 0
 
