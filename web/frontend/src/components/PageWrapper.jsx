@@ -10,16 +10,10 @@ export default function PageWrapper({ children }) {
         <div className="aurora-orb-3 absolute -bottom-40 left-1/3 w-[480px] h-[480px] rounded-full bg-purple-600/8 blur-[140px]" />
       </div>
 
-      {/* Main Content Layer — animate opacity only so position:fixed children (Sidebar & Modals) stay pinned to the viewport */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.22, ease: 'easeOut' }}
-        className="relative z-10"
-      >
+      {/* Main Content Layer */}
+      <div className="relative z-10">
         {children}
-      </motion.div>
+      </div>
     </div>
   )
 }

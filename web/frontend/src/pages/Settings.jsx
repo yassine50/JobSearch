@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import PageWrapper from '../components/PageWrapper.jsx'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import {
   Settings as SettingsIcon, Mail, User, Trash2, Plus, Eye, EyeOff,
   Save, Send, ShieldAlert, RefreshCw, Search, Loader2, Sparkles
@@ -37,7 +37,11 @@ export default function Settings() {
   const toast = useToast()
 
   // SMTP
-  const [smtp, setSmtp]          = useState({ smtp_host:'smtp.gmail.com', smtp_port:587, smtp_user:'', smtp_password:'', sender_name:'' })
+  const [smtp, setSmtp]          = useState(() => {
+    const cached = getCached('/email/settings', null)
+    const defaults = { smtp_host:'smtp.gmail.com', smtp_port:587, smtp_user:'', smtp_password:'', sender_name:'' }
+    return cached?.configured ? { ...defaults, ...cached } : defaults
+  })
   const [showPass, setShowPass]  = useState(false)
   const [smtpSaving, setSmtpSaving] = useState(false)
   const [testing, setTesting]    = useState(false)
@@ -47,26 +51,21 @@ export default function Settings() {
   const [profSaving, setProfSaving] = useState(false)
 
   // Custom templates
-  const [templates, setTemplates] = useState([])
+  const [templates, setTemplates] = useState(() => getCached('/email/custom-templates', []))
   const [newTpl, setNewTpl]       = useState({ name:'', subject:'', body:'' })
   const [addingTpl, setAddingTpl] = useState(false)
   const [tplSaving, setTplSaving] = useState(false)
 
   // Blacklist & Bounces
-  const [blacklist, setBlacklist] = useState([])
+  const [blacklist, setBlacklist] = useState(() => getCached('/email/blacklist', []))
   const [blSearch, setBlSearch]   = useState('')
   const [blLoading, setBlLoading] = useState(false)
   const [syncingBounces, setSyncingBounces] = useState(false)
   const [newBlEmail, setNewBlEmail] = useState('')
   const [newBlReason, setNewBlReason] = useState('Manual entry')
 
-  // Platform API keys (admin only)
-  const [scraperConfig, setScraperConfig] = useState({})
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [scraperSaving, setScraperSaving] = useState(false)
-
   // Connect Gmail (Google OAuth)
-  const [gmail, setGmail] = useState({ available: false, connected: false, email: '' })
+  const [gmail, setGmail] = useState(() => getCached('/email/google/status', { available: false, connected: false, email: '' }))
   const [gmailConnecting, setGmailConnecting] = useState(false)
   const [showAdvancedSmtp, setShowAdvancedSmtp] = useState(false)
   const loadGmail = () => client.get('/email/google/status').then(r => setGmail(r.data)).catch(() => {})
@@ -119,12 +118,6 @@ export default function Settings() {
       if (r.data.configured) setSmtp(s => ({ ...s, ...r.data }))
     }).catch(() => {})
     client.get('/email/custom-templates').then(r => setTemplates(r.data)).catch(() => {})
-    client.get('/jobs/scraper-config').then(r => {
-      if (r.data) {
-        setIsAdmin(Boolean(r.data.is_admin))
-        setScraperConfig(r.data)
-      }
-    }).catch(() => {})
     loadBlacklist()
   }, [])
 
@@ -217,18 +210,6 @@ export default function Settings() {
       toast('Email unblocked and removed from blacklist', 'info')
     } catch {
       toast('Failed to unblock', 'error')
-    }
-  }
-
-  const handleSaveScraperConfig = async () => {
-    setScraperSaving(true)
-    try {
-      await client.post('/jobs/scraper-config', scraperConfig)
-      toast('API keys saved!', 'success'); loadGmail()
-    } catch (e) {
-      toast(e.response?.data?.detail || 'Failed to save scraper config', 'error')
-    } finally {
-      setScraperSaving(false)
     }
   }
 
@@ -641,62 +622,6 @@ export default function Settings() {
               </div>
             </div>
           </Section>
-
-          {/* Platform API keys — admin only */}
-          {isAdmin && (
-            <Section title="Platform API Keys (Admin Only)" sub="Shared credentials powering multi-board search for all users" icon={Search}>
-              <div className="space-y-4">
-                <div className="bg-[#050811]/70 border border-white/[0.08] rounded-2xl p-4 text-xs text-slate-300 leading-relaxed">
-                  <p className="font-extrabold text-white mb-1">🔒 Shared by all users, hidden from them</p>
-                  These keys are stored on the server and power job search for every account. Users only see the results.
-                  Leave a field empty to disable that source. Identical searches are cached for 6h and each user is limited
-                  to {scraperConfig.daily_search_limit || 40} new searches/day to protect your quotas.
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  {[
-                    { k: 'serper_api_key', label: 'Serper API Key (Google Jobs)', link: 'https://serper.dev', linkText: 'serper.dev ↗' },
-                    { k: 'jooble_api_key', label: 'Jooble API Key', link: 'https://jooble.org/api/about', linkText: 'jooble.org/api ↗' },
-                    { k: 'adzuna_app_id', label: 'Adzuna App ID', link: 'https://developer.adzuna.com/signup', linkText: 'developer.adzuna.com ↗' },
-                    { k: 'adzuna_app_key', label: 'Adzuna App Key' },
-                    { k: 'careerjet_affid', label: 'Careerjet Affiliate ID', link: 'https://www.careerjet.com/partners/', linkText: 'careerjet.com/partners ↗' },
-                    { k: 'google_client_id', label: 'Google OAuth Client ID (Connect Gmail)', link: 'https://console.cloud.google.com/apis/credentials', linkText: 'Google Cloud ↗' },
-                    { k: 'google_client_secret', label: 'Google OAuth Client Secret' },
-                  ].map(f => (
-                    <div key={f.k}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-bold text-slate-300">{f.label}</label>
-                        {f.link && (
-                          <a href={f.link} target="_blank" rel="noreferrer" className="text-[11px] text-blue-400 hover:text-blue-300 underline font-semibold">
-                            {f.linkText}
-                          </a>
-                        )}
-                      </div>
-                      <input
-                        type="password"
-                        value={scraperConfig[f.k] || ''}
-                        onChange={e => setScraperConfig(c => ({ ...c, [f.k]: e.target.value }))}
-                        placeholder="Not configured"
-                        className="w-full glass-input rounded-xl px-3.5 py-2.5 text-xs font-mono placeholder-slate-600"
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div className="pt-1">
-                  <motion.button
-                    whileTap={{ scale: 0.97 }}
-                    onClick={handleSaveScraperConfig}
-                    disabled={scraperSaving}
-                    className="shimmer-btn flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs transition cursor-pointer"
-                  >
-                    {scraperSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                    <span>{scraperSaving ? 'Saving...' : 'Save API Keys'}</span>
-                  </motion.button>
-                </div>
-              </div>
-            </Section>
-          )}
 
         </main>
       </div>

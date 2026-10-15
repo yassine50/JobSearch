@@ -917,6 +917,19 @@ def get_follow_up_candidates(days: int = 3,
         models.Application.user_id == current_user.id,
         models.Application.status == "applied"
     ).all()
+    if not apps:
+        return []
+
+    from collections import defaultdict
+    app_ids = [a.id for a in apps]
+    all_logs = (
+        db.query(models.EmailLog)
+        .filter(models.EmailLog.application_id.in_(app_ids))
+        .all()
+    )
+    logs_by_app = defaultdict(list)
+    for l in all_logs:
+        logs_by_app[l.application_id].append(l)
 
     now = datetime.utcnow()
     candidates = []
@@ -932,26 +945,20 @@ def get_follow_up_candidates(days: int = 3,
         if days_waiting < days:
             continue
 
-        # Count existing follow-ups
-        followup_logs = db.query(models.EmailLog).filter(
-            models.EmailLog.application_id == app.id,
-            models.EmailLog.template_type == "follow_up"
-        ).all()
+        app_logs = logs_by_app.get(app.id, [])
+        followup_logs = [l for l in app_logs if l.template_type == "follow_up"]
         follow_up_count = len(followup_logs)
         if follow_up_count >= 2:
             continue  # Professional etiquette: maximum 2 follow-ups
 
         # If a follow-up was already sent within the last 3 days, skip
         if followup_logs:
-            last_sent = max(f.sent_at for f in followup_logs if f.sent_at)
-            if (now - last_sent).days < 3:
+            sent_dates = [f.sent_at for f in followup_logs if f.sent_at]
+            if sent_dates and (now - max(sent_dates)).days < 3:
                 continue
 
         # Gather deliverable recruiter emails
-        sent_logs = db.query(models.EmailLog).filter(
-            models.EmailLog.application_id == app.id,
-            models.EmailLog.status != "bounced"
-        ).all()
+        sent_logs = [l for l in app_logs if l.status != "bounced"]
 
         recipients = []
         seen = set()
@@ -982,7 +989,7 @@ def get_follow_up_candidates(days: int = 3,
             "days_waiting": days_waiting,
             "follow_up_count": follow_up_count,
             "recipients": recipients,
-            "has_tailored_cv": bool(app.tailored_cv_data or app.tailored_cv_filename),
+            "has_tailored_cv": bool(app.tailored_cv_filename),
             "preview_subject": preview_subject,
             "preview_body": preview_body
         })

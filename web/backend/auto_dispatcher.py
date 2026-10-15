@@ -214,16 +214,30 @@ def auto_reject_unresponsive_follow_ups(db: Session, user_id: int = None, days_t
         query = query.filter(models.Application.user_id == user_id)
 
     apps = query.all()
+    if not apps:
+        return {"checked": 0, "auto_rejected": 0, "applications": []}
+
+    from collections import defaultdict
+    app_ids = [a.id for a in apps]
+    all_logs = (
+        db.query(models.EmailLog)
+        .filter(models.EmailLog.application_id.in_(app_ids))
+        .order_by(models.EmailLog.sent_at.desc())
+        .all()
+    )
+    logs_by_app = defaultdict(list)
+    for l in all_logs:
+        logs_by_app[l.application_id].append(l)
+
     now = datetime.utcnow()
     rejected_apps = []
 
     for app in apps:
-        # Check for follow-up email logs
-        followup_logs = db.query(models.EmailLog).filter(
-            models.EmailLog.application_id == app.id,
-            models.EmailLog.template_type == "follow_up",
-            models.EmailLog.status != "bounced"
-        ).order_by(models.EmailLog.sent_at.desc()).all()
+        app_logs = logs_by_app.get(app.id, [])
+        followup_logs = [
+            l for l in app_logs
+            if l.template_type == "follow_up" and l.status != "bounced"
+        ]
 
         last_followup_time = None
         if followup_logs and followup_logs[0].sent_at:
@@ -261,11 +275,10 @@ def auto_reject_unresponsive_follow_ups(db: Session, user_id: int = None, days_t
             continue
 
         # Any genuine recruiter reply (not out-of-office) means the application is alive
-        recruiter_log_reply = db.query(models.EmailLog).filter(
-            models.EmailLog.application_id == app.id,
-            models.EmailLog.template_type.in_(["recruiter_reply", "incoming"]),
-            models.EmailLog.status.notin_(["auto_reply", "ignore"]),
-        ).first()
+        recruiter_log_reply = any(
+            l.template_type in ("recruiter_reply", "incoming") and l.status not in ("auto_reply", "ignore")
+            for l in app_logs
+        )
         if recruiter_log_reply:
             continue
 

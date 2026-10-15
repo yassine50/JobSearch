@@ -1,6 +1,6 @@
 
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, LargeBinary, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from datetime import datetime
 from .database import Base
 
@@ -23,7 +23,7 @@ class User(Base):
 class SavedJob(Base):
     __tablename__ = "saved_jobs"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String); company = Column(String)
     location = Column(String); url = Column(String)
     description = Column(Text); match_score = Column(Integer, default=0)
@@ -33,41 +33,41 @@ class SavedJob(Base):
 class CvUpload(Base):
     __tablename__ = "cv_uploads"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     persona_name = Column(String, default="Primary Resume")
     is_active = Column(Boolean, default=True)
     filename = Column(String); text_content = Column(Text)
-    file_data = Column(LargeBinary, nullable=True)
+    file_data = deferred(Column(LargeBinary, nullable=True))
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="cv_uploads")
 
 class EmailLog(Base):
     __tablename__ = "email_logs"
     id = Column(Integer, primary_key=True, index=True)
-    user_id        = Column(Integer, ForeignKey("users.id"))
-    application_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
+    user_id        = Column(Integer, ForeignKey("users.id"), index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=True, index=True)
     to_email       = Column(String); to_name = Column(String)
     subject        = Column(String); body = Column(Text)
     template_type  = Column(String)
     status         = Column(String, default="sent")
-    sent_at        = Column(DateTime, default=datetime.utcnow)
+    sent_at        = Column(DateTime, default=datetime.utcnow, index=True)
     user        = relationship("User",        back_populates="email_logs")
     application = relationship("Application", back_populates="email_logs")
 
 class Application(Base):
     __tablename__ = "applications"
     id = Column(Integer, primary_key=True, index=True)
-    user_id    = Column(Integer, ForeignKey("users.id"))
+    user_id    = Column(Integer, ForeignKey("users.id"), index=True)
     title      = Column(String); company = Column(String)
     location   = Column(String); url = Column(String)
-    status     = Column(String, default="applied")
+    status     = Column(String, default="applied", index=True)
     notes      = Column(Text, default="")
     match_score = Column(Integer, default=0)
-    applied_at  = Column(DateTime, default=datetime.utcnow)
+    applied_at  = Column(DateTime, default=datetime.utcnow, index=True)
     follow_up_date = Column(DateTime, nullable=True)
     tailored_cv_filename = Column(String, nullable=True)
-    tailored_cv_data = Column(LargeBinary, nullable=True)
-    interview_prep_json = Column(Text, default="")
+    tailored_cv_data = deferred(Column(LargeBinary, nullable=True))
+    interview_prep_json = deferred(Column(Text, default=""))
     user       = relationship("User",     back_populates="applications")
     email_logs = relationship("EmailLog", back_populates="application")
 

@@ -4,7 +4,7 @@ import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import ScoreBadge from '../components/ScoreBadge.jsx'
 import InterviewPrepModal from '../components/modals/InterviewPrepModal.jsx'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { 
   Plus, Trash2, ExternalLink, StickyNote, Mail, CheckCircle, XCircle,
@@ -100,7 +100,10 @@ function matchesAppSearch(app, query, emailOnly) {
 }
 
 export default function Tracker() {
-  const [apps, setApps]       = useState([])
+  const [apps, setApps]       = useState(() => {
+    const cached = getCached('/tracker', [])
+    return Array.isArray(cached) ? cached : []
+  })
   const [editing, setEditing] = useState(null)
   const [notes, setNotes]     = useState('')
   const [adding, setAdding]   = useState(false)
@@ -116,12 +119,18 @@ export default function Tracker() {
   const [copiedEmail, setCopiedEmail]     = useState(null)
 
   // Recruiter Follow-up State
-  const [followUpCandidates, setFollowUpCandidates] = useState([])
+  const [followUpCandidates, setFollowUpCandidates] = useState(() => {
+    const cached = getCached('/email/follow-up/candidates?days=3', [])
+    return Array.isArray(cached) ? cached : []
+  })
   const [followUpModal, setFollowUpModal]           = useState(null)
   const [followUpForm, setFollowUpForm]             = useState({ custom_subject: '', custom_body: '', attach_cv: true, recipients: [] })
   const [sendingFollowUp, setSendingFollowUp]       = useState(false)
   const [batchFollowUpOpen, setBatchFollowUpOpen]   = useState(false)
-  const [selectedBatchIds, setSelectedBatchIds]     = useState([])
+  const [selectedBatchIds, setSelectedBatchIds]     = useState(() => {
+    const cached = getCached('/email/follow-up/candidates?days=3', [])
+    return Array.isArray(cached) ? cached.map(c => c.application_id) : []
+  })
   const [prepApp, setPrepApp]                       = useState(null)
 
   const toast = useToast()

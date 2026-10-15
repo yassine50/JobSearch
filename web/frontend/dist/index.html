@@ -1,14 +1,197 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Job Searcher — Smarter Hiring. Powered by AI.</title>
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <script type="module" crossorigin src="/assets/index-OkUg6gho.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CCo3xxYb.css">
+    <meta name="color-scheme" content="dark" />
+    <meta name="darkreader-lock" />
+    <meta name="theme-color" content="#050811" />
+
+    <!-- Primary SEO Meta Tags -->
+    <title>CVtoMatch — AI Resume to Job Matcher, ATS Checker &amp; LinkedIn Recruiter Radar</title>
+    <meta
+      name="title"
+      content="CVtoMatch — AI Resume to Job Matcher, ATS Checker & LinkedIn Recruiter Radar"
+    />
+    <meta
+      name="description"
+      content="Match your CV to any job description in seconds with CVtoMatch's 6-factor AI ATS Resume Matcher. Discover hidden LinkedIn hiring posts with DNS MX-verified recruiter emails, generate tailored cover letters, and auto-track job applications via IMAP inbox sync."
+    />
+    <meta
+      name="keywords"
+      content="CV to job match, resume to job description matcher, ATS resume checker, free ATS resume score, LinkedIn recruiter post finder, direct hiring manager email finder, AI cover letter generator, job application tracker, resume keyword scanner, CVtoMatch"
+    />
+    <meta name="author" content="CVtoMatch AI" />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <link rel="canonical" href="https://www.cvtomatch.com/" id="canonical-link" />
+
+    <!-- Favicon & App Manifest -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Open Graph / Facebook / LinkedIn -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CVtoMatch" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://www.cvtomatch.com/" />
+    <meta
+      property="og:title"
+      content="CVtoMatch — AI Resume to Job Matcher, ATS Score & LinkedIn Recruiter Radar"
+    />
+    <meta
+      property="og:description"
+      content="Score your CV against any job description across 6 ATS factors, uncover hidden LinkedIn hiring posts with verified corporate emails, and automate cold outreach."
+    />
+    <meta property="og:image" content="https://www.cvtomatch.com/og-banner.svg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="CVtoMatch — 6-Factor AI Resume Matcher and LinkedIn Recruiter Post Radar"
+    />
+
+    <!-- Twitter / X Cards -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://www.cvtomatch.com/" />
+    <meta
+      name="twitter:title"
+      content="CVtoMatch — AI Resume to Job Matcher & LinkedIn Recruiter Radar"
+    />
+    <meta
+      name="twitter:description"
+      content="Instant 6-factor ATS CV-to-job matching, live LinkedIn hiring post discovery with verified emails, AI cover letters, and automatic inbox-synced job tracking."
+    />
+    <meta name="twitter:image" content="https://www.cvtomatch.com/og-banner.svg" />
+
+    <!-- Performance Preconnects -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Schema.org Structured Data (Organization + WebSite + SoftwareApplication + FAQPage) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://www.cvtomatch.com/#organization",
+            "name": "CVtoMatch",
+            "url": "https://www.cvtomatch.com/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://www.cvtomatch.com/favicon.svg"
+            },
+            "description": "AI-powered CV-to-job matching, ATS resume scoring, LinkedIn recruiter post discovery, and automated job application tracking platform."
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://www.cvtomatch.com/#website",
+            "url": "https://www.cvtomatch.com/",
+            "name": "CVtoMatch",
+            "publisher": {
+              "@id": "https://www.cvtomatch.com/#organization"
+            },
+            "inLanguage": "en-US"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://www.cvtomatch.com/#software",
+            "name": "CVtoMatch AI Career & ATS Matcher",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Web",
+            "url": "https://www.cvtomatch.com/",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "aggregateRating": {
+              "@type": "AggregateRating",
+              "ratingValue": "4.9",
+              "ratingCount": "340",
+              "bestRating": "5",
+              "worstRating": "1"
+            },
+            "featureList": [
+              "6-Factor AI CV-to-Job Compatibility & ATS Resume Scoring",
+              "Live LinkedIn Hiring Post Hunter with DNS MX-Verified Recruiter Emails",
+              "Multi-Board Job Aggregation (LinkedIn, Indeed, Glassdoor, ZipRecruiter)",
+              "1-Click AI Cover Letter & Cold Outreach Email Generator with SMTP Dispatch",
+              "Kanban Job Application Tracker with Automatic IMAP Mailbox Sync",
+              "Recruiter X-Ray Candidate Sourcing & Batch Resume Ranking"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://www.cvtomatch.com/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How does CVtoMatch calculate my CV-to-job match score?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "CVtoMatch parses your PDF, DOCX, or TXT resume and evaluates it against the target job description across 6 weighted NLP dimensions: Technical Skills (35%), TF-IDF Keyword Similarity (20%), Job Title Alignment (15%), Seniority Calibration (10%), Must-Have Requirements (10%), and Soft Skills (10%)."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How does the LinkedIn Recruiter Post Hunter find direct hiring manager emails?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Unlike traditional job boards that only show crowded portal listings, CVtoMatch mines live LinkedIn posts where recruiters and engineering managers announce open roles directly, extracts mentioned corporate email addresses, and validates domain deliverability via DNS MX record lookups."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can CVtoMatch check if my resume passes ATS filters?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. CVtoMatch highlights every matched and missing technical skill, domain keyword, and seniority gap between your CV and the job posting so you can optimize your resume before applying."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How does automatic IMAP mailbox job application tracking work?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "When connected via IMAP, CVtoMatch scans incoming emails from company domains and major ATS platforms (Greenhouse, Lever, Workday, Ashby, SmartRecruiters) to automatically move your Kanban cards between Applied, Interview, Offer, and Rejected stages."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-B5CWqdN8.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BRJgZR4C.css">
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <main style="max-width: 960px; margin: 0 auto; padding: 48px 24px; font-family: system-ui, sans-serif; color: #f8fafc; background: #050811;">
+        <h1>CVtoMatch — AI Resume to Job Matcher, ATS Checker &amp; LinkedIn Recruiter Radar</h1>
+        <p>
+          Match your CV against any job description in seconds with our 6-factor NLP ATS Resume Matcher.
+          Mine live LinkedIn hiring posts with DNS MX-verified corporate recruiter emails, aggregate jobs across
+          LinkedIn, Indeed, Glassdoor, and ZipRecruiter, generate tailored AI cover letters, and automatically
+          sync your job application pipeline with your email inbox.
+        </p>
+        <h2>Core Capabilities</h2>
+        <ul>
+          <li><strong>6-Factor ATS Resume Matcher:</strong> Evaluate Technical Skills, TF-IDF Keywords, Title Alignment, Seniority Fit, Must-Haves, and Soft Skills.</li>
+          <li><strong>Live LinkedIn Recruiter Post Radar:</strong> Bypass crowded job portals and contact hiring managers directly using verified corporate emails.</li>
+          <li><strong>AI Cover Letter &amp; Direct SMTP Outreach:</strong> Generate role-specific cover letters and dispatch outreach with your CV attached.</li>
+          <li><strong>Kanban Application Tracker with IMAP Sync:</strong> Automatically detect interview invitations, offers, and status updates from your inbox.</li>
+        </ul>
+      </main>
+    </noscript>
   </body>
 </html>

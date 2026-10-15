@@ -217,18 +217,26 @@ _STOPWORDS = frozenset({
 })
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Text Utilities
+#  Pre-Compiled Regexes & High-Speed Text Utilities
 # ═══════════════════════════════════════════════════════════════════════════════
 
+import threading
+
+_CLEAN_RE = re.compile(r"[^\w\s\+\#\-\./]")
+_WS_COLLAPSE_RE = re.compile(r"\s+")
+_SORTED_ALIASES = sorted(ALIASES, key=len, reverse=True)
+_ALIAS_RE = re.compile(r"\b(?:" + "|".join(re.escape(a) for a in _SORTED_ALIASES) + r")\b")
+
 def _clean(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"[^\w\s\+\#\-\./]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    text = _CLEAN_RE.sub(" ", text.lower())
+    return _WS_COLLAPSE_RE.sub(" ", text).strip()
 
 def _apply_aliases(text: str) -> str:
-    for alias in sorted(ALIASES, key=len, reverse=True):
-        text = re.sub(r"\b" + re.escape(alias) + r"\b", ALIASES[alias], text)
-    return text
+    if not text:
+        return ""
+    return _ALIAS_RE.sub(lambda m: ALIASES.get(m.group(0), m.group(0)), text)
 
 def _normalize(text: str) -> str:
     return _apply_aliases(_clean(text))
@@ -236,44 +244,116 @@ def _normalize(text: str) -> str:
 def _tokenize(text: str) -> List[str]:
     return [w for w in text.split() if w not in _STOPWORDS and len(w) > 2]
 
+# Pre-compile per-skill regexes and index skills by their first token for O(1) candidate filtering
+_SKILL_PATTERNS: Dict[str, re.Pattern] = {}
+_SKILL_FIRST_TOKEN: Dict[str, str] = {}
+
+for _sk in (TECH_SKILLS | SOFT_SKILLS | set(EDUCATION_LEVELS) | set(SENIORITY) | ROLE_KEYWORDS):
+    _sk_c = _clean(_sk)
+    if _sk_c:
+        _SKILL_PATTERNS[_sk] = re.compile(r"\b" + re.escape(_sk_c) + r"\b")
+        _SKILL_FIRST_TOKEN[_sk] = _sk_c.split()[0]
+
+for _dom_kws in DOMAIN_KEYWORDS.values():
+    for _kw in _dom_kws:
+        if _kw not in _SKILL_PATTERNS:
+            _SKILL_PATTERNS[_kw] = re.compile(r"\b" + re.escape(_kw) + r"\b")
+            _SKILL_FIRST_TOKEN[_kw] = _kw.split()[0]
+
+def _extract_skills_from_norm(text_n: str, words_set: set, skill_set: set) -> set:
+    if not text_n:
+        return set()
+    found = set()
+    for s in skill_set:
+        first_tok = _SKILL_FIRST_TOKEN.get(s)
+        if first_tok and first_tok not in words_set and first_tok not in text_n:
+            continue
+        pat = _SKILL_PATTERNS.get(s)
+        if pat is None:
+            pat = re.compile(r"\b" + re.escape(_clean(s)) + r"\b")
+            _SKILL_PATTERNS[s] = pat
+        if pat.search(text_n):
+            found.add(s)
+    return found
+
 def _extract_skills(text: str, skill_set: set) -> set:
     text_n = _normalize(text)
-    return {s for s in skill_set
-            if re.search(r"\b" + re.escape(_clean(s)) + r"\b", text_n)}
+    words_set = set(text_n.split())
+    return _extract_skills_from_norm(text_n, words_set, skill_set)
+
+def _skill_freq_in_norm(text_n: str, skill: str) -> int:
+    pat = _SKILL_PATTERNS.get(skill)
+    if pat is None:
+        pat = re.compile(r"\b" + re.escape(_clean(skill)) + r"\b")
+        _SKILL_PATTERNS[skill] = pat
+    return len(pat.findall(text_n))
 
 def _skill_freq_in_text(text: str, skill: str) -> int:
-    return len(re.findall(r"\b" + re.escape(_clean(skill)) + r"\b", _normalize(text)))
+    return _skill_freq_in_norm(_normalize(text), skill)
+
+_YEARS_PATS = [
+    re.compile(r"(\d+)\s*\+?\s*years?\s+(?:of\s+)?(?:professional\s+)?experience"),
+    re.compile(r"(\d+)\s*\+?\s*years?\s+(?:in|of|with)"),
+    re.compile(r"experience\s+of\s+(\d+)\s*\+?\s*years?"),
+    re.compile(r"(\d+)\s*\+\s*yrs"),
+]
 
 def _extract_years(text: str) -> int:
+    if not text:
+        return 0
+    tl = text.lower()
     vals = []
-    for p in [r"(\d+)\s*\+?\s*years?\s+(?:of\s+)?(?:professional\s+)?experience",
-              r"(\d+)\s*\+?\s*years?\s+(?:in|of|with)",
-              r"experience\s+of\s+(\d+)\s*\+?\s*years?",
-              r"(\d+)\s*\+\s*yrs"]:
-        vals += [int(m) for m in re.findall(p, text.lower())]
+    for p in _YEARS_PATS:
+        vals += [int(m) for m in p.findall(tl)]
     return max(vals, default=0)
 
 def _extract_education(text: str) -> int:
+    if not text:
+        return 0
     tl = text.lower()
-    return max((lvl for kw, lvl in EDUCATION_LEVELS.items()
-                if re.search(r"\b" + re.escape(kw) + r"\b", tl)), default=0)
+    words = set(_clean(tl).split())
+    best = 0
+    for kw, lvl in EDUCATION_LEVELS.items():
+        if lvl <= best:
+            continue
+        first_tok = _SKILL_FIRST_TOKEN.get(kw, kw)
+        if first_tok in words or kw in tl:
+            if _SKILL_PATTERNS[kw].search(tl):
+                best = lvl
+    return best
 
 def _detect_seniority(text: str) -> int:
+    if not text:
+        return -1
     tl = text.lower()
-    found = [lvl for kw, lvl in SENIORITY.items()
-             if re.search(r"\b" + re.escape(kw) + r"\b", tl)]
-    return max(found, default=-1)
+    words = set(_clean(tl).split())
+    best = -1
+    for kw, lvl in SENIORITY.items():
+        if lvl <= best:
+            continue
+        if kw in words or ( "-" in kw and kw in tl):
+            if _SKILL_PATTERNS[kw].search(tl):
+                best = lvl
+    return best
 
-def _detect_domain(text: str) -> Optional[str]:
-    text_n = _normalize(text)
+def _detect_domain_from_norm(text_n: str, words_set: set) -> Optional[str]:
     best, best_score = None, 0
     for domain, keywords in DOMAIN_KEYWORDS.items():
-        score = sum(1 for kw in keywords if re.search(r"\b" + re.escape(kw) + r"\b", text_n))
+        score = 0
+        for kw in keywords:
+            first_tok = _SKILL_FIRST_TOKEN.get(kw, kw)
+            if first_tok in words_set or kw in text_n:
+                if _SKILL_PATTERNS[kw].search(text_n):
+                    score += 1
         if score > best_score:
             best, best_score = domain, score
     return best if best_score >= 2 else None
 
-# ─── CV Section Parser ─────────────────────────────────────────────────────────
+def _detect_domain(text: str) -> Optional[str]:
+    text_n = _normalize(text)
+    return _detect_domain_from_norm(text_n, set(text_n.split()))
+
+# ─── CV Section Parser & Profile Cache ─────────────────────────────────────────
 
 _SECTION_HEADERS = {
     "skills":      re.compile(r"^(technical\s+)?skills?\b", re.I),
@@ -291,25 +371,83 @@ def _parse_cv_sections(cv_text: str) -> Dict[str, str]:
     current = "other"
     for line in cv_text.split("\n"):
         stripped = line.strip()
-        matched = False
         if stripped and len(stripped) < 60:
             for name, pat in _SECTION_HEADERS.items():
                 if pat.match(stripped):
                     current = name
-                    matched = True
                     break
         sections[current].append(line)
     return {k: "\n".join(v) for k, v in sections.items()}
 
+_SEC_WEIGHTS = {
+    "skills": 1.5, "summary": 1.3, "projects": 1.2,
+    "experience": 1.0, "certif": 1.1, "education": 0.9, "other": 0.8
+}
+
 def _section_weight(skill: str, sections: Dict[str, str]) -> float:
     """Return boost multiplier based on which CV section a skill appears in."""
-    weights = {"skills": 1.5, "summary": 1.3, "projects": 1.2,
-               "experience": 1.0, "certif": 1.1, "education": 0.9, "other": 0.8}
-    skill_pat = r"\b" + re.escape(_clean(skill)) + r"\b"
+    pat = _SKILL_PATTERNS.get(skill) or re.compile(r"\b" + re.escape(_clean(skill)) + r"\b")
     for sec, text in sections.items():
-        if re.search(skill_pat, _normalize(text)):
-            return weights.get(sec, 1.0)
+        if pat.search(_normalize(text)):
+            return _SEC_WEIGHTS.get(sec, 1.0)
     return 0.0  # not found
+
+_CV_PROFILE_CACHE: Dict[int, Dict] = {}
+_CV_CACHE_LOCK = threading.Lock()
+
+def _build_ngram_tf(tokens: List[str]) -> Dict[str, float]:
+    """Builds sublinear 1-gram + 2-gram term frequency map for fast cosine similarity."""
+    counts = Counter(tokens)
+    if len(tokens) > 1:
+        counts.update(f"{tokens[i]} {tokens[i+1]}" for i in range(len(tokens) - 1))
+    return {term: 1.0 + math.log(cnt) for term, cnt in counts.items()}
+
+def _get_cv_profile(cv_text: str) -> Dict:
+    key = hash(cv_text)
+    with _CV_CACHE_LOCK:
+        hit = _CV_PROFILE_CACHE.get(key)
+        if hit is not None:
+            return hit
+    cv_n = _normalize(cv_text)
+    cv_words = set(cv_n.split())
+    cv_tokens = _tokenize(cv_n)
+    cv_tf = _build_ngram_tf(cv_tokens)
+    raw_sections = _parse_cv_sections(cv_text)
+    norm_sections = {sec: _normalize(txt) for sec, txt in raw_sections.items()}
+    cv_tech = _extract_skills_from_norm(cv_n, cv_words, TECH_SKILLS)
+    cv_soft = _extract_skills_from_norm(cv_n, cv_words, SOFT_SKILLS)
+
+    sec_weights: Dict[str, float] = {}
+    skill_freqs: Dict[str, int] = {}
+    for sk in cv_tech:
+        pat = _SKILL_PATTERNS.get(sk)
+        skill_freqs[sk] = len(pat.findall(cv_n)) if pat else 1
+        w = 0.8
+        for sec, s_norm in norm_sections.items():
+            if pat and pat.search(s_norm):
+                w = _SEC_WEIGHTS.get(sec, 1.0)
+                break
+        sec_weights[sk] = w
+
+    profile = {
+        "cv_n": cv_n,
+        "cv_words": cv_words,
+        "cv_tokens": cv_tokens,
+        "cv_tf": cv_tf,
+        "cv_tech": cv_tech,
+        "cv_soft": cv_soft,
+        "sec_weights": sec_weights,
+        "skill_freqs": skill_freqs,
+        "cv_sen": _detect_seniority(cv_text),
+        "cv_domain": _detect_domain_from_norm(cv_n, cv_words),
+        "cv_edu": _extract_education(cv_text),
+        "cv_exp": _extract_years(cv_text),
+    }
+    with _CV_CACHE_LOCK:
+        if len(_CV_PROFILE_CACHE) >= 32:
+            _CV_PROFILE_CACHE.pop(next(iter(_CV_PROFILE_CACHE)), None)
+        _CV_PROFILE_CACHE[key] = profile
+    return profile
 
 # ─── Required-skill extraction ─────────────────────────────────────────────────
 
@@ -320,6 +458,8 @@ _REQUIRED_PATTERNS = re.compile(
 )
 
 def _required_skills_from_jd(job_text: str, skill_set: set) -> set:
+    if not skill_set or not job_text:
+        return set()
     required = set()
     for m in _REQUIRED_PATTERNS.finditer(job_text):
         window = job_text[m.start(): m.start() + 300]
@@ -327,20 +467,38 @@ def _required_skills_from_jd(job_text: str, skill_set: set) -> set:
     return required
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Retrieval Models
+#  Retrieval Models (Zero-Overhead Sublinear TF-IDF + BM25)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_IDF_SHARED = 1.0                                  # log((1+2)/(1+2)) + 1
+_IDF_UNIQUE = 1.0 + math.log(3.0 / 2.0)            # 1.4054651081081644
+
+def _fast_tfidf_sim_from_tf(tf_a: Dict[str, float], tf_b: Dict[str, float]) -> float:
+    """Exact 2-document sublinear TF-IDF cosine similarity (1-2 ngrams) without sklearn overhead."""
+    if not tf_a or not tf_b:
+        return 0.0
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for term, va in tf_a.items():
+        vb = tf_b.get(term)
+        if vb is not None:
+            dot += va * vb
+            norm_a += va * va
+        else:
+            w = va * _IDF_UNIQUE
+            norm_a += w * w
+    for term, vb in tf_b.items():
+        if term in tf_a:
+            norm_b += vb * vb
+        else:
+            w = vb * _IDF_UNIQUE
+            norm_b += w * w
+    denom = math.sqrt(norm_a * norm_b)
+    return (dot / denom) if denom > 0.0 else 0.0
+
 def _tfidf_sim(text_a: str, text_b: str) -> float:
-    try:
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.metrics.pairwise import cosine_similarity as cs
-        vect = TfidfVectorizer(stop_words="english", ngram_range=(1, 2),
-                               min_df=1, max_features=12000, sublinear_tf=True)
-        mat = vect.fit_transform([text_a, text_b])
-        return float(cs(mat[0:1], mat[1:2])[0][0])
-    except Exception:
-        a, b = set(_tokenize(text_a)), set(_tokenize(text_b))
-        return len(a & b) / len(a | b) if a | b else 0.0
+    return _fast_tfidf_sim_from_tf(_build_ngram_tf(_tokenize(text_a)), _build_ngram_tf(_tokenize(text_b)))
 
 def _bm25_sim(query_tokens: List[str], doc_tokens: List[str],
               k1: float = 1.5, b: float = 0.75,
@@ -352,22 +510,23 @@ def _bm25_sim(query_tokens: List[str], doc_tokens: List[str],
     doc_len    = len(doc_tokens)
     N          = 1  # single-document approximation
     score      = 0.0
-    for term in set(query_tokens):
+    unique_q   = set(query_tokens)
+    idf        = math.log(1 + (N - 0 + 0.5) / (0 + 0.5))
+    denom_base = k1 * (1 - b + b * doc_len / avg_dl)
+    for term in unique_q:
         tf = doc_freq.get(term, 0)
         if tf == 0:
             continue
-        idf = math.log(1 + (N - 0 + 0.5) / (0 + 0.5))  # simplified
-        tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * doc_len / avg_dl))
+        tf_norm = (tf * (k1 + 1)) / (tf + denom_base)
         score += idf * tf_norm
-    # Normalise: max possible ≈ len(unique query terms) * log(2) * (k1+1)
-    max_score = len(set(query_tokens)) * math.log(2) * (k1 + 1)
+    max_score = len(unique_q) * math.log(2) * (k1 + 1)
     return min(1.0, score / max_score) if max_score > 0 else 0.0
 
 def _ensemble_sim(cv_n: str, job_n: str) -> float:
     """Weighted average of TF-IDF and BM25."""
     cv_tok  = _tokenize(cv_n)
     job_tok = _tokenize(job_n)
-    tfidf   = _tfidf_sim(cv_n, job_n)
+    tfidf   = _fast_tfidf_sim_from_tf(_build_ngram_tf(cv_tok), _build_ngram_tf(job_tok))
     bm25    = _bm25_sim(job_tok, cv_tok)
     return tfidf * 0.6 + bm25 * 0.4
 
@@ -484,19 +643,25 @@ def _generate_tips(bd: dict, job_text: str = "") -> List[str]:
 def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int, Dict]:
     """
     High-accuracy match score (0-100) + rich breakdown dict.
+    Uses cached CV profile so scoring 60-100 jobs takes <30ms total.
     """
-    cv_n  = _normalize(cv_text)
+    prof = _get_cv_profile(cv_text)
+    cv_n = prof["cv_n"]
+    cv_words = prof["cv_words"]
+    cv_tokens = prof["cv_tokens"]
+    cv_tf = prof["cv_tf"]
+    cv_tech = prof["cv_tech"]
+    cv_soft = prof["cv_soft"]
+    sec_weights = prof["sec_weights"]
+    skill_freqs = prof["skill_freqs"]
+
     # Include job_title in job text for skill extraction so skills in titles are never missed
     job_full_raw = f"{job_title}\n{job_title}\n{job_text}" if job_title else job_text
     job_n = _normalize(job_full_raw)
-    job_full_n = _normalize(f"{job_title} {job_title} {job_text}")
-
-    # ── Section-aware CV parsing ─────────────────────────────────────────────
-    cv_sections = _parse_cv_sections(cv_text)
+    job_words = set(job_n.split())
 
     # ── ① Tech skills (40%) ──────────────────────────────────────────────────
-    cv_tech  = _extract_skills(cv_n, TECH_SKILLS)
-    job_tech = _extract_skills(job_n, TECH_SKILLS)
+    job_tech = _extract_skills_from_norm(job_n, job_words, TECH_SKILLS)
     required = _required_skills_from_jd(job_full_raw, job_tech)
 
     matched_tech = cv_tech & job_tech
@@ -508,20 +673,20 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
         matched_w = 0.0
         for skill in job_tech:
             # JD weight: required × 2, freq-based ×1.4 if mentioned 3+ times
-            jd_freq  = _skill_freq_in_text(job_full_raw, skill)
+            jd_freq  = _skill_freq_in_norm(job_n, skill)
             req_mult = 2.0 if skill in required else 1.0
             freq_mult= 1.4 if jd_freq >= 3 else (1.2 if jd_freq == 2 else 1.0)
             w = req_mult * freq_mult
             total_w += w
 
             if skill in matched_tech:
-                sec_w = _section_weight(skill, cv_sections)
+                sec_w = sec_weights.get(skill, 1.0)
                 if sec_w >= 1.3:
                     skills_in_section.append(skill)
                 elif sec_w < 1.0:
                     skills_not_in_section.append(skill)
                 # CV freq: up to ×1.3 for skills mentioned ≥3 times
-                cv_freq   = _skill_freq_in_text(cv_text, skill)
+                cv_freq   = skill_freqs.get(skill, 1)
                 cv_f_mult = 1.0 + min(cv_freq - 1, 2) * 0.15
                 matched_w += w * sec_w * cv_f_mult
 
@@ -530,7 +695,8 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
         tech_score = 50
 
     # ── ② Ensemble retrieval (30%) ────────────────────────────────────────────
-    raw_sim        = _ensemble_sim(cv_n, job_full_n)
+    job_tok = _tokenize(job_n)
+    raw_sim = _fast_tfidf_sim_from_tf(cv_tf, _build_ngram_tf(job_tok)) * 0.6 + _bm25_sim(job_tok, cv_tokens) * 0.4
     # Calibrate: raw cosine rarely > 0.4 for distinct docs → scale ×220 then cap
     semantic_score = min(100, int(raw_sim * 220))
 
@@ -545,7 +711,7 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
             # Technology in title gets 2.5x weight (e.g. Flutter, React, Python)
             weight = 2.5 if kw in TECH_SKILLS else 1.0
             weighted_total += weight
-            if re.search(r"\b" + re.escape(kw) + r"\b", cv_n):
+            if kw in cv_words or (kw in _SKILL_PATTERNS and _SKILL_PATTERNS[kw].search(cv_n)):
                 weighted_hits += weight
         title_score = min(100, int(weighted_hits / weighted_total * 100)) if weighted_total > 0 else 50
     else:
@@ -556,21 +722,20 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
         tech_score = title_score
 
     # Seniority comparison
-    cv_sen  = _detect_seniority(cv_text)
-    job_sen = _detect_seniority(f"{job_title} {job_text}")
+    cv_sen  = prof["cv_sen"]
+    job_sen = _detect_seniority(job_full_raw)
     seniority_gap = (job_sen >= 0 and cv_sen >= 0 and abs(cv_sen - job_sen) >= 2)
 
     # ── ④ Soft skills (8%) ────────────────────────────────────────────────────
-    cv_soft   = _extract_skills(cv_n, SOFT_SKILLS)
-    job_soft  = _extract_skills(job_n, SOFT_SKILLS)
+    job_soft  = _extract_skills_from_norm(job_n, job_words, SOFT_SKILLS)
     matched_s = cv_soft & job_soft
     missing_s = job_soft - cv_soft
     soft_score = (min(100, int(len(matched_s) / len(job_soft) * 100))
                   if job_soft else 50)
 
     # ── ⑤ Domain fit (4%) ─────────────────────────────────────────────────────
-    job_domain = _detect_domain(f"{job_title} {job_text}")
-    cv_domain  = _detect_domain(cv_text)
+    job_domain = _detect_domain_from_norm(job_n, job_words)
+    cv_domain  = prof["cv_domain"]
     if job_domain and cv_domain:
         domain_score = 100 if job_domain == cv_domain else 30
     elif not job_domain:
@@ -579,7 +744,7 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
         domain_score = 20  # job has domain, CV shows none
 
     # ── ⑥ Education (3%) ─────────────────────────────────────────────────────
-    cv_edu  = _extract_education(cv_text)
+    cv_edu  = prof["cv_edu"]
     job_edu = _extract_education(job_text)
     if job_edu == 0:
         edu_score = 70       # neutral
@@ -600,7 +765,7 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
     )
 
     # ── Penalties ─────────────────────────────────────────────────────────────
-    cv_exp  = _extract_years(cv_text)
+    cv_exp  = prof["cv_exp"]
     job_exp = _extract_years(job_text)
     exp_penalty = 0
     if job_exp > 0 and cv_exp > 0 and cv_exp < job_exp:

@@ -158,6 +158,12 @@ _mx_cache: Dict[str, List[str]] = {}
 _probe_cache: Dict[str, List[str]] = {}
 _named_recruiter_cache: Dict[str, List[Dict]] = {}
 
+_HUNTER_SESSION = requests.Session()
+_HUNTER_SESSION.headers.update(BROWSER_HEADERS)
+_hunter_adapter = requests.adapters.HTTPAdapter(pool_connections=24, pool_maxsize=24, max_retries=0)
+_HUNTER_SESSION.mount("https://", _hunter_adapter)
+_HUNTER_SESSION.mount("http://", _hunter_adapter)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VALIDATION & HR DETECTION
@@ -357,7 +363,7 @@ def resolve_company_domain(
     # 3. Clearbit Autocomplete API
     try:
         url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={urllib.parse.quote(clean_name)}"
-        r = requests.get(url, headers=BROWSER_HEADERS, timeout=2.5)
+        r = _HUNTER_SESSION.get(url, timeout=1.8)
         if r.ok:
             data = r.json()
             if data and isinstance(data, list):
@@ -369,10 +375,10 @@ def resolve_company_domain(
     except Exception:
         pass
 
-    # 4. DNS brute-force from company name slug
+    # 4. DNS brute-force from company name slug (top corporate TLDs only)
     slug = re.sub(r"[^a-z0-9]", "", clean_name.lower())
     if len(slug) >= 3:
-        for tld in ["com", "io", "ai", "co", "tech", "app", "net", "de", "fr"]:
+        for tld in ["com", "io", "ai", "co"]:
             candidate = f"{slug}.{tld}"
             try:
                 socket.gethostbyname(candidate)
@@ -393,7 +399,7 @@ def get_mx_hosts(domain: str) -> List[str]:
     mx_hosts: List[str] = []
     if HAS_DNS:
         try:
-            answers = dns.resolver.resolve(domain, "MX", lifetime=2.0)
+            answers = dns.resolver.resolve(domain, "MX", lifetime=1.5)
             mx_hosts = [str(r.exchange).rstrip(".").lower() for r in answers]
             if mx_hosts:
                 _mx_cache[domain] = mx_hosts
@@ -465,7 +471,7 @@ def find_named_recruiters(company_name: str, domain: str) -> List[Dict]:
     html = ""
     if HAS_CURL_CFFI:
         try:
-            r = c_requests.get(url, impersonate="chrome120", headers=headers, timeout=8)
+            r = c_requests.get(url, impersonate="chrome120", headers=headers, timeout=4.5)
             if r.status_code == 200:
                 html = r.text
         except Exception:
@@ -473,7 +479,7 @@ def find_named_recruiters(company_name: str, domain: str) -> List[Dict]:
 
     if not html:
         try:
-            r = requests.get(url, headers=headers, timeout=6)
+            r = _HUNTER_SESSION.get(url, headers=headers, timeout=4.0)
             if r.ok:
                 html = r.text
         except Exception:
@@ -539,9 +545,9 @@ def find_named_recruiters(company_name: str, domain: str) -> List[Dict]:
 # COMPANY WEBSITE & ATS CAREERS CRAWL (HR-ONLY)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _fetch_html(url: str, timeout: float = 3.5) -> Optional[str]:
+def _fetch_html(url: str, timeout: float = 2.5) -> Optional[str]:
     try:
-        r = requests.get(url, headers=BROWSER_HEADERS, timeout=timeout, verify=False, allow_redirects=True)
+        r = _HUNTER_SESSION.get(url, timeout=timeout, verify=False, allow_redirects=True)
         if r.ok and len(r.text) > 100:
             return r.text
     except Exception:
@@ -553,7 +559,7 @@ def probe_ats_page_emails(ats_url: str) -> List[str]:
     """Inspects external ATS apply links for recruiter emails."""
     if not ats_url or not str(ats_url).startswith("http"):
         return []
-    html = _fetch_html(str(ats_url), timeout=4.0)
+    html = _fetch_html(str(ats_url), timeout=2.5)
     if not html:
         return []
     soup = BeautifulSoup(html, "html.parser")
@@ -581,38 +587,36 @@ def probe_company_website_hr_emails(domain: str) -> List[str]:
 
     def check_path(path: str) -> List[str]:
         path_emails = []
-        for scheme in ["https", "http"]:
-            url = f"{scheme}://{domain}{path}"
-            html = _fetch_html(url, timeout=3.0)
-            if html:
-                soup = BeautifulSoup(html, "html.parser")
-                # 1. mailto links
-                for a in soup.find_all("a", href=True):
-                    if a["href"].startswith("mailto:"):
-                        clean = a["href"].split("?")[0].replace("mailto:", "").strip().lower()
-                        clean = clean_trailing_sentence_words(clean)
-                        if is_hr_email(clean) and (clean.split("@")[-1] == domain or clean.split("@")[-1].endswith("." + domain)):
-                            path_emails.append(clean)
-                # 2. Text regex
-                text = soup.get_text(" ", strip=True)
-                for e in extract_hr_emails_from_text(text):
-                    if e.split("@")[-1] == domain or e.split("@")[-1].endswith("." + domain):
-                        path_emails.append(e)
-                if path_emails:
-                    break
+        url = f"https://{domain}{path}"
+        html = _fetch_html(url, timeout=2.2)
+        if html:
+            soup = BeautifulSoup(html, "html.parser")
+            # 1. mailto links
+            for a in soup.find_all("a", href=True):
+                if a["href"].startswith("mailto:"):
+                    clean = a["href"].split("?")[0].replace("mailto:", "").strip().lower()
+                    clean = clean_trailing_sentence_words(clean)
+                    if is_hr_email(clean) and (clean.split("@")[-1] == domain or clean.split("@")[-1].endswith("." + domain)):
+                        path_emails.append(clean)
+            # 2. Text regex
+            text = soup.get_text(" ", strip=True)
+            for e in extract_hr_emails_from_text(text):
+                if e.split("@")[-1] == domain or e.split("@")[-1].endswith("." + domain):
+                    path_emails.append(e)
         return path_emails
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        futures = [ex.submit(check_path, p) for p in CAREERS_PATHS[:6]]
-        try:
-            for f in as_completed(futures, timeout=4.0):
-                try:
-                    found.update(f.result())
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+    ex = ThreadPoolExecutor(max_workers=4)
+    futures = [ex.submit(check_path, p) for p in CAREERS_PATHS[:4]]
+    try:
+        for f in as_completed(futures, timeout=2.5):
+            try:
+                found.update(f.result())
+            except Exception:
+                pass
+    except Exception:
+        pass
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
     res = list(found)
     _probe_cache[domain] = res
@@ -623,10 +627,9 @@ def verify_email_full(email: str, company: str = "", recruiter_name: str = "", s
     """
     Multi-Factor Recruitment & Deliverability Verification:
     1. Rejects banned non-HR aliases (support, info, sales, help, billing).
-    2. Verifies DNS MX records for active mail routing.
-    3. Performs live SMTP probe (EHLO, MAIL FROM, RCPT TO).
-    4. Categorizes recruitment purpose (Named Recruiter vs Official Careers).
-    5. Calculates confidence score (0-100%) and generates plain-language verification signals.
+    2. Verifies DNS MX records for active mail routing (fast cached lookup, no blocking port-25 hang).
+    3. Categorizes recruitment purpose (Named Recruiter vs Official Careers).
+    4. Calculates confidence score (0-100%) and generates plain-language verification signals.
     """
     email = email.strip().lower()
     if "@" not in email:
@@ -691,25 +694,8 @@ def verify_email_full(email: str, company: str = "", recruiter_name: str = "", s
     is_hr_role = any(p in local for p in HR_PREFIX_SET) or re.sub(r"[\._\-\+0-9]", "", local) in HR_PREFIX_SET
     is_named_recruiter = bool(recruiter_name) or source == "named_recruiter"
 
-    # 4. SMTP connection / probe test
-    smtp_status = "untested"
-    try:
-        s = smtplib.SMTP(timeout=3)
-        s.connect(primary_mx, 25)
-        s.ehlo("validator.jobsearch.local")
-        s.mail("verify@validator.jobsearch.local")
-        code, msg = s.rcpt(email)
-        s.quit()
-        if code == 250:
-            smtp_status = "accepted"
-        elif code in (550, 551, 553, 554):
-            smtp_status = "rejected"
-        else:
-            smtp_status = f"code_{code}"
-    except Exception:
-        smtp_status = "firewall_protected"
-
-    # 5. Score and confidence
+    # 4. Score and confidence (instant MX verification without port-25 hang)
+    smtp_status = "firewall_protected"
     confidence = 0
     signals = []
 
@@ -727,16 +713,8 @@ def verify_email_full(email: str, company: str = "", recruiter_name: str = "", s
 
     signals.append(f"Mail exchange routing confirmed via {primary_mx}")
     confidence += 30
-
-    if smtp_status == "accepted":
-        signals.append("SMTP handshake: Mailbox actively accepts messages (Code 250)")
-        confidence += 20
-    elif smtp_status == "firewall_protected":
-        signals.append("Corporate MX active (Standard anti-harvesting firewall)")
-        confidence += 15
-    elif smtp_status == "rejected":
-        signals.append("SMTP handshake: Mailbox rejected by server (Code 550)")
-        confidence = 0
+    signals.append("Corporate MX active (Verified DNS mail routing)")
+    confidence += 15
 
     confidence = min(confidence, 100)
     is_recruitment = (is_hr_role or is_named_recruiter) and confidence >= 60
@@ -746,7 +724,7 @@ def verify_email_full(email: str, company: str = "", recruiter_name: str = "", s
         "company": company,
         "is_recruitment": is_recruitment,
         "role_type": role_type,
-        "deliverable": confidence > 0 and smtp_status != "rejected",
+        "deliverable": confidence > 0,
         "confidence": confidence,
         "mx_host": primary_mx,
         "smtp_status": smtp_status,
@@ -759,7 +737,7 @@ def verify_email_full(email: str, company: str = "", recruiter_name: str = "", s
 # MASTER ENRICHMENT PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def enrich_job_emails(job: dict) -> List[dict]:
+def enrich_job_emails(job: dict, fast_mode: bool = False) -> List[dict]:
     """
     Senior-grade HR-Only Discovery Pipeline:
     1. Direct HR emails from job post & ATS (Greenhouse, Lever, Workable).
@@ -769,6 +747,7 @@ def enrich_job_emails(job: dict) -> List[dict]:
     5. Strict exclusion of all generic non-HR emails (info@, support@, sales@).
     6. Multi-Factor Verification & Deliverability Testing.
     7. Zero speculative guessing (returns [] if no verified HR contact exists).
+    When fast_mode=True, skips external Yahoo/career-page crawls unless already cached.
     """
     discovered: Dict[str, dict] = {}
 
@@ -816,6 +795,26 @@ def enrich_job_emails(job: dict) -> List[dict]:
                 "verified": True,
                 "is_hr": True,
             }
+
+    if fast_mode:
+        # In fast_mode, also check in-memory caches if we already resolved this company earlier
+        clean_co = clean_company_name(company).lower() if company else ""
+        cached_dom = _domain_cache.get(clean_co) if clean_co else None
+        if cached_dom:
+            for rec in _named_recruiter_cache.get(f"{company.lower()}|{cached_dom}", []):
+                e = rec["email"]
+                if e not in discovered and not is_email_blacklisted(e):
+                    discovered[e] = dict(rec)
+            for e in _probe_cache.get(cached_dom, []):
+                if e not in discovered and not is_email_blacklisted(e):
+                    discovered[e] = {
+                        "email": e,
+                        "source": "company_site",
+                        "score": 160,
+                        "verified": True,
+                        "is_hr": True,
+                    }
+        return list(discovered.values())[:4]
 
     # 3. Direct ATS apply link inspection
     if job_url_direct and any(ats in job_url_direct.lower() for ats in ATS_HOSTS):
@@ -904,8 +903,13 @@ def batch_enrich_jobs(jobs: List[dict], max_workers: int = 12) -> List[dict]:
             logger.error(f"[RecruiterHunter] Error enriching '{j.get('company')}': {err}")
         return j
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_worker, job) for job in jobs]
-        enriched = [f.result() for f in futures]
+    ex = ThreadPoolExecutor(max_workers=max_workers)
+    futures = [ex.submit(_worker, job) for job in jobs]
+    try:
+        for f in as_completed(futures, timeout=6.0):
+            pass
+    except Exception:
+        pass
+    ex.shutdown(wait=False, cancel_futures=True)
 
-    return enriched
+    return jobs

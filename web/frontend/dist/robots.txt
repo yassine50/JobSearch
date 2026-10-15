@@ -1,0 +1,37 @@
+# CVtoMatch (https://www.cvtomatch.com) — Robots Exclusion Protocol
+User-agent: *
+Allow: /
+Allow: /ats-resume-checker
+Allow: /linkedin-recruiter-posts
+Allow: /ai-cover-letter-generator
+Allow: /job-application-tracker
+Allow: /recruiter-talent-sourcing
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /email
+
+# AI Search & Social Crawlers
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: LinkedInBot
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+Sitemap: https://www.cvtomatch.com/sitemap.xml
+Host: https://www.cvtomatch.com

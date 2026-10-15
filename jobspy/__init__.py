@@ -486,12 +486,11 @@ def scrape_jobs_with_status(
         with ThreadPoolExecutor(max_workers=10) as email_executor:
             list(email_executor.map(scan_job, all_jobs))
 
-    jobs_dfs: list[pd.DataFrame] = []
+    jobs_rows: list[dict] = []
 
     for site, job_response in site_to_jobs_dict.items():
         for job in job_response.jobs:
             job_data = job.dict()
-            job_url = job_data["job_url"]
             job_data["site"] = site
             job_data["company"] = job_data["company_name"]
             job_data["job_type"] = (
@@ -545,7 +544,7 @@ def scrape_jobs_with_status(
                 else None
             )
 
-            #naukri-specific fields
+            # naukri-specific fields
             job_data["skills"] = (
                 ", ".join(job_data["skills"]) if job_data["skills"] else None
             )
@@ -555,25 +554,14 @@ def scrape_jobs_with_status(
             job_data["vacancy_count"] = job_data.get("vacancy_count")
             job_data["work_from_home_type"] = job_data.get("work_from_home_type")
 
-            job_df = pd.DataFrame([job_data])
-            jobs_dfs.append(job_df)
+            jobs_rows.append(job_data)
 
-    if jobs_dfs:
-        # Step 1: Filter out all-NA columns from each DataFrame before concatenation
-        filtered_dfs = [df.dropna(axis=1, how="all") for df in jobs_dfs]
-
-        # Step 2: Concatenate the filtered DataFrames
-        jobs_df = pd.concat(filtered_dfs, ignore_index=True)
-
-        # Step 3: Ensure all desired columns are present, adding missing ones as empty
+    if jobs_rows:
+        jobs_df = pd.DataFrame(jobs_rows)
         for column in desired_order:
             if column not in jobs_df.columns:
-                jobs_df[column] = None  # Add missing columns as empty
-
-        # Reorder the DataFrame according to the desired order
+                jobs_df[column] = None
         jobs_df = jobs_df[desired_order]
-
-        # Step 4: Sort the DataFrame as required
         result_df = jobs_df.sort_values(
             by=["site", "date_posted"], ascending=[True, False]
         ).reset_index(drop=True)

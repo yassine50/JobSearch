@@ -8,7 +8,7 @@ import TailorCvModal from '../components/modals/TailorCvModal.jsx'
 import CvPersonasModal from '../components/modals/CvPersonasModal.jsx'
 import WatchlistModal from '../components/modals/WatchlistModal.jsx'
 import ScoreModal from '../components/ScoreModal.jsx'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import { useToast } from '../context/ToastContext.jsx'
 import {
   Upload, CheckCircle2, Briefcase, Sparkles, Users, Radar, Layers, Bell
@@ -21,7 +21,7 @@ import {
 export default function Seeker() {
   const toast = useToast()
   const [activeTab, setActiveTab] = useState('linkedin_posts') // 'linkedin_posts' | 'job_boards'
-  const [cvInfo, setCvInfo] = useState({ uploaded: false, personas_count: 0 })
+  const [cvInfo, setCvInfo] = useState(() => getCached('/cv/info', { uploaded: false, personas_count: 0 }))
   const [cvUploading, setCvUploading] = useState(false)
 
   // Power Modals State
@@ -34,8 +34,8 @@ export default function Seeker() {
   const [boardMeta, setBoardMeta] = useState(null)
   const [tailorJob, setTailorJob] = useState(null)
   const [scoreModalJob, setScoreModalJob] = useState(null)
-  const [appliedJobs, setAppliedJobs] = useState(new Set())
-  const [savedJobs, setSavedJobs] = useState(new Set())
+  const [appliedJobs, setAppliedJobs] = useState(() => buildTrackerLookupSets(getCached('/tracker', [])).applied)
+  const [savedJobs, setSavedJobs] = useState(() => buildTrackerLookupSets(getCached('/tracker', [])).saved)
 
   const loadCvInfo = () => {
     client.get('/cv/info').then(r => setCvInfo(r.data)).catch(() => {})

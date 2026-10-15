@@ -6,7 +6,7 @@ import { useToast } from '../context/ToastContext.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import ScoreBadge from '../components/ScoreBadge.jsx'
 import PageWrapper from '../components/PageWrapper.jsx'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import {
   Search, Users, Bookmark, Trash2, ExternalLink, Bell,
   Mail, TrendingUp, Briefcase, Calendar, ArrowRight,
@@ -163,10 +163,10 @@ export default function Dashboard() {
   const { user } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
-  const [saved, setSaved] = useState([])
-  const [cvInfo, setCvInfo] = useState({ uploaded: false })
-  const [stats, setStats] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [saved, setSaved] = useState(() => getCached('/jobs/saved', []))
+  const [cvInfo, setCvInfo] = useState(() => getCached('/cv/info', { uploaded: false }))
+  const [stats, setStats] = useState(() => getCached('/tracker/stats/detailed', null))
+  const [loading, setLoading] = useState(() => !getCached('/tracker/stats/detailed', null))
 
   useEffect(() => {
     Promise.all([

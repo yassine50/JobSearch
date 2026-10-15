@@ -1,25 +1,43 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import { 
   ChevronLeft, ChevronRight, Calendar, Mail, CheckCircle, AlertTriangle, 
   Clock, Search, Copy, Check, Eye, X
 } from 'lucide-react'
 
+function _pickInitialSelectedDate(data) {
+  if (!data) return null
+  const activeDays = Object.keys(data.days || {})
+  if (activeDays.length > 0) {
+    if (data.days[data.today_str]) return data.today_str
+    const sorted = [...activeDays].sort().reverse()
+    return sorted[0]
+  }
+  return data.today_str || null
+}
+
 export default function EmailCalendarView() {
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [analytics, setAnalytics] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [selectedDateStr, setSelectedDateStr] = useState(null)
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth() + 1
+  const initialCached = getCached(`/email/calendar-analytics?year=${year}&month=${month}`, null)
+
+  const [analytics, setAnalytics] = useState(() => initialCached)
+  const [loading, setLoading] = useState(() => !initialCached)
+  const [selectedDateStr, setSelectedDateStr] = useState(() => _pickInitialSelectedDate(initialCached))
   const [daySearch, setDaySearch] = useState('')
   const [viewingEmail, setViewingEmail] = useState(null)
   const [copiedEmail, setCopiedEmail] = useState(null)
 
-  const year = currentDate.getFullYear()
-  const month = currentDate.getMonth() + 1
-
   const fetchAnalytics = async (y, m) => {
-    setLoading(true)
+    const cached = getCached(`/email/calendar-analytics?year=${y}&month=${m}`, null)
+    if (cached) {
+      setAnalytics(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     try {
       const { data } = await client.get(`/email/calendar-analytics?year=${y}&month=${m}`)
       setAnalytics(data)

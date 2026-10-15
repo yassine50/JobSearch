@@ -2035,9 +2035,9 @@ def fetch_deep_linkedin_postings(
                     tf_param = brave_tf if use_brave_tf else ""
                     b_url = f"https://search.brave.com/search?q={q_enc}{tf_param}"
                     if HAS_CURL_CFFI:
-                        r_brave = c_requests.get(b_url, impersonate="chrome120", timeout=6)
+                        r_brave = c_requests.get(b_url, impersonate="chrome120", timeout=4.0)
                     else:
-                        r_brave = requests.get(b_url, headers=hdrs, timeout=6, verify=False)
+                        r_brave = _POST_SESSION.get(b_url, headers=hdrs, timeout=4.0, verify=False)
                     if r_brave.status_code == 200 and r_brave.text:
                         soup = BeautifulSoup(r_brave.text, "html.parser")
                         for div in soup.select("div.snippet"):
@@ -2054,7 +2054,6 @@ def fetch_deep_linkedin_postings(
                                     desc_txt = clean_linkedin_boilerplate(d_el.get_text(" ", strip=True) if d_el else "")
                                     if clean not in [p[0] for p in posts_found]:
                                         posts_found.append((clean, title_txt, desc_txt))
-                    time.sleep(0.25)
                 except Exception:
                     pass
 
@@ -2063,9 +2062,9 @@ def fetch_deep_linkedin_postings(
             try:
                 url = f"https://search.yahoo.com/search?p={q_enc}&b={b_offset}{yahoo_age if use_brave_tf else ''}"
                 if HAS_CURL_CFFI:
-                    r = c_requests.get(url, impersonate="chrome120", headers=hdrs, timeout=5, verify=False)
+                    r = c_requests.get(url, impersonate="chrome120", headers=hdrs, timeout=3.5, verify=False)
                 else:
-                    r = requests.get(url, headers=hdrs, timeout=5, verify=False)
+                    r = _POST_SESSION.get(url, headers=hdrs, timeout=3.5, verify=False)
                 if r.status_code == 200 and r.text:
                     soup = BeautifulSoup(r.text, "html.parser")
                     for a in soup.find_all("a", href=True):
@@ -2086,7 +2085,7 @@ def fetch_deep_linkedin_postings(
 
     start_idx = ((safe_page - 1) * 6) % max(len(unique_tasks), 1)
     ordered_tasks = unique_tasks[start_idx:] + unique_tasks[:start_idx]
-    batch_tasks = ordered_tasks[:12]
+    batch_tasks = ordered_tasks[:10]
 
     def _ingest_harvest_items(items: List[Tuple[str, str, str]], prio: Tuple[int, int, int]) -> None:
         for u, title_txt, snip_txt in items:
@@ -2137,31 +2136,33 @@ def fetch_deep_linkedin_postings(
                 if title_txt and not existing.get("search_title"):
                     existing["search_title"] = title_txt
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        future_map = {}
-        # Submit DDGS queries for top 8 diverse task queries
-        for idx, (q_str, prio) in enumerate(batch_tasks[:8]):
-            fut_ddg = pool.submit(fetch_ddgs_query, q_str)
-            future_map[fut_ddg] = (prio[0], prio[1], prio[2] + idx)
+    pool = ThreadPoolExecutor(max_workers=12)
+    future_map = {}
+    # Submit DDGS queries for top 7 diverse task queries
+    for idx, (q_str, prio) in enumerate(batch_tasks[:7]):
+        fut_ddg = pool.submit(fetch_ddgs_query, q_str)
+        future_map[fut_ddg] = (prio[0], prio[1], prio[2] + idx)
 
-        # Submit throttled Brave + Yahoo queries for top 5 task queries
-        for idx, (q_str, prio) in enumerate(batch_tasks[:5]):
-            fut_by = pool.submit(fetch_brave_and_yahoo_query, q_str, 1, True)
-            future_map[fut_by] = (prio[0], prio[1], prio[2] + idx)
+    # Submit throttled Brave + Yahoo queries for top 4 task queries
+    for idx, (q_str, prio) in enumerate(batch_tasks[:4]):
+        fut_by = pool.submit(fetch_brave_and_yahoo_query, q_str, 1, True)
+        future_map[fut_by] = (prio[0], prio[1], prio[2] + idx)
 
-        try:
-            for fut in as_completed(future_map.keys(), timeout=11.0):
-                try:
-                    prio = future_map[fut]
-                    results = fut.result()
-                    if results:
-                        _ingest_harvest_items(results, prio)
-                except Exception:
-                    pass
-                if len(harvested_by_key) >= target_harvest:
-                    break
-        except Exception:
-            pass
+    try:
+        for fut in as_completed(future_map.keys(), timeout=6.5):
+            try:
+                prio = future_map[fut]
+                results = fut.result()
+                if results:
+                    _ingest_harvest_items(results, prio)
+            except Exception:
+                pass
+            if len(harvested_by_key) >= target_harvest:
+                break
+    except Exception:
+        pass
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     # Sort harvested posts:
     # 1. Posts confirmed within target_max_age_h come first
@@ -2187,6 +2188,9 @@ def fetch_deep_linkedin_postings(
     return sorted_posts[:limit]
 
 
+_LI_POST_BLOCKED_UNTIL: float = 0.0
+
+
 def scrape_single_post_details(
     post_item: Dict[str, Any],
     blacklisted_set: Set[str],
@@ -2202,6 +2206,7 @@ def scrape_single_post_details(
     boilerplate and unsupported foreign languages, validates recruitment intent and primary role fit,
     scores author authority, and classifies verified recruiter emails into quality tiers.
     """
+    global _LI_POST_BLOCKED_UNTIL
     url = post_item.get("post_url", "")
     if not url or "/jobs/" in url.lower() or "jobs-guest" in url.lower() or "/job/" in url.lower():
         return None
@@ -2255,31 +2260,32 @@ def scrape_single_post_details(
             })
 
     # 2. Fetch LinkedIn public post page using link-preview crawler User-Agent first (bypasses guest authwall
-    # and receives full JSON-LD + OpenGraph commentary + comments), with browser fallback.
+    # and receives full JSON-LD + OpenGraph commentary + comments).
+    # Fast-path: if LinkedIn is currently returning 999/authwall (circuit breaker active) OR snippet already has
+    # rich commentary (>= 110 chars), skip redundant per-post HTTP round-trip!
     crawler_headers = {
         "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
+    now_ts = time.time()
+    should_fetch_page = (now_ts >= _LI_POST_BLOCKED_UNTIL) and (len(initial_snippet) < 110)
+
     try:
-        r = _POST_SESSION.get(url, headers=crawler_headers, timeout=6, verify=False)
-        if r.status_code not in (200,) or "authwall" in (r.url or ""):
-            browser_headers = {
-                **crawler_headers,
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            }
-            if HAS_CURL_CFFI:
-                r = c_requests.get(url, impersonate="chrome120", headers=browser_headers, timeout=6, verify=False)
-            else:
-                r = _POST_SESSION.get(url, headers=browser_headers, timeout=6, verify=False)
+        r = None
+        if should_fetch_page:
+            r = _POST_SESSION.get(url, headers=crawler_headers, timeout=3.5, verify=False)
+            _is_blocked = (
+                r.status_code in (999, 429, 403, 302, 301)
+                or (r.status_code == 200 and ("authwall" in (r.url or "") or "login" in (r.url or "")))
+            )
+            if _is_blocked:
+                _LI_POST_BLOCKED_UNTIL = now_ts + 180.0
+        else:
+            _is_blocked = True
 
-        _is_blocked = (
-            r.status_code in (999, 429, 403, 302, 301)
-            or (r.status_code == 200 and ("authwall" in (r.url or "") or "login" in (r.url or "")))
-        )
-
-        if r.status_code == 200 and r.text:
+        if r is not None and r.status_code == 200 and r.text:
             soup = BeautifulSoup(r.text, "html.parser")
 
             # A. Extract og:title (author name + post preview) if not boilerplate
@@ -3189,7 +3195,7 @@ def search_linkedin_recruiter_posts(
             return voyager_posts
 
     # 1. Deep Multi-Angle LinkedIn Harvester (recruiter posts only)
-    harvest_limit = min(max(limit * 3, 35), 80)
+    harvest_limit = min(max(limit * 2, 28), 50)
     found_posts = fetch_deep_linkedin_postings(
         clean_role, target_locs, limit=harvest_limit, page=page, time_range=time_range
     )
@@ -3198,29 +3204,31 @@ def search_linkedin_recruiter_posts(
     detailed_posts: List[Dict[str, Any]] = []
     max_to_scrape = min(len(found_posts), harvest_limit)
     posts_to_scrape = found_posts[:max_to_scrape]
-    max_workers = min(max(len(posts_to_scrape), 1), 25)
+    max_workers = min(max(len(posts_to_scrape), 1), 24)
 
     if posts_to_scrape:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    scrape_single_post_details, p, blacklisted_set, max_age_hours, location, target_locs, clean_role, tags
-                ): p
-                for p in posts_to_scrape
-            }
-            try:
-                for fut in as_completed(futures, timeout=18):
-                    try:
-                        res = fut.result()
-                        if not res:
-                            continue
-                        if email_only and not res.get("has_email"):
-                            continue
-                        detailed_posts.append(res)
-                    except Exception:
-                        pass
-            except (TimeoutError, FuturesTimeoutError, Exception):
-                pass
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        futures = {
+            executor.submit(
+                scrape_single_post_details, p, blacklisted_set, max_age_hours, location, target_locs, clean_role, tags
+            ): p
+            for p in posts_to_scrape
+        }
+        try:
+            for fut in as_completed(futures, timeout=6.5):
+                try:
+                    res = fut.result()
+                    if not res:
+                        continue
+                    if email_only and not res.get("has_email"):
+                        continue
+                    detailed_posts.append(res)
+                except Exception:
+                    pass
+        except (TimeoutError, FuturesTimeoutError, Exception):
+            pass
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     # Persist newly verified live posts into SQLite index BEFORE merging
     if detailed_posts:
@@ -3246,27 +3254,29 @@ def search_linkedin_recruiter_posts(
         relaxed_max_age = min(max(max_age_hours * 4.0, 720.0), 2160.0)
         remaining_candidates = [p for p in posts_to_scrape if p.get("post_url") not in existing_urls]
         if remaining_candidates:
-            with ThreadPoolExecutor(max_workers=min(len(remaining_candidates), 20)) as executor:
-                fallback_futures = {
-                    executor.submit(
-                        scrape_single_post_details, p, blacklisted_set, relaxed_max_age, location, target_locs, clean_role, tags
-                    ): p
-                    for p in remaining_candidates
-                }
-                try:
-                    for fut in as_completed(fallback_futures, timeout=14):
-                        try:
-                            res = fut.result()
-                            if not res:
-                                continue
-                            if email_only and not res.get("has_email"):
-                                continue
-                            res["_24h_fallback"] = True
-                            detailed_posts.append(res)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+            fb_executor = ThreadPoolExecutor(max_workers=min(len(remaining_candidates), 16))
+            fallback_futures = {
+                fb_executor.submit(
+                    scrape_single_post_details, p, blacklisted_set, relaxed_max_age, location, target_locs, clean_role, tags
+                ): p
+                for p in remaining_candidates
+            }
+            try:
+                for fut in as_completed(fallback_futures, timeout=4.5):
+                    try:
+                        res = fut.result()
+                        if not res:
+                            continue
+                        if email_only and not res.get("has_email"):
+                            continue
+                        res["_24h_fallback"] = True
+                        detailed_posts.append(res)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            finally:
+                fb_executor.shutdown(wait=False, cancel_futures=True)
 
     # 3. Deduplicate reposts that share identical normalized commentary text or URL
     deduped_posts: List[Dict[str, Any]] = []

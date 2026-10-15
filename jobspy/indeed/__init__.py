@@ -112,30 +112,28 @@ class Indeed(Scraper):
         api_headers_temp = api_headers.copy()
         api_headers_temp["indeed-co"] = self.api_country_code
 
-        # Retry up to 3 times in case of transient blocks
-        for attempt in range(3):
+        # Retry up to 2 times in case of transient blocks
+        for attempt in range(2):
             try:
                 response = self.session.post(
                     self.api_url,
                     headers=api_headers_temp,
                     json=payload,
-                    timeout=10,
+                    timeout=6.5,
                     verify=False,
                 )
                 if not response.ok:
                     log.info(
-                        f"responded with status code: {response.status_code} (attempt {attempt + 1}/3)"
+                        f"responded with status code: {response.status_code} (attempt {attempt + 1}/2)"
                     )
-                    if attempt < 2:
-                        time.sleep(2)
+                    if attempt < 1:
+                        time.sleep(0.35)
                     continue
                 data = response.json()
                 job_results = data.get("data", {}).get("jobSearch", {}).get("results", [])
                 new_cursor = data.get("data", {}).get("jobSearch", {}).get("pageInfo", {}).get("nextCursor")
-                if not job_results and attempt < 2:
-                    log.info(f"No results returned (attempt {attempt + 1}/3), retrying...")
-                    time.sleep(2)
-                    continue
+                if not job_results:
+                    return [], None
 
                 job_list = []
                 for job in job_results:
@@ -144,9 +142,9 @@ class Indeed(Scraper):
                         job_list.append(processed_job)
                 return job_list, new_cursor
             except Exception as e:
-                log.info(f"Request error (attempt {attempt + 1}/3): {e}")
-                if attempt < 2:
-                    time.sleep(2)
+                log.info(f"Request error (attempt {attempt + 1}/2): {e}")
+                if attempt < 1:
+                    time.sleep(0.35)
 
         return jobs, new_cursor
 

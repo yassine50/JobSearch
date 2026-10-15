@@ -14,8 +14,14 @@ import CoverLetter  from './pages/CoverLetter.jsx'
 import EmailHistory from './pages/EmailHistory.jsx'
 import Settings     from './pages/Settings.jsx'
 
+import { useEffect } from 'react'
+import { prefetchWorkspaceData } from './api/client.js'
+
 function PrivateRoute({ children }) {
   const { isAuth } = useAuth()
+  useEffect(() => {
+    if (isAuth) prefetchWorkspaceData()
+  }, [isAuth])
   return isAuth ? children : <Navigate to="/" replace />
 }
 const P = ({ C }) => <PrivateRoute><C /></PrivateRoute>
@@ -23,28 +29,26 @@ const P = ({ C }) => <PrivateRoute><C /></PrivateRoute>
 function AnimatedRoutes() {
   const location = useLocation()
   return (
-    <AnimatePresence mode="wait">
-      <Routes location={location} key={location.pathname}>
-        {/* Public SEO Landing Routes */}
-        <Route path="/"                           element={<Login />} />
-        <Route path="/ats-resume-checker"         element={<Login />} />
-        <Route path="/linkedin-recruiter-posts"   element={<Login />} />
-        <Route path="/ai-cover-letter-generator"  element={<Login />} />
-        <Route path="/job-application-tracker"    element={<Login />} />
-        <Route path="/recruiter-talent-sourcing"  element={<Login />} />
+    <Routes location={location}>
+      {/* Public SEO Landing Routes */}
+      <Route path="/"                           element={<Login />} />
+      <Route path="/ats-resume-checker"         element={<Login />} />
+      <Route path="/linkedin-recruiter-posts"   element={<Login />} />
+      <Route path="/ai-cover-letter-generator"  element={<Login />} />
+      <Route path="/job-application-tracker"    element={<Login />} />
+      <Route path="/recruiter-talent-sourcing"  element={<Login />} />
 
-        {/* Authenticated Workspace Routes */}
-        <Route path="/dashboard"    element={<P C={Dashboard}   />} />
-        <Route path="/seeker"       element={<P C={Seeker}      />} />
-        <Route path="/recruiter"    element={<P C={Recruiter}   />} />
-        <Route path="/tracker"      element={<P C={Tracker}     />} />
-        <Route path="/coverletter"  element={<P C={CoverLetter} />} />
-        <Route path="/cover-letter" element={<P C={CoverLetter} />} />
-        <Route path="/email"        element={<P C={EmailHistory}/>} />
-        <Route path="/settings"     element={<P C={Settings}    />} />
-        <Route path="*"             element={<Navigate to="/" replace />} />
-      </Routes>
-    </AnimatePresence>
+      {/* Authenticated Workspace Routes */}
+      <Route path="/dashboard"    element={<P C={Dashboard}   />} />
+      <Route path="/seeker"       element={<P C={Seeker}      />} />
+      <Route path="/recruiter"    element={<P C={Recruiter}   />} />
+      <Route path="/tracker"      element={<P C={Tracker}     />} />
+      <Route path="/coverletter"  element={<P C={CoverLetter} />} />
+      <Route path="/cover-letter" element={<P C={CoverLetter} />} />
+      <Route path="/email"        element={<P C={EmailHistory}/>} />
+      <Route path="/settings"     element={<P C={Settings}    />} />
+      <Route path="*"             element={<Navigate to="/" replace />} />
+    </Routes>
   )
 }
 

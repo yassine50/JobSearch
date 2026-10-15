@@ -128,6 +128,8 @@ class AppUpdate(BaseModel):
     notes: Optional[str] = None
     follow_up_date: Optional[str] = None
 
+_LAST_TRACKER_MAINT: dict[int, float] = {}
+
 def _serialize(a, emails=None):
     return {
         "id": a.id, "title": a.title, "company": a.company,
@@ -136,7 +138,7 @@ def _serialize(a, emails=None):
         "applied_at": str(a.applied_at),
         "follow_up_date": str(a.follow_up_date) if a.follow_up_date else None,
         "tailored_cv_filename": a.tailored_cv_filename,
-        "has_tailored_cv": bool(a.tailored_cv_data or a.tailored_cv_filename),
+        "has_tailored_cv": bool(a.tailored_cv_filename),
         "emails": emails or []
     }
 
@@ -144,21 +146,23 @@ def _serialize(a, emails=None):
 def get_all(db: Session = Depends(get_db),
             current_user: models.User = Depends(get_current_user),
             search: Optional[str] = None):
-    # 1. Safe purge of applications explicitly tied to blacklisted bounced addresses
-    from ..utils import purge_blacklisted_applications
-    purge_blacklisted_applications(db, user_id=current_user.id)
+    import time as _time
+    from collections import defaultdict
 
-    # 2. Real-time auto-reject: applications with follow-up sent >=3 days ago without recruiter response
-    try:
-        from ..auto_dispatcher import auto_reject_unresponsive_follow_ups
-        auto_reject_unresponsive_follow_ups(db, current_user.id, days_threshold=3)
-    except Exception as e:
-        print(f"[Tracker] Error in auto_reject_unresponsive_follow_ups: {e}")
+    now_ts = _time.monotonic()
+    if now_ts - _LAST_TRACKER_MAINT.get(current_user.id, 0.0) > 300.0:
+        _LAST_TRACKER_MAINT[current_user.id] = now_ts
+        try:
+            from ..utils import purge_blacklisted_applications
+            purge_blacklisted_applications(db, user_id=current_user.id)
+            from ..auto_dispatcher import auto_reject_unresponsive_follow_ups
+            auto_reject_unresponsive_follow_ups(db, current_user.id, days_threshold=3)
+        except Exception as e:
+            print(f"[Tracker] Error in periodic tracker maintenance: {e}")
 
     query = db.query(models.Application).filter(models.Application.user_id == current_user.id)
     if search and search.strip():
         s = f"%{search.strip()}%"
-        # Search by title, company, notes, or matching email in EmailLog
         matching_app_ids = db.query(models.EmailLog.application_id)\
                              .filter(models.EmailLog.user_id == current_user.id,
                                      models.EmailLog.to_email.ilike(s))\
@@ -170,17 +174,30 @@ def get_all(db: Session = Depends(get_db),
             models.Application.id.in_(matching_app_ids)
         )
     apps = query.order_by(models.Application.applied_at.desc()).all()
-    result = []
-    for a in apps:
-        logs = db.query(models.EmailLog) \
-                 .filter(models.EmailLog.application_id == a.id) \
-                 .order_by(models.EmailLog.sent_at.desc()).all()
-        email_list = [{"id": l.id, "to_email": l.to_email, "to_name": l.to_name,
-                       "subject": l.subject, "body": l.body,
-                       "template_type": l.template_type,
-                       "status": l.status, "sent_at": str(l.sent_at)} for l in logs]
-        result.append(_serialize(a, email_list))
-    return result
+    if not apps:
+        return []
+
+    app_ids = [a.id for a in apps]
+    all_logs = (
+        db.query(models.EmailLog)
+        .filter(models.EmailLog.application_id.in_(app_ids))
+        .order_by(models.EmailLog.sent_at.desc())
+        .all()
+    )
+    logs_by_app = defaultdict(list)
+    for l in all_logs:
+        logs_by_app[l.application_id].append({
+            "id": l.id,
+            "to_email": l.to_email,
+            "to_name": l.to_name,
+            "subject": l.subject,
+            "body": l.body,
+            "template_type": l.template_type,
+            "status": l.status,
+            "sent_at": str(l.sent_at),
+        })
+
+    return [_serialize(a, logs_by_app.get(a.id, [])) for a in apps]
 
 @router.post("")
 def create_app(req: AppCreate, db: Session = Depends(get_db),

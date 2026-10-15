@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { RotateCcw, Search, Sparkles, Link2, Radar, ShieldCheck, Globe, Cpu } from 'lucide-react'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { DEFAULT_POST_FILTERS } from '../constants/searchConstants.js'
 import {
@@ -58,8 +58,8 @@ export default function LinkedInPostHunter({
   // Tracker & Action Sync State
   const [appliedPostIds, setAppliedPostIds] = useState(new Set())
   const [savedPostIds, setSavedPostIds] = useState(new Set())
-  const [trackerAppliedKeys, setTrackerAppliedKeys] = useState(new Set())
-  const [trackerSavedKeys, setTrackerSavedKeys] = useState(new Set())
+  const [trackerAppliedKeys, setTrackerAppliedKeys] = useState(() => buildTrackerLookupSets(getCached('/tracker', [])).applied)
+  const [trackerSavedKeys, setTrackerSavedKeys] = useState(() => buildTrackerLookupSets(getCached('/tracker', [])).saved)
   const [applyingPostId, setApplyingPostId] = useState(null)
 
   // Active Modals

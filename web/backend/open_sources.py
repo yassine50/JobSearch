@@ -42,13 +42,19 @@ logger = logging.getLogger("jobsearcher.open_sources")
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 HEADERS = {"User-Agent": UA, "Accept": "application/json, text/xml, */*"}
-TIMEOUT = 12
+TIMEOUT = 6.5
 CACHE_TTL_S = 30 * 60
 
 REMOTE_BOARDS = ["remotive", "remoteok", "jobicy", "himalayas", "weworkremotely", "workingnomads", "arbeitnow"]
 OPEN_SITE_IDS = {"remote_boards", "ats", "hackernews", "official_apis"}
 
-# ── tiny thread-safe TTL cache (feeds are shared across queries/users) ──────────
+# ── Shared connection-pooled HTTP session (reuses TLS handshakes across calls) ──
+_OPEN_SESSION = requests.Session()
+_open_adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=1)
+_OPEN_SESSION.mount("https://", _open_adapter)
+_OPEN_SESSION.mount("http://", _open_adapter)
+
+# ── Thread-safe TTL cache (sized at 120 so 28 ATS boards + 7 remote feeds never thrash) ──
 _cache: Dict[str, tuple] = {}
 _cache_lock = threading.Lock()
 
@@ -60,15 +66,15 @@ def _get(url: str, as_json: bool = True, params: Optional[dict] = None, ttl: int
         hit = _cache.get(key)
         if hit and now - hit[0] < ttl:
             return hit[1]
-    r = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
+    r = _OPEN_SESSION.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
     if r.status_code == 404:
         data = None
     else:
         r.raise_for_status()
         data = r.json() if as_json else r.text
     with _cache_lock:
-        if len(_cache) >= 20:
-            for k in sorted(_cache, key=lambda k: _cache[k][0])[:8]:
+        if len(_cache) >= 120:
+            for k in sorted(_cache, key=lambda k: _cache[k][0])[:30]:
                 _cache.pop(k, None)
         _cache[key] = (now, data)
     return data
@@ -226,16 +232,13 @@ def _workingnomads(query: str) -> List[dict]:
 
 def _arbeitnow(query: str) -> List[dict]:
     out = []
-    for page in (1, 2):
-        data = _get("https://www.arbeitnow.com/api/job-board-api", params={"page": page}) or {}
-        for j in data.get("data", []):
-            remote = bool(j.get("remote"))
-            loc = ", ".join(x for x in [j.get("location") or "", "Remote" if remote else ""] if x)
-            out.append(_row("arbeitnow", j.get("title"), j.get("company_name"), loc, j.get("url"),
-                            html_to_text(j.get("description", "")), _iso_date(j.get("created_at")),
-                            is_remote=remote))
-        if len(data.get("data", [])) < 100:
-            break
+    data = _get("https://www.arbeitnow.com/api/job-board-api", params={"page": 1}) or {}
+    for j in data.get("data", []):
+        remote = bool(j.get("remote"))
+        loc = ", ".join(x for x in [j.get("location") or "", "Remote" if remote else ""] if x)
+        out.append(_row("arbeitnow", j.get("title"), j.get("company_name"), loc, j.get("url"),
+                        html_to_text(j.get("description", "")), _iso_date(j.get("created_at")),
+                        is_remote=remote))
     return out
 
 
@@ -287,7 +290,8 @@ _EXTRA_ATS = [  # broad tech employers on top of the career-ops AI list
 
 def load_ats_companies() -> List[dict]:
     try:
-        companies = json.load(open(_ATS_FILE, encoding="utf-8"))
+        with open(_ATS_FILE, encoding="utf-8") as f:
+            companies = json.load(f)
     except Exception:
         companies = []
     seen = {(c["vendor"], c["slug"].lower()) for c in companies}
@@ -298,14 +302,19 @@ def load_ats_companies() -> List[dict]:
 
 
 def _greenhouse_board(slug: str, company: str = "") -> List[dict]:
-    data = _get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs", params={"content": "true"}) or {}
+    # Fetch lightweight index without content=true (~20KB vs 10MB per board)
+    data = _get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs") or {}
     return [_greenhouse_row(j, slug, company) for j in data.get("jobs", [])]
 
 
 def _greenhouse_row(j: dict, slug: str, company: str = "") -> dict:
-    return _row("greenhouse", j.get("title"), j.get("company_name") or company or _pretty_slug(slug),
-                (j.get("location") or {}).get("name", ""), j.get("absolute_url"),
-                html_to_text(j.get("content", "")), _iso_date(j.get("first_published") or j.get("updated_at")))
+    row = _row("greenhouse", j.get("title"), j.get("company_name") or company or _pretty_slug(slug),
+               (j.get("location") or {}).get("name", ""), j.get("absolute_url"),
+               html_to_text(j.get("content", "")) if j.get("content") else "",
+               _iso_date(j.get("first_published") or j.get("updated_at")))
+    row["_gh_slug"] = slug
+    row["_gh_id"] = j.get("id")
+    return row
 
 
 def _lever_board(slug: str, company: str = "") -> List[dict]:
@@ -316,10 +325,8 @@ def _lever_board(slug: str, company: str = "") -> List[dict]:
 def _lever_row(j: dict, slug: str, company: str = "") -> dict:
     sr = j.get("salaryRange") or {}
     desc = j.get("descriptionPlain") or html_to_text(j.get("description", ""))
-    for block in j.get("lists") or []:
-        desc += f"\n\n{block.get('text', '')}\n{html_to_text(block.get('content', ''))}"
     return _row("lever", j.get("text"), company or _pretty_slug(slug),
-                (j.get("categories") or {}).get("location", ""), j.get("hostedUrl"), desc,
+                (j.get("categories") or {}).get("location", ""), j.get("hostedUrl"), desc[:3500],
                 _iso_date(j.get("createdAt")), apply_url=j.get("applyUrl"),
                 min_amount=sr.get("min"), max_amount=sr.get("max"),
                 is_remote=(j.get("workplaceType") == "remote"))
@@ -336,7 +343,7 @@ def _ashby_row(j: dict, slug: str, company: str = "") -> dict:
     if j.get("isRemote") and "remote" not in loc.lower():
         loc = f"{loc}, Remote".strip(", ")
     row = _row("ashby", j.get("title"), company or _pretty_slug(slug), loc, j.get("jobUrl"),
-               j.get("descriptionPlain") or html_to_text(j.get("descriptionHtml", "")),
+               (j.get("descriptionPlain") or html_to_text(j.get("descriptionHtml", "")))[:3500],
                _iso_date(j.get("publishedAt")), apply_url=j.get("applyUrl"), is_remote=bool(j.get("isRemote")))
     comp = (j.get("compensation") or {}).get("compensationTierSummary")
     if comp:
@@ -396,24 +403,29 @@ def _serper_ats_discovery(query: str, location: str, api_key: str, hours_old: Op
         tbs = "qdr:m"  # career-ops rule: postings older than ~60 days are mostly ghosts
 
     def one_host(host: str) -> List[str]:
-        # Serper's free tier caps num at 10 → one query per ATS host, run in parallel.
         payload = {"q": f'site:{host} "{query}"{loc}', "num": 10, "tbs": tbs}
-        r = requests.post("https://google.serper.dev/search", json=payload,
-                          headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=TIMEOUT)
+        r = _OPEN_SESSION.post("https://google.serper.dev/search", json=payload,
+                               headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=5.0)
         if r.status_code != 200:
-            logger.info(f"[ATS] Serper {host}: HTTP {r.status_code} {r.text[:120]}")
             return []
         return [i.get("link", "") for i in r.json().get("organic", [])]
 
     urls: List[str] = []
-    with ThreadPoolExecutor(max_workers=len(SERPER_ATS_HOSTS)) as ex:
-        for links in ex.map(one_host, SERPER_ATS_HOSTS):
-            for link in links:
+    ex_hosts = ThreadPoolExecutor(max_workers=len(SERPER_ATS_HOSTS))
+    futs_h = [ex_hosts.submit(one_host, h) for h in SERPER_ATS_HOSTS]
+    wait(futs_h, timeout=5.5)
+    for fh in futs_h:
+        if fh.done() and not fh.exception():
+            for link in fh.result():
                 if parse_ats_url(link) and link not in urls:
                     urls.append(link)
-    ex = ThreadPoolExecutor(max_workers=10)
-    futs = [ex.submit(fetch_ats_posting, u) for u in urls[:40]]
-    wait(futs, timeout=14)
+    ex_hosts.shutdown(wait=False, cancel_futures=True)
+
+    if not urls:
+        return []
+    ex = ThreadPoolExecutor(max_workers=12)
+    futs = [ex.submit(fetch_ats_posting, u) for u in urls[:25]]
+    wait(futs, timeout=6.0)
     rows = [f.result() for f in futs if f.done() and not f.exception() and f.result()]
     ex.shutdown(wait=False, cancel_futures=True)
     return rows
@@ -431,13 +443,32 @@ def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
             return []
 
     out: List[dict] = []
-    ex = ThreadPoolExecutor(max_workers=6)
+    ex = ThreadPoolExecutor(max_workers=14)
     futs = [ex.submit(one, c) for c in companies]
-    wait(futs, timeout=14)
+    wait(futs, timeout=6.5)
     for f in futs:
         if f.done() and not f.exception():
             out.extend(f.result())
     ex.shutdown(wait=False, cancel_futures=True)
+
+    # Enrich descriptions for matched Greenhouse rows (up to 12) in parallel
+    gh_missing = [r for r in out if not r.get("description") and r.get("_gh_slug") and r.get("_gh_id")][:12]
+    if gh_missing:
+        def _fill_gh(r):
+            try:
+                j = _get(f"https://boards-api.greenhouse.io/v1/boards/{r['_gh_slug']}/jobs/{r['_gh_id']}")
+                if j and j.get("content"):
+                    r["description"] = html_to_text(j["content"])
+            except Exception:
+                pass
+        ex_gh = ThreadPoolExecutor(max_workers=min(len(gh_missing), 8))
+        gh_futs = [ex_gh.submit(_fill_gh, r) for r in gh_missing]
+        wait(gh_futs, timeout=3.0)
+        ex_gh.shutdown(wait=False, cancel_futures=True)
+
+    for r in out:
+        r.pop("_gh_slug", None)
+        r.pop("_gh_id", None)
     return out
 
 
@@ -506,8 +537,6 @@ def make_strict_matcher(queries: List[str]) -> Callable[[dict], bool]:
                     d_counts = {}
                     for t in tokenize((row.get("description") or "")[:6000]):
                         d_counts[t] = d_counts.get(t, 0) + 1
-                # Description-only matches need the literal keyword repeated: agencies list dozens
-                # of stacks once ("React, Flutter, .NET…"); a real Flutter role mentions it repeatedly.
                 if all(d_counts.get(t, 0) >= 3 for t in distinct_raw):
                     return True
         return False
@@ -532,7 +561,7 @@ def fetch_open_source(site: str, queries: List[str], *,
     if site == "remote_boards":
         ex = ThreadPoolExecutor(max_workers=len(REMOTE_FETCHERS))
         futs = {ex.submit(fn, query): name for name, fn in REMOTE_FETCHERS.items()}
-        wait(futs, timeout=15)
+        wait(futs, timeout=6.5)
         for f, name in futs.items():
             if f.done() and not f.exception():
                 rows.extend(f.result())
@@ -546,7 +575,7 @@ def fetch_open_source(site: str, queries: List[str], *,
         futs = [ex.submit(_ats_direct, query, relevant)]
         if serper_key:
             futs.append(ex.submit(_serper_ats_discovery, query, location or country, serper_key, hours_old))
-        wait(futs, timeout=22)
+        wait(futs, timeout=8.0)
         for f in futs:
             if f.done() and not f.exception():
                 rows.extend(f.result())

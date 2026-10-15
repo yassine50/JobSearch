@@ -1,6 +1,6 @@
 import os
 import logging
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from .utils import ensure_project_root_on_path, purge_blacklisted_applications
@@ -11,7 +11,23 @@ logger = logging.getLogger("jobsearcher.database")
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "jobsearcher.db"))
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 15},
+    pool_pre_ping=True,
+)
+
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA cache_size=-32000")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -32,6 +48,13 @@ def init_db():
         "ALTER TABLE cv_uploads ADD COLUMN persona_name VARCHAR DEFAULT 'Primary Resume'",
         "ALTER TABLE cv_uploads ADD COLUMN is_active BOOLEAN DEFAULT 1",
         "ALTER TABLE applications ADD COLUMN interview_prep_json TEXT DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS idx_apps_user_applied ON applications(user_id, applied_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_apps_user_status ON applications(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_elogs_user_sent ON email_logs(user_id, sent_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_elogs_app_sent ON email_logs(application_id, sent_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_cv_user_active ON cv_uploads(user_id, is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_jobs(user_id, saved_at DESC)",
+        "UPDATE applications SET tailored_cv_filename = 'Tailored_CV.pdf' WHERE tailored_cv_data IS NOT NULL AND (tailored_cv_filename IS NULL OR tailored_cv_filename = '')",
     )
     for ddl in migrations:
         try:

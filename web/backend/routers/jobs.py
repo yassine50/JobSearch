@@ -210,6 +210,12 @@ def _extract_row_emails(row: Any, desc: str = "") -> List[dict]:
 
     return initial_emails
 
+import requests as _req_lib
+_JOBS_SESSION = _req_lib.Session()
+_jobs_adapter = _req_lib.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
+_JOBS_SESSION.mount("https://", _jobs_adapter)
+_JOBS_SESSION.mount("http://", _jobs_adapter)
+
 def _fetch_linkedin_description(url_or_id: str) -> str:
     """Fetches full job description via LinkedIn public guest API."""
     job_id = None
@@ -235,10 +241,9 @@ def _fetch_linkedin_description(url_or_id: str) -> str:
         "Accept-Language": "en-US,en;q=0.9",
     }
     try:
-        import requests as req_lib
         from bs4 import BeautifulSoup
         g_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-        resp = req_lib.get(g_url, headers=headers, timeout=6)
+        resp = _JOBS_SESSION.get(g_url, headers=headers, timeout=3.5)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             div = soup.find("div", class_=lambda x: x and "show-more-less-html__markup" in x)
@@ -246,6 +251,8 @@ def _fetch_linkedin_description(url_or_id: str) -> str:
                 return div.get_text(separator="\n").strip()
     except Exception:
         pass
+    return ""
+
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "scraper_config.json")
 
 def _get_scraper_config() -> dict:
@@ -301,8 +308,8 @@ def _search_cache_get(key: str):
 def _search_cache_put(key: str, df, per_site: dict):
     import time as _t
     with _search_cache_lock:
-        if len(_search_cache) > 15:  # keep memory bounded for 512MB Render container
-            for k in sorted(_search_cache, key=lambda k: _search_cache[k][0])[:6]:
+        if len(_search_cache) > 30:
+            for k in sorted(_search_cache, key=lambda k: _search_cache[k][0])[:10]:
                 _search_cache.pop(k, None)
         _search_cache[key] = (_t.time(), df.copy(), dict(per_site))
 
@@ -329,7 +336,6 @@ def _fetch_serper_google_jobs(query: str, location: str = "", country: str = "us
     if not api_key:
         return []
     try:
-        import requests as req_lib
         from urllib.parse import urlparse
         url = "https://google.serper.dev/search"
         loc_str = location if location and location.lower() != "worldwide" else ""
@@ -341,7 +347,7 @@ def _fetch_serper_google_jobs(query: str, location: str = "", country: str = "us
         }
         gl = gl_map.get(str(country).lower().strip(), "us")
         payload = {"q": q_str, "gl": gl, "hl": "en", "num": max(10, min(results_wanted, 30))}
-        resp = req_lib.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=12)
+        resp = _JOBS_SESSION.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=6.0)
         if resp.status_code == 200:
             data = resp.json()
             jobs = []
@@ -403,9 +409,8 @@ def _fetch_jobbank_details(job_id_or_url: str) -> dict:
 
     # 1. Fetch static detail page
     try:
-        import requests as req_lib
         from bs4 import BeautifulSoup
-        r_get = req_lib.get(det_url, headers=headers, timeout=12)
+        r_get = _JOBS_SESSION.get(det_url, headers=headers, timeout=5.5)
         if r_get.status_code == 200:
             soup = BeautifulSoup(r_get.text, "html.parser")
             t_elem = soup.find("span", property="title") or soup.find("h1")
@@ -465,9 +470,8 @@ def _fetch_jobbank_details(job_id_or_url: str) -> dict:
     hta_text = ""
 
     try:
-        import requests as req_lib
         from bs4 import BeautifulSoup
-        r_post = req_lib.post(det_url, data=payload, headers=post_headers, timeout=12)
+        r_post = _JOBS_SESSION.post(det_url, data=payload, headers=post_headers, timeout=5.5)
         if r_post.status_code == 200:
             cdata = re.search(r"<!\[CDATA\[(.*?)\]\]>", r_post.text, re.DOTALL)
             content = cdata.group(1) if cdata else r_post.text
@@ -748,10 +752,9 @@ def search_jobs(req: SearchRequest,
 
     hours_filter = req.hours_old if (req.hours_old and req.hours_old > 0) else None
 
-    # High-yield scrape buffer: request generous count to guarantee high results even after 24h & applied filters
-    # For 24h filter, LinkedIn often returns old jobs → use higher multiplier + prefer other boards
-    fetch_multiplier = 5 if hours_filter and hours_filter <= 24 else (3 if hours_filter else 2)
-    per_country = max((req.results_wanted * fetch_multiplier) // max(len(countries_to_search), 1), min(max(req.results_wanted * 2, 15), 45))
+    # High-yield scrape buffer without excessive multi-page stalls
+    fetch_multiplier = 3 if hours_filter and hours_filter <= 24 else 2
+    per_country = max((req.results_wanted * fetch_multiplier) // max(len(countries_to_search), 1), min(max(req.results_wanted, 15), 35))
 
     # For strict 24h searches: remove LinkedIn (it ignores f_TPR for public unauthenticated requests)
     # Indeed and Job Bank actually honor the hours_old parameter reliably
@@ -776,9 +779,9 @@ def search_jobs(req: SearchRequest,
     from concurrent.futures import wait as _wait, FIRST_COMPLETED
 
     t_start = _time.time()
-    SCRAPE_BUDGET_S = 30      # hard wall-clock budget for the whole scraping fan-out
+    SCRAPE_BUDGET_S = 14      # tight wall-clock budget for scraping fan-out
     # How many phrasings of the role each board is queried with
-    SITE_VARIANT_LIMIT = {"indeed": 3, "linkedin": 2, "job_bank": 2, "glassdoor": 2, "google": 2}
+    SITE_VARIANT_LIMIT = {"indeed": 2, "linkedin": 1, "job_bank": 1, "glassdoor": 1, "google": 1}
     stats = {"tasks": 0, "tasks_ok": 0, "tasks_failed": 0, "tasks_timed_out": 0,
              "raw": 0, "after_dedup": 0, "after_relevance": 0, "spam_removed": 0,
              "per_site": {}, "queries": {}, "timings": {}}
@@ -814,7 +817,7 @@ def search_jobs(req: SearchRequest,
                 # Feeds/ATS are fetched once and filtered locally with every variant.
                 tasks.append((country_name, norm_key, site, variants, per_country, indeed_c, loc))
                 continue
-            for vi, q in enumerate(variants[: SITE_VARIANT_LIMIT.get(site, 2)]):
+            for vi, q in enumerate(variants[: SITE_VARIANT_LIMIT.get(site, 1)]):
                 want = per_country if vi == 0 else max(10, per_country // 2)
                 tasks.append((country_name, norm_key, site, q, want, indeed_c, loc))
     stats["tasks"] = len(tasks)
@@ -894,7 +897,7 @@ def search_jobs(req: SearchRequest,
             stats["tasks_ok"] = len(tasks)
         else:
             _check_and_count_search_quota(current_user)
-            executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 6))
+            executor = ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 12))
             fut_map = {executor.submit(scrape_task, t): t for t in tasks}
             pending = set(fut_map)
             deadline = t_start + SCRAPE_BUDGET_S
@@ -922,7 +925,7 @@ def search_jobs(req: SearchRequest,
                 combined = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
                 _search_cache_put(cache_key, combined, stats["per_site"])
                 all_dfs = [combined]
-        stats["timings"]["scrape_s"] = round(_time.time() - t_start, 1)
+        stats["timings"]["scrape_s"] = round(_time.time() - t_start, 2)
 
         if not all_dfs:
             return {
@@ -941,7 +944,7 @@ def search_jobs(req: SearchRequest,
 
         raw_jobs = []
 
-        for _, row in df.iterrows():
+        for row in df.to_dict("records"):
             title   = str(row.get("title", "")).strip()
             company = str(row.get("company", "")).strip()
             if not title:
@@ -1036,18 +1039,18 @@ def search_jobs(req: SearchRequest,
         raw_jobs = strong
         stats["after_relevance"] = len(raw_jobs)
 
-        # Cap work for the (expensive) enrichment stages: best candidates first.
+        # Cap work for the enrichment stages: best candidates first.
         for j in raw_jobs:
             j["quality"] = quality_score(j)
         raw_jobs.sort(key=lambda j: -j["quality"])
-        MAX_RESULTS = min(max(req.results_wanted * 3, 60), 90)
+        MAX_RESULTS = min(max(req.results_wanted * 2, 45), 75)
         raw_jobs = raw_jobs[:MAX_RESULTS]
-        import gc
         del df, all_dfs
-        gc.collect()
 
         def _bounded_map(fn, items, workers, budget_s):
             """Parallel map that never blocks longer than budget_s; unfinished items are kept as-is."""
+            if not items:
+                return []
             ex = ThreadPoolExecutor(max_workers=workers)
             futs = [ex.submit(fn, it) for it in items]
             _wait(futs, timeout=budget_s)
@@ -1060,32 +1063,30 @@ def search_jobs(req: SearchRequest,
             ex.shutdown(wait=False, cancel_futures=True)
             return out
 
-        # Fast parallel enrichment of missing job descriptions (e.g. LinkedIn guest API)
+        # Fast parallel enrichment of missing job descriptions on top 20 candidates (network-bound),
+        # while remaining candidates get instant local description email extraction.
         t_enrich = _time.time()
         try:
-            raw_jobs = _bounded_map(_enrich_job_description, raw_jobs, 6, 18)
+            top_slice = _bounded_map(_enrich_job_description, raw_jobs[:20], 12, 3.5)
+            raw_jobs = top_slice + raw_jobs[20:]
         except Exception as desc_err:
             logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
-        stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 1)
+        stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 2)
 
         # Descriptions are now richer → refine relevance for jobs that were description-only matches.
         for j in raw_jobs:
             if j.get("relevance", 0) < 40 and j.get("description"):
                 j["relevance"] = max(j["relevance"], best_relevance(all_queries, j["title"], j["description"]))
 
-        # Multi-Layer Recruiter Email Discovery Engine (time-boxed so search stays fast)
+        # Multi-Layer Recruiter Email Discovery Engine (instant local + cached pass on all jobs,
+        # plus time-boxed deep hunt on top 6 jobs missing emails)
         t_hunt = _time.time()
         from recruiter_hunter import enrich_job_emails
 
-        def _hunt(j: dict) -> dict:
+        def _merge_emails(j: dict, found: list) -> dict:
             direct = list(j.get("emails") or [])
-            try:
-                found = enrich_job_emails(dict(j)) or []
-            except Exception as hunt_err:
-                logger.warning(f"[RecruiterHunter] {j.get('company')}: {hunt_err}")
-                found = []
             merged, seen_em = [], set()
-            for e in direct + found:
+            for e in direct + (found or []):
                 em = re.sub(r"[\[\]'\"\s]", "", (e.get("email") if isinstance(e, dict) else str(e))).lower()
                 if em and "@" in em and em not in seen_em:
                     seen_em.add(em)
@@ -1095,18 +1096,34 @@ def search_jobs(req: SearchRequest,
                 j["company_domain"] = merged[0]["email"].split("@")[-1]
             return j
 
-        jobs = _bounded_map(_hunt, raw_jobs, 8, 10)
-        stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 1)
-        gc.collect()
+        for j in raw_jobs:
+            try:
+                _merge_emails(j, enrich_job_emails(j, fast_mode=True))
+            except Exception:
+                pass
 
-        # Automatic High-Accuracy AI Matching if user has a CV
+        # Deep hunt only on up to 6 top-ranked jobs that don't yet have an email
+        deep_indices = [idx for idx, j in enumerate(raw_jobs[:12]) if not j.get("emails")][:6]
+        if deep_indices:
+            def _deep_hunt(idx: int):
+                j = raw_jobs[idx]
+                try:
+                    _merge_emails(j, enrich_job_emails(j, fast_mode=False))
+                except Exception:
+                    pass
+                return j
+            _bounded_map(_deep_hunt, deep_indices, 6, 2.5)
+
+        jobs = raw_jobs
+        stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 2)
+
+        # Automatic High-Accuracy AI Matching if user has a CV (uses cached CV profile & fast TF-IDF)
         cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
         if cv_rec and cv_rec.text_content and jobs:
             try:
                 from cv_matcher import compute_match
                 cv_text = cv_rec.text_content
-
-                def score_one_job(j):
+                for j in jobs:
                     try:
                         s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
                         j["score"] = s
@@ -1116,10 +1133,6 @@ def search_jobs(req: SearchRequest,
                         j["tips"] = bd.get("tips", [])
                     except Exception as match_e:
                         logger.debug(f"Match error on '{j.get('title')}': {match_e}")
-                    return j
-
-                with ThreadPoolExecutor(max_workers=8) as matcher_executor:
-                    jobs = list(matcher_executor.map(score_one_job, jobs))
             except Exception as auto_err:
                 logger.warning(f"[Matching] Auto-match exception: {auto_err}")
 

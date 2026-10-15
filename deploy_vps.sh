@@ -67,20 +67,31 @@ sudo systemctl restart cvtomatch
 # 6. Configure Nginx Reverse Proxy on Port 80 -> 127.0.0.1:8000
 echo "--> Configuring Nginx reverse proxy on port 80..."
 sudo tee /etc/nginx/sites-available/cvtomatch > /dev/null <<'EOF'
+upstream cvtomatch_backend {
+    server 127.0.0.1:8000;
+    keepalive 32;
+}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
 
     client_max_body_size 25M;
+    gzip on;
+    gzip_min_length 800;
+    gzip_comp_level 5;
+    gzip_types application/json text/plain text/css application/javascript;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://cvtomatch_backend;
         proxy_http_version 1.1;
+        proxy_set_header Connection "";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
         proxy_read_timeout 180s;
         proxy_connect_timeout 60s;
         proxy_send_timeout 180s;

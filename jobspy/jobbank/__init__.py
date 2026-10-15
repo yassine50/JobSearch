@@ -38,6 +38,9 @@ class JobBank(Scraper):
     ):
         super().__init__(Site.JOB_BANK, proxies=proxies, ca_cert=ca_cert, user_agent=user_agent)
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=1)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         ua = user_agent or (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -79,7 +82,7 @@ class JobBank(Scraper):
                 params["fage"] = "30"
 
         try:
-            r = self.session.get(self.search_url, params=params, timeout=15)
+            r = self.session.get(self.search_url, params=params, timeout=7)
             if r.status_code != 200:
                 log.error(f"Search request failed with status {r.status_code}")
                 return JobResponse(jobs=[])
@@ -91,58 +94,32 @@ class JobBank(Scraper):
         articles = soup.find_all("article")
         log.info(f"Initial search returned {len(articles)} job postings")
 
-        # Handle pagination using Job Bank's AJAX loader if more results are wanted
-        target_results = scraper_input.results_wanted or 25
-        page_cycles = 0
-        max_page_cycles = min(10, max(1, (target_results - len(articles) + 24) // 25))
-
-        while len(articles) < target_results and page_cycles < max_page_cycles:
-            page_cycles += 1
-            try:
-                loader_headers = {"X-Requested-With": "XMLHttpRequest"}
-                r_loader = self.session.get(self.loader_url, headers=loader_headers, timeout=12)
-                if r_loader.status_code == 200 and r_loader.text:
-                    sub_soup = BeautifulSoup(r_loader.text, "html.parser")
-                    new_articles = sub_soup.find_all("article")
-                    if not new_articles:
-                        break
-                    # Avoid duplicates
-                    existing_ids = {a.get("id") for a in articles if a.get("id")}
-                    added = 0
-                    for na in new_articles:
-                        na_id = na.get("id")
-                        if not na_id or na_id not in existing_ids:
-                            articles.append(na)
-                            existing_ids.add(na_id)
-                            added += 1
-                    if added == 0:
-                        break
-                else:
-                    break
-            except Exception as e:
-                log.warning(f"Loader page {page_cycles} failed: {e}")
-                break
-
-        # Limit to results_wanted
+        # Limit to max 18 per query to keep detail + AJAX enrichment under 2.5s
+        target_results = min(scraper_input.results_wanted or 20, 18)
         articles = articles[:target_results]
         log.info(f"Harvested {len(articles)} job postings to enrich with full details & contact emails")
 
-        # Enrich job details concurrently
+        # Enrich job details concurrently using pooled session
         jobs: List[JobPost] = []
-        max_workers = min(6, len(articles)) if articles else 1
+        max_workers = min(12, len(articles)) if articles else 1
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_article = {
-                executor.submit(self._parse_and_enrich_job, a, is_intl_only): a
-                for a in articles
-            }
-            for future in as_completed(future_to_article):
+        ex = ThreadPoolExecutor(max_workers=max_workers)
+        future_to_article = {
+            ex.submit(self._parse_and_enrich_job, a, is_intl_only): a
+            for a in articles
+        }
+        try:
+            for future in as_completed(future_to_article, timeout=7.5):
                 try:
                     job_post = future.result()
                     if job_post:
                         jobs.append(job_post)
                 except Exception as e:
                     log.warning(f"Error enriching job post: {e}")
+        except Exception:
+            pass
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
 
         log.info(f"Successfully scraped and enriched {len(jobs)} jobs from Job Bank Canada")
         return JobResponse(jobs=jobs)
@@ -221,7 +198,7 @@ class JobBank(Scraper):
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 }
                 try:
-                    r_det = requests.get(det_url, headers=thread_headers, timeout=12)
+                    r_det = self.session.get(det_url, headers=thread_headers, timeout=4.5)
                     if r_det.status_code == 200:
                         det_soup = BeautifulSoup(r_det.text, "html.parser")
 
@@ -280,7 +257,7 @@ class JobBank(Scraper):
                             "Accept": "application/xml, text/xml, */*; q=0.01"
                         }
                         try:
-                            r_hta = requests.post(det_url, data=payload, headers=post_headers, timeout=12)
+                            r_hta = self.session.post(det_url, data=payload, headers=post_headers, timeout=4.5)
                             if r_hta.status_code == 200:
                                 hta_cdata = re.search(r"<!\[CDATA\[(.*?)\]\]>", r_hta.text, re.DOTALL)
                                 hta_raw = hta_cdata.group(1) if hta_cdata else r_hta.text

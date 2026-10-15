@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import LoadingSpinner from '../components/LoadingSpinner.jsx'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { parseApiError } from '../utils/jobUtils.js'
 import { FileText, Copy, Mail, Check, Download, Sparkles } from 'lucide-react'
@@ -22,7 +22,7 @@ export default function CoverLetter() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
-  const [cvUploaded, setCvUploaded] = useState(false)
+  const [cvUploaded, setCvUploaded] = useState(() => Boolean(getCached('/cv/info', null)?.uploaded))
   const [emailModal, setEmailModal] = useState(false)
   const [emailForm, setEmailForm] = useState({ to_email: '', to_name: '' })
   const [sending, setSending] = useState(false)

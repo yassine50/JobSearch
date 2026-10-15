@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/AuthContext.jsx'
+import { prefetchRouteData, clearAllCache } from '../api/client.js'
 import BrandLogo from './BrandLogo.jsx'
 import {
   LayoutDashboard, Users, KanbanSquare,
@@ -12,7 +13,7 @@ function NavContent({ onClose }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const handleLogout = () => { logout(); navigate('/') }
+  const handleLogout = () => { clearAllCache(); logout(); navigate('/') }
 
   const links = [
     { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard',         sub: 'Overview & KPIs' },
@@ -77,20 +78,15 @@ function NavContent({ onClose }) {
 
       {/* Nav Links with Shared Layout Sliding Pill */}
       <nav className="flex flex-col gap-1.5 flex-1 relative z-10">
-        {links.map(({ to, icon: Icon, label, badge }, idx) => {
+        {links.map(({ to, icon: Icon, label, badge }) => {
           const isActive = location.pathname === to || (to !== '/dashboard' && location.pathname.startsWith(to))
           return (
-            <motion.div
-              key={to}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: idx * 0.04, duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-              whileHover={{ x: isActive ? 0 : 3 }}
-              whileTap={{ scale: 0.985 }}
-            >
+            <div key={to}>
               <NavLink
                 to={to}
                 onClick={onClose}
+                onMouseEnter={() => prefetchRouteData(to)}
+                onFocus={() => prefetchRouteData(to)}
                 className="relative group block rounded-xl focus:outline-none"
               >
                 {isActive && (
@@ -138,7 +134,7 @@ function NavContent({ onClose }) {
                   ) : null}
                 </div>
               </NavLink>
-            </motion.div>
+            </div>
           )
         })}
       </nav>

@@ -1,0 +1,19 @@
+{
+  "name": "CVtoMatch — AI Resume to Job Matcher & LinkedIn Recruiter Radar",
+  "short_name": "CVtoMatch",
+  "description": "Match your CV against any job description with a 6-factor ATS score, mine live LinkedIn hiring posts with verified recruiter emails, and automate job outreach.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050811",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity", "utilities"]
+}

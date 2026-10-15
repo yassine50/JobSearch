@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import EmailCalendarView from '../components/EmailCalendarView.jsx'
-import client from '../api/client.js'
+import client, { getCached } from '../api/client.js'
 import { Mail, CheckCircle, XCircle, Eye, AlertTriangle, Calendar, List, Sparkles, X } from 'lucide-react'
 
 const TEMPLATE_LABELS = {
@@ -17,7 +17,7 @@ const TEMPLATE_LABELS = {
 }
 
 export default function EmailHistory() {
-  const [logs, setLogs]         = useState([])
+  const [logs, setLogs]         = useState(() => getCached('/email/history', []))
   const [filter, setFilter]     = useState('all')
   const [viewing, setViewing]   = useState(null)
   const [viewMode, setViewMode] = useState('calendar') // 'calendar' | 'table'

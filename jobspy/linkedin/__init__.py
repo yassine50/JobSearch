@@ -46,8 +46,8 @@ log = create_logger("LinkedIn")
 
 class LinkedIn(Scraper):
     base_url = "https://www.linkedin.com"
-    delay = 3
-    band_delay = 4
+    delay = 0.25
+    band_delay = 0.25
     jobs_per_page = 25
 
     def __init__(
@@ -62,7 +62,7 @@ class LinkedIn(Scraper):
             ca_cert=ca_cert,
             is_tls=False,
             has_retry=True,
-            delay=5,
+            delay=1,
             clear_cookies=True,
         )
         self.session.headers.update(headers)
@@ -84,8 +84,9 @@ class LinkedIn(Scraper):
         seconds_old = (
             scraper_input.hours_old * 3600 if scraper_input.hours_old else None
         )
+        max_pages = max(1, min(3, math.ceil(scraper_input.results_wanted / 15)))
         continue_search = (
-            lambda: len(job_list) < scraper_input.results_wanted and start < 1000
+            lambda: len(job_list) < scraper_input.results_wanted and start < 1000 and request_count < max_pages
         )
         while continue_search():
             request_count += 1
@@ -119,7 +120,7 @@ class LinkedIn(Scraper):
                 response = self.session.get(
                     f"{self.base_url}/jobs-guest/jobs/api/seeMoreJobPostings/search?",
                     params=params,
-                    timeout=10,
+                    timeout=6,
                 )
                 if response.status_code not in range(200, 400):
                     if response.status_code == 429:

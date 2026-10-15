@@ -4,6 +4,7 @@ import threading
 import urllib.request
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -29,6 +30,7 @@ init_db()
 
 app = FastAPI(title="CVtoMatch API", version="2.0.0")
 
+app.add_middleware(GZipMiddleware, minimum_size=800)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -105,8 +107,20 @@ def _render_keep_alive_worker():
             pass
 
 
+def _warm_open_feeds_worker():
+    """Pre-warms remote job boards & HN Who is Hiring feed in the background so first search is fast."""
+    time.sleep(1.5)
+    try:
+        from .open_sources import fetch_open_source
+        fetch_open_source("remote_boards", ["software engineer"])
+        fetch_open_source("hackernews", ["software engineer"])
+    except Exception:
+        pass
+
+
 @app.on_event("startup")
 def start_keep_alive():
+    threading.Thread(target=_warm_open_feeds_worker, daemon=True).start()
     if os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"):
         t = threading.Thread(target=_render_keep_alive_worker, daemon=True)
         t.start()
