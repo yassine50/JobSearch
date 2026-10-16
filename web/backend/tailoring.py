@@ -18,23 +18,36 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 logger = logging.getLogger(__name__)
 
-MIN_JD_CHARS = 150
+MIN_JD_CHARS = 30
+
+
+def tailor_cv_detailed(cv, job_title: str, company: str, job_description: str):
+    """Return full tailoring dictionary including cv_profile, tips, matched_skills, and pdf_bytes."""
+    if not cv or not (cv.text_content or "").strip():
+        return None
+    jd = (job_description or job_title or "").strip()
+    try:
+        from cv_tailor import tailor_cv_full_match
+        return tailor_cv_full_match(
+            cv.text_content,
+            job_title or "",
+            company or "",
+            jd,
+            cv_pdf_bytes=getattr(cv, "file_data", None),
+        )
+    except Exception as e:
+        logger.warning("CV tailoring failed for %s @ %s: %s", job_title, company, e)
+        return None
 
 
 def honest_tailored_attachment(cv, job_title: str, company: str, job_description: str):
     """Return (pdf_bytes, filename, original_score, tailored_score) or (None, None, None, None)."""
     if not cv or not (cv.text_content or "").strip():
         return None, None, None, None
-    jd = (job_description or "").strip()
+    jd = (job_description or job_title or "").strip()
     if len(jd) < MIN_JD_CHARS:
-        return None, None, None, None
-    try:
-        from cv_tailor import tailor_cv_full_match
-        r = tailor_cv_full_match(cv.text_content, job_title or "", company or "", jd,
-                             cv_pdf_bytes=getattr(cv, "file_data", None))
-        if not r.get("use_tailored") or not r.get("pdf_bytes"):
-            return None, None, r.get("original_score"), None
-        return r["pdf_bytes"], r["filename"], r["original_score"], r["tailored_score"]
-    except Exception as e:  # never block an application because tailoring failed
-        logger.warning("Honest CV tailoring failed for %s @ %s: %s", job_title, company, e)
-        return None, None, None, None
+        jd = f"{job_title or 'Software Engineer'} at {company or 'Company'}. {jd}".strip()
+    r = tailor_cv_detailed(cv, job_title, company, jd)
+    if not r or not r.get("use_tailored") or not r.get("pdf_bytes"):
+        return None, None, (r.get("original_score") if r else None), None
+    return r["pdf_bytes"], r["filename"], r["original_score"], r["tailored_score"]

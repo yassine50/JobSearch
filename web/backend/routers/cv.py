@@ -460,27 +460,29 @@ class TailorCvRequest(BaseModel):
 def tailor_user_cv(req: TailorCvRequest,
                    db: Session = Depends(get_db),
                    current_user: models.User = Depends(get_current_user)):
-    """Preview tailoring: returns scores + bridged skills without generating the PDF."""
+    """Analyzes the CV type & structure first, then returns tailored preview, scores, and adjustments."""
     cv = _get_active_cv(db, current_user.id)
     if not cv or not cv.text_content:
         raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
     try:
-        from web.backend.tailoring import honest_tailored_attachment
-        pdf_bytes, filename, original_score, tailored_score = honest_tailored_attachment(
-            cv, req.job_title, req.company, req.job_description
-        )
-        from cv_matcher import compute_match
-        orig_score_val, orig_bd = compute_match(cv.text_content, req.job_description, req.job_title)
-        missing = orig_bd.get("missing_tech", [])
+        from web.backend.tailoring import tailor_cv_detailed
+        r = tailor_cv_detailed(cv, req.job_title, req.company, req.job_description)
+        if not r:
+            raise HTTPException(500, "Could not analyze and tailor CV.")
         return {
-            "original_score": original_score or orig_score_val,
-            "tailored_score": tailored_score or orig_score_val,
-            "bridged_skills": missing[:12],
-            "target_headline": req.job_title,
-            "tailored_summary": f"CV tailored for {req.job_title} at {req.company}",
-            "filename": filename,
-            "tailored_text": ""
+            "original_score": r.get("original_score", 0),
+            "tailored_score": r.get("tailored_score", 0),
+            "matched_skills": r.get("matched_skills", []),
+            "bridged_skills": r.get("bridged_skills", []),
+            "target_headline": r.get("target_headline", req.job_title),
+            "tailored_summary": r.get("tailored_summary", ""),
+            "cv_profile": r.get("cv_profile", {}),
+            "tips": r.get("tips", []),
+            "filename": r.get("filename", "Tailored_CV.pdf"),
+            "tailored_text": r.get("tailored_text", ""),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 
