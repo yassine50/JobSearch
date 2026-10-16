@@ -4,7 +4,7 @@ import client from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
 import {
   Sparkles, Download, X, Loader2,
-  TrendingUp, FileText, CheckCircle2, Layers, ShieldCheck
+  TrendingUp, FileText, CheckCircle2, Layers, ShieldCheck, Wrench, AlertTriangle
 } from 'lucide-react'
 
 export default function TailorCvModal({ isOpen, onClose, job }) {
@@ -62,6 +62,13 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
   const tailoredScore = tailorData?.tailored_score ?? Math.min(origScore + 18, 98)
   const lift = Math.max(0, tailoredScore - origScore)
   const profile = tailorData?.cv_profile || {}
+  const diagnosis = tailorData?.diagnosis || {}
+  const beforeQuality = diagnosis.before_scores?.overall ?? profile.quality_scores_before?.overall
+  const afterQuality = diagnosis.after_scores?.overall ?? profile.quality_scores_after?.overall
+  const issues = diagnosis.issues || profile.issues || []
+  const enhancements = diagnosis.enhancements || profile.enhancements || []
+  const totalRoles = (profile.roles_count || 0) + (profile.internships_count || 0)
+
   const skillsList = tailorData?.matched_skills?.length
     ? tailorData.matched_skills
     : (tailorData?.bridged_skills || [])
@@ -86,10 +93,10 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
             </div>
             <div>
               <h3 className="text-base font-bold text-white leading-tight">
-                AI Pre-Tailoring CV Analysis &amp; Executive Editor
+                Senior Pre-Tailoring CV Diagnosis, Enhancement &amp; ATS Tailoring
               </h3>
               <p className="text-xs text-slate-400">
-                Deep structure analysis &amp; professional optimization for {job.company || 'Target Company'}
+                Analyzed, polished &amp; tailored for {job.company || 'Target Company'}
               </p>
             </div>
           </div>
@@ -107,25 +114,34 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
             <div className="flex flex-col items-center justify-center py-14 gap-3 text-slate-400">
               <Loader2 size={28} className="animate-spin text-purple-400" />
               <span className="text-xs font-semibold text-white">
-                Step 1: Analyzing your CV archetype, seniority &amp; section structure...
+                Step 1: Diagnosing CV layout, career stage &amp; writing quality...
               </span>
               <span className="text-[11px] text-slate-500">
-                Step 2: Crafting executive summary, aligning skills &amp; building ATS PDF
+                Step 2: Enhancing bullets, fixing typos &amp; rendering single-column A4 ATS PDF
               </span>
             </div>
           ) : (
             <>
-              {/* Step 1: Pre-Tailoring CV Type & Structure Diagnostic */}
+              {/* Step 1: Pre-Tailoring CV Type & Quality Diagnosis */}
               {profile.cv_type && (
-                <div className="p-4 rounded-xl bg-slate-950/90 border border-blue-500/30 space-y-2.5">
+                <div className="p-4 rounded-xl bg-slate-950/90 border border-blue-500/30 space-y-3">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
                       <Layers size={13} />
-                      1. Pre-Tailoring CV Type &amp; Structure Analysis
+                      1. Pre-Tailoring CV Diagnosis
                     </span>
-                    <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
-                      {profile.seniority || 'Professional'} · {profile.years_experience ? `${profile.years_experience}+ Yrs Exp` : 'Verified Profile'}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {beforeQuality != null && afterQuality != null && (
+                        <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          CV Quality: {beforeQuality}/100 → {afterQuality}/100
+                        </span>
+                      )}
+                      <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                        {profile.seniority || 'Professional'}
+                        {profile.years_experience ? ` · ${profile.years_experience} Yrs` : ''}
+                        {profile.language ? ` · ${profile.language.toUpperCase()}` : ''}
+                      </span>
+                    </div>
                   </div>
 
                   <div>
@@ -135,28 +151,86 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
                     )}
                   </div>
 
-                  <div className="flex flex-wrap gap-2 pt-1">
+                  <div className="flex flex-wrap gap-2 pt-0.5">
                     <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-                      <b>{profile.roles_count || 0}</b> Work Roles Preserved
+                      <b>{totalRoles}</b> Experience Entr{totalRoles === 1 ? 'y' : 'ies'}
                     </span>
                     <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-                      <b>{profile.metrics_count || 0}</b> Quantified Impact Metrics
+                      <b>{profile.projects_count || 0}</b> Projects
                     </span>
                     <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-                      <b>{profile.projects_count || 0}</b> Portfolio Projects
+                      <b>{profile.skills_count || 0}</b> Verified Skills
                     </span>
                     <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-                      <b>{profile.skill_categories_count || 0}</b> Skill Domains
+                      <b>{profile.metrics_count || 0}</b> Quantified Metrics
                     </span>
+                    {profile.layout === 'two-column' && (
+                      <span className="text-[11px] px-2.5 py-1 rounded-lg bg-amber-950/50 border border-amber-700/40 text-amber-300">
+                        2-Column Sidebar → Single-Column ATS
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Pre-Tailoring Issues & Auto-Fixes */}
+                  {issues.length > 0 && (
+                    <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <AlertTriangle size={11} className="text-amber-400" />
+                        Diagnostic Findings ({issues.filter(i => i.auto_fixed).length} Auto-Fixed)
+                      </span>
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                        {issues.slice(0, 6).map((iss, idx) => (
+                          <div
+                            key={idx}
+                            className="text-[11px] p-2 rounded-lg bg-slate-900/90 border border-slate-800 flex items-start justify-between gap-2"
+                          >
+                            <div className="text-slate-300 leading-snug">
+                              <span className="font-semibold text-white">[{iss.area}]</span> {iss.message}{' '}
+                              <span className="text-slate-400">{iss.fix}</span>
+                            </div>
+                            {iss.auto_fixed ? (
+                              <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50">
+                                Auto-Fixed
+                              </span>
+                            ) : (
+                              <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-700/40">
+                                Tip
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 2: Mechanical Enhancements Applied Before Tailoring */}
+              {enhancements.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Wrench size={13} className="text-blue-400" />
+                    <span>2. Pre-Tailoring CV Enhancements Applied ({enhancements.length})</span>
+                  </label>
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 max-h-36 overflow-y-auto">
+                    {enhancements.slice(0, 8).map((ch, idx) => (
+                      <div key={idx} className="text-[11px] text-slate-300 leading-snug flex items-start gap-2">
+                        <span className="text-emerald-400 font-bold shrink-0">✓</span>
+                        <div className="min-w-0">
+                          <span className="text-slate-500 line-through mr-1.5">{ch.before}</span>
+                          {ch.after && <span className="text-emerald-300 font-medium">→ {ch.after}</span>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
-              {/* Step 2: Score Lift Card */}
+              {/* Step 3: ATS Match Optimization Card */}
               <div className="p-4 rounded-xl bg-gradient-to-r from-slate-850 to-purple-950/40 border border-purple-800/40 flex items-center justify-between">
                 <div>
                   <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    2. ATS Match Optimization
+                    3. Target Job ATS Match Score
                   </span>
                   <div className="flex items-baseline gap-2.5 mt-1">
                     <span className="text-2xl font-black text-purple-300">{tailoredScore}%</span>
@@ -173,12 +247,12 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
                 </div>
               </div>
 
-              {/* Step 3: Tailored Headline & Executive Summary Preview */}
+              {/* Step 4: Tailored Headline & Executive Summary Preview */}
               {tailorData?.tailored_summary && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                     <FileText size={13} className="text-purple-400" />
-                    <span>3. Tailored Headline &amp; Executive Summary</span>
+                    <span>4. Tailored Headline &amp; Executive Summary</span>
                   </label>
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
                     {tailorData.target_headline && (
@@ -193,12 +267,12 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
                 </div>
               )}
 
-              {/* Step 4: Highlighted & Bridged Skills */}
+              {/* Step 5: Highlighted & Bridged Skills */}
               {skillsList.length > 0 && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                     <CheckCircle2 size={13} className="text-emerald-400" />
-                    <span>4. Prioritized &amp; Bridged Technical Keywords ({skillsList.length})</span>
+                    <span>5. Prioritized &amp; Bridged Technical Keywords ({skillsList.length})</span>
                   </label>
                   <div className="flex flex-wrap gap-1.5 p-3 rounded-xl bg-slate-950 border border-slate-800">
                     {skillsList.map((s, i) => (
@@ -213,12 +287,12 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
                 </div>
               )}
 
-              {/* Step 5: Professional Editing Audit Log */}
+              {/* Step 6: Professional Editing Audit Log */}
               {tailorData?.tips && tailorData.tips.length > 0 && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                     <ShieldCheck size={13} className="text-amber-400" />
-                    <span>5. Professional Editing &amp; Quality Checks Applied</span>
+                    <span>6. Executive Pipeline Summary</span>
                   </label>
                   <ul className="space-y-1.5 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300">
                     {tailorData.tips.map((tip, i) => (

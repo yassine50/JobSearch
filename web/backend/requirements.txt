@@ -8,6 +8,7 @@ aiofiles
 tls_client
 ddgs
 PyPDF2
+pdfminer.six
 python-docx
 reportlab
 dnspython

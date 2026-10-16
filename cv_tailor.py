@@ -1197,7 +1197,22 @@ def _pick_category(skill: str, cats: List[str]) -> str:
     return cats[0] if cats else "Core Technologies"
 
 
-# ─── Honest Tailoring Mode ────────────────────────────────────────────────────
+# ─── Senior CV Engine Integration (Pre-Tailoring Diagnosis + Enhancement + Tailoring) ───
+
+def extract_cv_text(content: bytes, filename: str = "cv.pdf") -> str:
+    """
+    Layout-aware text extraction for PDF (single-column, two-column/sidebar, LaTeX),
+    DOCX, and plain text files using `cv_engine.extract.extract_document`.
+    """
+    try:
+        from cv_engine.extract import extract_document
+        doc = extract_document(content, filename=filename)
+        if doc.text and doc.text.strip():
+            return doc.text
+    except Exception:
+        pass
+    return ""
+
 
 def tailor_cv_honest(
     cv_text: str,
@@ -1207,100 +1222,24 @@ def tailor_cv_honest(
     cv_pdf_bytes: Optional[bytes] = None,
 ) -> Dict:
     """
-    Analyzes the CV type first, repairs PDF extraction artifacts, re-orders existing skills
-    and experience bullets by relevance, and preserves 100% of authentic wording and links.
+    Runs the Senior CV Engine in Honest Mode:
+    1. Layout-aware extraction & structure parsing (`cv_engine.extract` + `cv_engine.parse`)
+    2. Pre-tailoring diagnosis (`cv_engine.analyze.diagnose`)
+    3. Honest mechanical enhancement (`cv_engine.enhance`: fixes typos, repeated words, weak openers,
+       past-tense verbs for ended roles, tech casing, and moves filler bullets into stack tags)
+    4. Re-orders skills, experience bullets, and projects by relevance to the target job
+    5. Renders a clean single-column A4 executive PDF (`cv_engine.render.render_cv_pdf`)
     """
-    clean_role = (job_title or "").strip() or "Software Engineer"
-    clean_co = (company or "").strip() or "Company"
-    base_score, bd = compute_match(cv_text, job_description, clean_role)
-    matched = list(bd.get("matched_tech") or [])
-    required = set(bd.get("required_skills") or [])
-    jd_low = (job_description or "").lower()
-    matched.sort(key=lambda s: (s not in required, -jd_low.count(s.lower()), s))
-    keywords = matched + [w for w in re.findall(r"[a-z][a-z+#.]{3,}", clean_role.lower())]
-
-    parsed = parse_candidate_cv(cv_text)
-    cv_profile = analyze_cv_profile(cv_text, parsed, clean_role, job_description)
-
-    skills: Dict[str, List[str]] = {}
-    for cat, items in parsed["skills"].items():
-        skills[cat] = sorted(items, key=lambda it: -_relevance(it, matched))
-    skills = dict(
-        sorted(
-            skills.items(),
-            key=lambda kv: (
-                "also familiar" in kv[0].lower(),
-                -sum(_relevance(i, matched) for i in kv[1]),
-            ),
-        )
+    from cv_engine.tailor import tailor_cv_pipeline
+    return tailor_cv_pipeline(
+        cv_text=cv_text,
+        job_title=job_title,
+        company=company,
+        job_description=job_description,
+        cv_pdf_bytes=cv_pdf_bytes,
+        mode="honest",
     )
 
-    experience = []
-    for exp in parsed["experience"]:
-        e = dict(exp)
-        e["bullets"] = _sort_experience_bullets(exp.get("bullets", []), keywords)
-        experience.append(e)
-
-    links = extract_pdf_links(cv_pdf_bytes)
-    projects = _attach_project_links(parsed["projects"], links)
-    for q in projects:
-        q["bullets"] = sorted(q.get("bullets", []), key=lambda b: -_relevance(b, keywords))
-    projects.sort(key=lambda p: -_relevance(p.get("title", "") + " " + " ".join(p["bullets"]), keywords))
-
-    summary = clean_extracted_text(re.sub(r"\s+", " ", parsed.get("summary") or "").strip())
-    headline = _honest_headline(parsed.get("title", ""), clean_role, cv_text, matched)
-
-    parts = [parsed["name"], headline, parsed["contact"], "", "SUMMARY", summary, "", "PROFESSIONAL EXPERIENCE"]
-    for e in experience:
-        parts += [e.get("role_line", ""), e.get("company_line", "")] + [f"• {b}" for b in e["bullets"]]
-    parts += ["", "PERSONAL PROJECTS"]
-    for p in projects:
-        parts += [p.get("title_line", "")] + [f"• {b}" for b in p["bullets"]]
-    parts += ["", "TECHNICAL SKILLS"] + [f"{c}: {', '.join(i)}" for c, i in skills.items()]
-    parts += ["", "EDUCATION"] + parsed["education"] + ["", "LANGUAGES"] + parsed["languages"]
-    tailored_text = "\n".join(x for x in parts if x is not None)
-    new_score, _ = compute_match(tailored_text, job_description, clean_role)
-
-    safe_name = re.sub(r"[^a-zA-Z0-9]", "_", parsed["name"]).strip("_")
-    safe_co = re.sub(r"[^a-zA-Z0-9]", "_", clean_co).strip("_")
-    pdf_bytes = generate_ats_pdf(
-        name=parsed["name"],
-        headline=headline,
-        contact=parsed["contact"],
-        summary=summary,
-        skills=skills,
-        experience=experience,
-        projects=projects,
-        education=parsed["education"],
-        languages=parsed["languages"],
-        links=links,
-        certifications=parsed.get("certifications"),
-        cv_profile=cv_profile,
-    )
-    return {
-        "tailored_text": tailored_text,
-        "pdf_bytes": pdf_bytes,
-        "filename": f"CV_{safe_name}_{safe_co}.pdf",
-        "original_score": base_score,
-        "tailored_score": max(base_score, new_score),
-        "use_tailored": True,
-        "bridged_skills": [],
-        "emphasized_skills": matched[:10],
-        "matched_skills": matched[:10],
-        "missing_tech": bd.get("missing_tech", []),
-        "target_headline": headline,
-        "tailored_summary": summary,
-        "cv_profile": cv_profile,
-        "tips": [
-            f"Classified resume as {cv_profile['cv_type']} ({cv_profile['seniority']}).",
-            f"Applied {cv_profile['layout_strategy']}.",
-            "Repaired PDF text extraction spacing and preserved all clickable portfolio/store links.",
-        ],
-        "mode": "honest",
-    }
-
-
-# ─── Full-Match Professional Tailoring Mode ───────────────────────────────────
 
 def tailor_cv_full_match(
     cv_text: str,
@@ -1310,170 +1249,23 @@ def tailor_cv_full_match(
     cv_pdf_bytes: Optional[bytes] = None,
 ) -> Dict:
     """
-    1. Runs deep pre-tailoring CV analysis (`analyze_cv_profile`) to understand CV type,
-       domain specialization, seniority, language, and section structure.
-    2. Repairs all PDF extraction artifacts (`60% faster`, `AWS S3`, project pipes, clickable links).
-    3. Crafts a natural, executive-grade summary and categorized skills section tailored to the job.
-    4. Renders a polished A4 ATS PDF preserving 100% of authentic work history and links.
+    Runs the Senior CV Engine in Full-Match Professional Mode:
+    1. Layout-aware extraction & structure parsing (`cv_engine.extract` + `cv_engine.parse`)
+    2. Pre-tailoring diagnosis (`cv_engine.analyze.diagnose`)
+    3. Mechanical enhancement (`cv_engine.enhance`)
+    4. Aligns headline, crafts a bilingual EN/FR executive summary, bridges missing JD tech skills
+       into clean recruiter categories, and prioritizes bullets & projects by relevance
+    5. Renders a clean single-column A4 executive PDF (`cv_engine.render.render_cv_pdf`)
     """
-    clean_role = (job_title or "").strip() or "Software Engineer"
-    clean_co = (company or "").strip() or "Company"
-    base_score, bd = compute_match(cv_text, job_description, clean_role)
-    jd_low = (job_description or "").lower()
-    required = set(bd.get("required_skills") or [])
-    job_skills = list(bd.get("job_skills") or [])
-    matched_tech = list(bd.get("matched_tech") or [])
-
-    def _first(sk):
-        i = jd_low.find(sk.lower())
-        return i if i >= 0 else 10 ** 6
-
-    job_skills.sort(key=lambda s: (s not in required, -min(jd_low.count(s.lower()), 3), _first(s)))
-    missing = [s for s in job_skills if s in set(bd.get("missing_tech") or [])]
-    missing_soft = list(bd.get("missing_soft") or []) + list(bd.get("matched_soft") or [])
-    keywords = job_skills + [w for w in re.findall(r"[a-z][a-z+#.]{3,}", clean_role.lower())]
-
-    # 1. Parse & deeply analyze the CV first
-    parsed = parse_candidate_cv(cv_text)
-    cv_profile = analyze_cv_profile(cv_text, parsed, clean_role, job_description)
-
-    # 2. Professional Headline Alignment
-    headline = _clean_role_title(clean_role)
-    if len(headline) > 52:
-        headline = parsed.get("title") or headline[:52].strip()
-
-    # 3. Categorized Technical Skills (respecting the candidate's own categories)
-    skills: Dict[str, List[str]] = {}
-    for cat, items in parsed["skills"].items():
-        relevant = [i for i in items if _relevance(i, keywords) > 0]
-        others = [i for i in items if i not in relevant]
-        skills[cat] = sorted(relevant, key=lambda it: -_relevance(it, keywords)) + others
-
-    # Expand "unit and widget testing" -> "Unit Testing, Widget Testing" for ATS exact phrase matching
-    for cat in list(skills.keys()):
-        new_items = []
-        for it in skills[cat]:
-            m = re.fullmatch(r"(\w+)\s+and\s+(\w+)\s+(testing|development|design)", it.strip(), re.I)
-            if m:
-                new_items.extend([
-                    f"{m.group(1).title()} {m.group(3).title()}",
-                    f"{m.group(2).title()} {m.group(3).title()}",
-                ])
-            else:
-                new_items.append(it)
-        skills[cat] = new_items
-
-    added = []
-    for s in missing:
-        disp = _display_skill(s)
-        if not disp:
-            continue
-        if any(disp.lower() == x.lower() or disp.lower() in x.lower() for items in skills.values() for x in items):
-            continue
-        target = _pick_category(s, list(skills.keys()))
-        skills.setdefault(target, [])
-        n_rel = sum(1 for x in skills[target] if _relevance(x, keywords) > 0)
-        skills[target].insert(n_rel, disp)
-        added.append(disp)
-
-    # Sort categories so highest-relevance categories come first and "Also familiar with" stays last
-    skills = dict(
-        sorted(
-            skills.items(),
-            key=lambda kv: (
-                "also familiar" in kv[0].lower() or "additional" in kv[0].lower(),
-                -sum(_relevance(i, keywords) for i in kv[1]),
-            ),
-        )
+    from cv_engine.tailor import tailor_cv_pipeline
+    return tailor_cv_pipeline(
+        cv_text=cv_text,
+        job_title=job_title,
+        company=company,
+        job_description=job_description,
+        cv_pdf_bytes=cv_pdf_bytes,
+        mode="full_match",
     )
-
-    # 4. Experience: preserve chronology, prioritize relevant bullets, keep "Live apps:" at bottom
-    experience = []
-    for exp in parsed["experience"]:
-        e = dict(exp)
-        e["bullets"] = _sort_experience_bullets(exp.get("bullets", []), keywords)
-        experience.append(e)
-
-    # 5. Projects: attach clickable links BEFORE sorting by relevance
-    links = extract_pdf_links(cv_pdf_bytes)
-    projects = _attach_project_links(parsed["projects"], links)
-    for q in projects:
-        q["bullets"] = sorted(q.get("bullets", []), key=lambda b: -_relevance(b, keywords))
-        q["_rel"] = _relevance(q.get("title", "") + " " + " ".join(q.get("bullets", [])), keywords)
-    projects.sort(key=lambda p: -p["_rel"])
-    projects = projects[:6]
-
-    # 6. Executive Summary: natural, non-repetitive, typo-free
-    summary, summary_notes = _craft_professional_summary(
-        parsed=parsed,
-        cv_profile=cv_profile,
-        headline=headline,
-        company=clean_co,
-        job_skills=job_skills,
-        matched_skills=matched_tech,
-    )
-
-    def build_text(sm: str, sk: Dict[str, List[str]]) -> str:
-        parts = [parsed["name"], headline, parsed["contact"], "", "SUMMARY", sm, "", "TECHNICAL SKILLS"]
-        parts += [f"{c}: {', '.join(i)}" for c, i in sk.items()]
-        parts += ["", "PROFESSIONAL EXPERIENCE"]
-        for e in experience:
-            parts += [e.get("role_line", ""), e.get("company_line", "")] + [f"• {b}" for b in e["bullets"]]
-        parts += ["", "PERSONAL PROJECTS"]
-        for p in projects:
-            parts += [p.get("title_line", "")] + [f"• {b}" for b in p["bullets"]]
-        parts += ["", "EDUCATION"] + parsed["education"] + ["", "LANGUAGES"] + parsed["languages"]
-        if missing_soft:
-            parts += ["", "CORE COMPETENCIES: " + ", ".join(_display_skill(s) for s in missing_soft[:6])]
-        return "\n".join(x for x in parts if x is not None)
-
-    tailored_text = build_text(summary, skills)
-    new_score, _ = compute_match(tailored_text, job_description, clean_role)
-    final_score = max(new_score, base_score)
-
-    safe_name = re.sub(r"[^a-zA-Z0-9]", "_", parsed["name"]).strip("_")
-    safe_co = re.sub(r"[^a-zA-Z0-9]", "_", clean_co).strip("_")
-    pdf_bytes = generate_ats_pdf(
-        name=parsed["name"],
-        headline=headline,
-        contact=parsed["contact"],
-        summary=summary,
-        skills=skills,
-        experience=experience,
-        projects=projects,
-        education=parsed["education"],
-        languages=parsed["languages"],
-        links=links,
-        certifications=parsed.get("certifications"),
-        cv_profile=cv_profile,
-    )
-
-    highlighted = [_display_skill(s) for s in (matched_tech + added)[:12] if s]
-    tips = [
-        f"Analyzed CV Type: {cv_profile['cv_type']} ({cv_profile['seniority']}, {cv_profile['metrics_count']} quantified impact metrics).",
-        f"Layout Strategy: {cv_profile['layout_strategy']}.",
-    ] + summary_notes
-    if added:
-        tips.append(f"Bridged {len(added)} target skills into natural technical categories ({', '.join(added[:5])}).")
-    tips.append("Repaired PDF text extraction kerning/wrapping and preserved all clickable portfolio & store links.")
-
-    return {
-        "tailored_text": tailored_text,
-        "pdf_bytes": pdf_bytes,
-        "filename": f"CV_{safe_name}_{safe_co}.pdf",
-        "original_score": base_score,
-        "tailored_score": final_score,
-        "use_tailored": True,
-        "bridged_skills": added,
-        "emphasized_skills": highlighted,
-        "matched_skills": highlighted,
-        "missing_tech": [],
-        "target_headline": headline,
-        "tailored_summary": summary,
-        "cv_profile": cv_profile,
-        "tips": tips,
-        "mode": "full_match",
-    }
 
 
 def tailor_cv(
@@ -1485,3 +1277,4 @@ def tailor_cv(
 ) -> Dict:
     """Backward-compatible entry point delegating to `tailor_cv_full_match`."""
     return tailor_cv_full_match(cv_text, job_title, company, job_description, cv_pdf_bytes=cv_pdf_bytes)
+

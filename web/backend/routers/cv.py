@@ -48,6 +48,15 @@ class BatchMatchRequest(BaseModel):
 
 def _parse(filename, content):
     ext = os.path.splitext(filename)[1].lower()
+    if ext not in (".txt", ".pdf", ".docx"):
+        raise HTTPException(400, f"Unsupported: {ext}")
+    try:
+        from cv_engine.extract import extract_document
+        doc = extract_document(content, filename=filename)
+        if doc.text and doc.text.strip():
+            return doc.text
+    except Exception:
+        pass
     if ext == ".txt":
         return content.decode("utf-8", errors="ignore")
     elif ext == ".pdf":
@@ -477,6 +486,7 @@ def tailor_user_cv(req: TailorCvRequest,
             "target_headline": r.get("target_headline", req.job_title),
             "tailored_summary": r.get("tailored_summary", ""),
             "cv_profile": r.get("cv_profile", {}),
+            "diagnosis": r.get("diagnosis", {}),
             "tips": r.get("tips", []),
             "filename": r.get("filename", "Tailored_CV.pdf"),
             "tailored_text": r.get("tailored_text", ""),
