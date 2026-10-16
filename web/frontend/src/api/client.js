@@ -178,7 +178,13 @@ client.interceptors.response.use(
     return res
   },
   err => {
-    if (err.response?.status === 401) {
+    const reqUrl = String(err.config?.url || '')
+    const isAuthEndpoint =
+      reqUrl.includes('/auth/login') ||
+      reqUrl.includes('/auth/register') ||
+      reqUrl.includes('/auth/google') ||
+      reqUrl.includes('/auth/me')
+    if (err.response?.status === 401 && !isAuthEndpoint && window.location.pathname !== '/') {
       clearAllCache()
       localStorage.removeItem('token')
       localStorage.removeItem('user')
