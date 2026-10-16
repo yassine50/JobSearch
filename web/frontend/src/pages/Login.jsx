@@ -1409,6 +1409,8 @@ export default function Login() {
                 <li><a href="#how-it-works" className="hover:text-blue-400 transition">4-Step Outreach Workflow</a></li>
                 <li><a href="#comparison" className="hover:text-blue-400 transition">Feature Comparison</a></li>
                 <li><a href="#faq" className="hover:text-blue-400 transition">SEO &amp; Product FAQ</a></li>
+                <li><a href="/privacy.html" className="hover:text-blue-400 transition">Privacy Policy</a></li>
+                <li><a href="/terms.html" className="hover:text-blue-400 transition">Terms of Service</a></li>
                 <li><a href="/sitemap.xml" className="hover:text-blue-400 transition">XML Sitemap</a></li>
               </ul>
             </div>
@@ -1416,7 +1418,11 @@ export default function Login() {
 
           <div className="pt-6 border-t border-white/[0.06] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
             <span>© {new Date().getFullYear()} CVtoMatch (cvtomatch.com). All rights reserved.</span>
-            <span>Built for high-precision ATS resume matching &amp; direct hiring manager outreach.</span>
+            <div className="flex items-center gap-4">
+              <a href="/privacy.html" className="hover:text-slate-300 transition">Privacy Policy</a>
+              <span>·</span>
+              <a href="/terms.html" className="hover:text-slate-300 transition">Terms of Service</a>
+            </div>
           </div>
         </div>
       </footer>

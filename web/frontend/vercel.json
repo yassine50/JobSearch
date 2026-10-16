@@ -25,6 +25,14 @@
   ],
   "rewrites": [
     {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms.html"
+    },
+    {
       "source": "/api/:path*",
       "destination": "http://34.55.247.158/api/:path*"
     },
