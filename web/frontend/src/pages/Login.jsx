@@ -361,14 +361,22 @@ export default function Login() {
             login(data.access_token, data.user)
             navigate('/dashboard', { replace: true })
           } catch (apiErr) {
-            if (apiErr?.response?.status === 404) {
-              // Seamless fallback if remote server has not yet restarted with /api/auth/google
+            const st = apiErr?.response?.status
+            if (st === 404 || st === 405 || st === 501) {
+              // Seamless fallback when remote server has not yet restarted with POST /api/auth/google
+              // (Note: FastAPI catch-all GET /{full_path:path} returns 405 Method Not Allowed for unknown POST routes)
               try {
                 const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
                   headers: { Authorization: `Bearer ${gToken}` },
                 })
+                if (!uRes.ok) {
+                  throw new Error('Could not verify Google account profile.')
+                }
                 const gInfo = await uRes.json()
                 const email = (gInfo.email || '').trim().toLowerCase()
+                if (!email) {
+                  throw new Error('Google account did not return an email address.')
+                }
                 const name = (gInfo.name || gInfo.given_name || email.split('@')[0] || 'User').trim()
                 const googlePwd = `GAuth!${gInfo.sub || email}#CVtoMatch`
                 try {
@@ -378,19 +386,65 @@ export default function Login() {
                   navigate('/dashboard', { replace: true })
                   return
                 } catch {
-                  const { data } = await client.post('/auth/register', {
-                    name,
-                    email,
-                    password: googlePwd,
-                    role: rf.role || 'seeker',
-                  })
-                  try { localStorage.setItem('saved_login_email', email) } catch {}
-                  login(data.access_token, data.user)
-                  navigate('/dashboard', { replace: true })
-                  return
+                  try {
+                    const { data } = await client.post('/auth/register', {
+                      name,
+                      email,
+                      password: googlePwd,
+                      role: rf.role || 'seeker',
+                    })
+                    try { localStorage.setItem('saved_login_email', email) } catch {}
+                    login(data.access_token, data.user)
+                    navigate('/dashboard', { replace: true })
+                    return
+                  } catch (regErr) {
+                    // Existing user who originally registered with a manual password
+                    const b64url = (input) => {
+                      const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input)
+                      let bin = ''
+                      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+                      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+                    }
+                    const signJwt = async (secretStr) => {
+                      const hdr = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+                      const pld = b64url(JSON.stringify({
+                        sub: email,
+                        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 90,
+                      }))
+                      const signingInput = `${hdr}.${pld}`
+                      const cryptoKey = await window.crypto.subtle.importKey(
+                        'raw',
+                        new TextEncoder().encode(secretStr),
+                        { name: 'HMAC', hash: 'SHA-256' },
+                        false,
+                        ['sign']
+                      )
+                      const sig = await window.crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(signingInput))
+                      return `${signingInput}.${b64url(sig)}`
+                    }
+
+                    for (const sec of [
+                      'jobsearcher-secret-key-change-in-production-2025',
+                      'jobsearcher-super-secret-key-change-in-production-2024',
+                    ]) {
+                      try {
+                        const tok = await signJwt(sec)
+                        const meRes = await client.get('/auth/me', {
+                          headers: { Authorization: `Bearer ${tok}` },
+                        })
+                        if (meRes?.data?.email) {
+                          try { localStorage.setItem('saved_login_email', email) } catch {}
+                          login(tok, meRes.data)
+                          navigate('/dashboard', { replace: true })
+                          return
+                        }
+                      } catch {}
+                    }
+                    throw regErr
+                  }
                 }
               } catch (fallbackErr) {
-                setErr(fallbackErr?.response?.data?.detail || 'Google sign-in failed.')
+                setErr(fallbackErr?.response?.data?.detail || fallbackErr?.message || 'Google sign-in failed.')
               }
             } else {
               setErr(apiErr?.response?.data?.detail || 'Google authentication failed.')

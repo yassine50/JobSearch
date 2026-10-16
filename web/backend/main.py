@@ -133,4 +133,7 @@ if os.path.exists(dist_dir) and os.path.exists(assets_dir):
 
     @app.get("/{full_path:path}")
     def serve_spa(full_path: str):
+        if full_path.startswith("api/"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="API endpoint not found")
         return FileResponse(os.path.join(dist_dir, "index.html"))
