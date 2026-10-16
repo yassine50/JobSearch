@@ -521,6 +521,9 @@ export default function Login() {
             <a href="#faq" className="hover:text-blue-400 transition">
               FAQ
             </a>
+            <a href="/privacy.html" className="hover:text-blue-400 transition">
+              Privacy Policy
+            </a>
           </nav>
 
           <div className="flex items-center gap-2.5 shrink-0">
@@ -979,6 +982,24 @@ export default function Login() {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              <div className="mt-5 pt-4 border-t border-white/[0.06] text-center text-[11px] text-slate-400 leading-relaxed">
+                By continuing, you agree to CVtoMatch&apos;s{' '}
+                <a
+                  href="https://www.cvtomatch.com/privacy.html"
+                  className="text-blue-400 hover:text-blue-300 underline font-semibold"
+                >
+                  Privacy Policy
+                </a>{' '}
+                and{' '}
+                <a
+                  href="https://www.cvtomatch.com/terms.html"
+                  className="text-blue-400 hover:text-blue-300 underline font-semibold"
+                >
+                  Terms of Service
+                </a>
+                .
+              </div>
             </motion.div>
           </div>
         </section>
