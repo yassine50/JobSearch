@@ -177,14 +177,29 @@ client.interceptors.response.use(
     }
     return res
   },
-  err => {
-    const reqUrl = String(err.config?.url || '')
+  async err => {
+    const cfg = err.config
+    const st = err.response?.status
+    if (
+      cfg &&
+      !cfg._retriedDirect &&
+      (!st || st === 502 || st === 503 || st === 504 || st === 405) &&
+      typeof window !== 'undefined' &&
+      !window.location.hostname.includes('localhost') &&
+      !window.location.hostname.includes('127.0.0.1')
+    ) {
+      cfg._retriedDirect = true
+      cfg.baseURL = 'https://job-searcher-api-ux4i.onrender.com/api'
+      return client.request(cfg)
+    }
+
+    const reqUrl = String(cfg?.url || '')
     const isAuthEndpoint =
       reqUrl.includes('/auth/login') ||
       reqUrl.includes('/auth/register') ||
       reqUrl.includes('/auth/google') ||
       reqUrl.includes('/auth/me')
-    if (err.response?.status === 401 && !isAuthEndpoint && window.location.pathname !== '/') {
+    if (st === 401 && !isAuthEndpoint && window.location.pathname !== '/') {
       clearAllCache()
       localStorage.removeItem('token')
       localStorage.removeItem('user')
