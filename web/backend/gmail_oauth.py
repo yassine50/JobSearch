@@ -38,6 +38,8 @@ router = APIRouter(prefix="/api/email/google", tags=["gmail-oauth"])
 
 SCOPES = "openid email https://www.googleapis.com/auth/gmail.send"
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "scraper_config.json")
+DEFAULT_GOOGLE_CLIENT_ID = "351639376298-otgv89j6pf4mbtmpgibjg0l9l7bhllbt.apps.googleusercontent.com"
+DEFAULT_GOOGLE_CLIENT_SECRET = "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"
 
 
 def _cfg(name: str) -> str:
@@ -46,9 +48,16 @@ def _cfg(name: str) -> str:
         return v.strip()
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return str(json.load(f).get(name, "") or "").strip()
+            val = str(json.load(f).get(name, "") or "").strip()
+            if val:
+                return val
     except Exception:
-        return ""
+        pass
+    if name == "google_client_id":
+        return DEFAULT_GOOGLE_CLIENT_ID
+    if name == "google_client_secret":
+        return DEFAULT_GOOGLE_CLIENT_SECRET
+    return ""
 
 
 def _client():
@@ -63,7 +72,12 @@ def frontend_url() -> str:
     return (os.getenv("FRONTEND_URL") or "http://localhost:5173").rstrip("/")
 
 
-def redirect_uri() -> str:
+def redirect_uri(origin: str = "") -> str:
+    clean_origin = (origin or "").strip().rstrip("/")
+    if clean_origin and ("cvtomatch.com" in clean_origin or "localhost:5173" in clean_origin):
+        if "localhost:5173" in clean_origin:
+            return "http://localhost:8000/api/email/google/callback"
+        return f"{clean_origin}/api/email/google/callback"
     return f"{backend_url()}/api/email/google/callback"
 
 
@@ -122,13 +136,20 @@ def status(db: Session = Depends(get_db), current_user: models.User = Depends(ge
 
 
 @router.get("/auth-url")
-def auth_url(current_user: models.User = Depends(get_current_user)):
+def auth_url(origin: str = "", current_user: models.User = Depends(get_current_user)):
     cid, _ = _client()
     if not is_configured():
         raise HTTPException(400, "Connect Gmail isn't set up yet by the platform admin.")
-    state = jwt.encode({"uid": current_user.id, "exp": datetime.utcnow() + timedelta(minutes=10),
-                        "p": "gmail"}, SECRET_KEY, algorithm="HS256")
-    params = {"client_id": cid, "redirect_uri": redirect_uri(), "response_type": "code",
+    clean_origin = (origin or "").strip().rstrip("/")
+    r_uri = redirect_uri(clean_origin)
+    state = jwt.encode({
+        "uid": current_user.id,
+        "exp": datetime.utcnow() + timedelta(minutes=10),
+        "p": "gmail",
+        "origin": clean_origin,
+        "r_uri": r_uri,
+    }, SECRET_KEY, algorithm="HS256")
+    params = {"client_id": cid, "redirect_uri": r_uri, "response_type": "code",
               "scope": SCOPES, "access_type": "offline", "prompt": "consent",
               "include_granted_scopes": "true", "state": state}
     return {"url": "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)}
@@ -137,20 +158,26 @@ def auth_url(current_user: models.User = Depends(get_current_user)):
 @router.get("/callback")
 def callback(code: str = "", state: str = "", error: str = "", db: Session = Depends(get_db)):
     back = f"{frontend_url()}/settings"
-    if error:
-        return RedirectResponse(f"{back}?gmail=error&reason={error}")
+    r_uri = redirect_uri()
     try:
         payload = jwt.decode(state, SECRET_KEY, algorithms=["HS256"])
         if payload.get("p") != "gmail":
             raise JWTError("bad purpose")
         uid = int(payload["uid"])
+        if payload.get("origin"):
+            back = f"{payload['origin']}/settings"
+        if payload.get("r_uri"):
+            r_uri = payload["r_uri"]
     except Exception:
         return RedirectResponse(f"{back}?gmail=error&reason=expired")
+
+    if error:
+        return RedirectResponse(f"{back}?gmail=error&reason={error}")
 
     cid, secret = _client()
     r = requests.post("https://oauth2.googleapis.com/token", data={
         "code": code, "client_id": cid, "client_secret": secret,
-        "redirect_uri": redirect_uri(), "grant_type": "authorization_code"}, timeout=15)
+        "redirect_uri": r_uri, "grant_type": "authorization_code"}, timeout=15)
     if r.status_code != 200:
         logger.warning(f"[Gmail] code exchange failed: {r.text[:300]}")
         return RedirectResponse(f"{back}?gmail=error&reason=exchange")

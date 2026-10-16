@@ -73,7 +73,9 @@ export default function Settings() {
   const connectGmail = async () => {
     setGmailConnecting(true)
     try {
-      const { data } = await client.get('/email/google/auth-url')
+      const { data } = await client.get('/email/google/auth-url', {
+        params: { origin: window.location.origin }
+      })
       window.location.href = data.url
     } catch (e) {
       toast(e.response?.data?.detail || 'Could not start Google sign-in', 'error')

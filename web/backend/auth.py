@@ -11,7 +11,7 @@ from . import models
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "jobsearcher-secret-key-change-in-production-2025")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 90  # 90 days persistent login
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 

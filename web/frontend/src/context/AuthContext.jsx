@@ -1,5 +1,6 @@
 
 import { createContext, useContext, useState } from 'react'
+import { clearAllCache } from '../api/client.js'
 
 const AuthContext = createContext(null)
 
@@ -24,12 +25,14 @@ export function AuthProvider({ children }) {
 
   const login = (tok, usr) => {
     if (!tok || !usr?.email || !String(usr.email).trim()) return
+    clearAllCache()
     localStorage.setItem('token', tok)
     localStorage.setItem('user', JSON.stringify(usr))
     setToken(tok); setUser(usr)
   }
 
   const logout = () => {
+    clearAllCache()
     localStorage.removeItem('token')
     localStorage.removeItem('user')
     setToken(null); setUser(null)

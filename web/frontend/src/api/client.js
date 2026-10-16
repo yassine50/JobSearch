@@ -124,6 +124,8 @@ function _trackPlatformAction(res) {
       fire('sign_up', { method: 'email', role: body.role || 'seeker' })
     } else if (url.includes('/auth/login')) {
       fire('login', { method: 'email' })
+    } else if (url.includes('/auth/google')) {
+      fire(res.data?.is_new_user ? 'sign_up' : 'login', { method: 'google', role: body.role || 'seeker' })
     } else if (url.includes('/linkedin-posts/search')) {
       fire('search_linkedin_posts', {
         search_term: body.role || '',

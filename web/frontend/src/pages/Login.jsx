@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useNavigate, useLocation, Link } from 'react-router-dom'
+import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/AuthContext.jsx'
 import { SEO_ROUTE_CONFIG } from '../components/SEOHead.jsx'
@@ -192,7 +192,7 @@ const TOPIC_CLUSTER_LINKS = [
 ]
 
 export default function Login() {
-  const { login } = useAuth()
+  const { login, isAuth } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -202,12 +202,22 @@ export default function Login() {
   const [tab, setTab] = useState('login')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [googleBusy, setGoogleBusy] = useState(false)
+  const [googleClientId, setGoogleClientId] = useState(
+    () => (import.meta.env.VITE_GOOGLE_CLIENT_ID || '351639376298-otgv89j6pf4mbtmpgibjg0l9l7bhllbt.apps.googleusercontent.com').trim()
+  )
 
-  const [lf, setLf] = useState({ email: '', password: '' })
+  const [lf, setLf] = useState(() => ({
+    email: localStorage.getItem('saved_login_email') || '',
+    password: ''
+  }))
   const [rf, setRf] = useState({ name: '', email: '', password: '', role: 'seeker' })
 
   useEffect(() => {
     client.get('/health').catch(() => {})
+    client.get('/auth/google-config').then(res => {
+      if (res.data?.client_id) setGoogleClientId(res.data.client_id)
+    }).catch(() => {})
   }, [])
 
   // Interactive ATS Match Preview state
@@ -272,6 +282,10 @@ export default function Login() {
     }
   }, [selectedPreset, customCvSkills, customJdSkills])
 
+  if (isAuth) {
+    return <Navigate to="/dashboard" replace />
+  }
+
   const scrollToAuth = (targetTab = 'register') => {
     setTab(targetTab)
     setErr('')
@@ -281,7 +295,124 @@ export default function Login() {
     }
   }
 
-  const doLogin = async () => {
+  const ensureGoogleScript = () =>
+    new Promise((resolve, reject) => {
+      if (window.google?.accounts?.oauth2) {
+        resolve(window.google)
+        return
+      }
+      const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]')
+      if (existing) {
+        let checks = 0
+        const timer = setInterval(() => {
+          checks += 1
+          if (window.google?.accounts?.oauth2) {
+            clearInterval(timer)
+            resolve(window.google)
+          } else if (checks > 40) {
+            clearInterval(timer)
+            reject(new Error('Google Sign-In script took too long to load.'))
+          }
+        }, 100)
+        return
+      }
+      const s = document.createElement('script')
+      s.src = 'https://accounts.google.com/gsi/client'
+      s.async = true
+      s.defer = true
+      s.onload = () => resolve(window.google)
+      s.onerror = () => reject(new Error('Failed to load Google Sign-In script.'))
+      document.head.appendChild(s)
+    })
+
+  const doGoogleAuth = async () => {
+    setErr('')
+    setGoogleBusy(true)
+    try {
+      await ensureGoogleScript()
+      if (!window.google?.accounts?.oauth2) {
+        throw new Error('Google Sign-In is unavailable in this browser.')
+      }
+
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: googleClientId,
+        scope: 'openid email profile',
+        callback: async (tokenResponse) => {
+          if (tokenResponse?.error) {
+            setGoogleBusy(false)
+            if (tokenResponse.error !== 'popup_closed_by_user' && tokenResponse.error !== 'access_denied') {
+              setErr(`Google Sign-In error: ${tokenResponse.error_description || tokenResponse.error}`)
+            }
+            return
+          }
+          const gToken = tokenResponse?.access_token
+          if (!gToken) {
+            setGoogleBusy(false)
+            setErr('Did not receive an access token from Google.')
+            return
+          }
+
+          try {
+            const { data } = await client.post('/auth/google', {
+              access_token: gToken,
+              role: rf.role || 'seeker',
+            })
+            try { localStorage.setItem('saved_login_email', data.user?.email || '') } catch {}
+            login(data.access_token, data.user)
+            navigate('/dashboard', { replace: true })
+          } catch (apiErr) {
+            if (apiErr?.response?.status === 404) {
+              // Seamless fallback if remote server has not yet restarted with /api/auth/google
+              try {
+                const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${gToken}` },
+                })
+                const gInfo = await uRes.json()
+                const email = (gInfo.email || '').trim().toLowerCase()
+                const name = (gInfo.name || gInfo.given_name || email.split('@')[0] || 'User').trim()
+                const googlePwd = `GAuth!${gInfo.sub || email}#CVtoMatch`
+                try {
+                  const { data } = await client.post('/auth/login', { email, password: googlePwd })
+                  try { localStorage.setItem('saved_login_email', email) } catch {}
+                  login(data.access_token, data.user)
+                  navigate('/dashboard', { replace: true })
+                  return
+                } catch {
+                  const { data } = await client.post('/auth/register', {
+                    name,
+                    email,
+                    password: googlePwd,
+                    role: rf.role || 'seeker',
+                  })
+                  try { localStorage.setItem('saved_login_email', email) } catch {}
+                  login(data.access_token, data.user)
+                  navigate('/dashboard', { replace: true })
+                  return
+                }
+              } catch (fallbackErr) {
+                setErr(fallbackErr?.response?.data?.detail || 'Google sign-in failed.')
+              }
+            } else {
+              setErr(apiErr?.response?.data?.detail || 'Google authentication failed.')
+            }
+          } finally {
+            setGoogleBusy(false)
+          }
+        },
+        error_callback: () => {
+          setGoogleBusy(false)
+        },
+      })
+
+      tokenClient.requestAccessToken({ prompt: 'select_account' })
+    } catch (e) {
+      setGoogleBusy(false)
+      setErr(e?.message || 'Could not start Google Sign-In.')
+    }
+  }
+
+  const doLogin = async (e) => {
+    if (e && e.preventDefault) e.preventDefault()
     const email = lf.email.trim()
     const password = lf.password
     if (!email || !password) {
@@ -291,15 +422,17 @@ export default function Login() {
     setBusy(true); setErr('')
     try {
       const { data } = await client.post('/auth/login', { email, password })
+      try { localStorage.setItem('saved_login_email', email) } catch {}
       login(data.access_token, data.user)
-      navigate('/dashboard')
+      navigate('/dashboard', { replace: true })
     } catch (e) {
       setErr(e.response?.data?.detail || 'Login failed')
     }
     setBusy(false)
   }
 
-  const doRegister = async () => {
+  const doRegister = async (e) => {
+    if (e && e.preventDefault) e.preventDefault()
     const name = rf.name.trim()
     const email = rf.email.trim()
     const password = rf.password
@@ -318,8 +451,9 @@ export default function Login() {
     setBusy(true); setErr('')
     try {
       const { data } = await client.post('/auth/register', { ...rf, name, email })
+      try { localStorage.setItem('saved_login_email', email) } catch {}
       login(data.access_token, data.user)
-      navigate('/dashboard')
+      navigate('/dashboard', { replace: true })
     } catch (e) {
       setErr(e.response?.data?.detail || 'Registration failed')
     }
@@ -577,11 +711,43 @@ export default function Login() {
                     transition={{ duration: 0.2 }}
                   >
                     <h2 className="text-2xl font-extrabold tracking-tight mb-1">Welcome back</h2>
-                    <p className="text-slate-400 text-xs mb-6">
+                    <p className="text-slate-400 text-xs mb-5">
                       Sign in to your CVtoMatch AI career &amp; recruiter radar workspace
                     </p>
 
-                    <div className="space-y-4">
+                    <motion.button
+                      type="button"
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={doGoogleAuth}
+                      disabled={googleBusy || busy}
+                      className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {googleBusy ? (
+                        <>
+                          <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2, borderColor: '#334155', borderTopColor: '#2563EB' }} />
+                          <span>Connecting to Google...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                            <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.4 1 3.5 3.6 1.6 7.4l3.7 2.8C6.2 7.2 8.9 5 12 5z" />
+                            <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.6l3.7 2.9c2.2-2 3.7-5 3.7-8.7z" />
+                            <path fill="#FBBC05" d="M5.3 14.8c-.2-.8-.4-1.6-.4-2.5s.2-1.7.4-2.5L1.6 7C.6 9 0 11.2 0 12.3s.6 3.3 1.6 5.3l3.7-2.8z" />
+                            <path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3.1 0-5.8-2.1-6.7-5l-3.7 2.8c1.9 3.9 5.8 6.9 10.4 6.9z" />
+                          </svg>
+                          <span>Continue with Google</span>
+                        </>
+                      )}
+                    </motion.button>
+
+                    <div className="relative flex items-center gap-3 my-4">
+                      <div className="flex-1 h-px bg-white/[0.08]" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">or with email</span>
+                      <div className="flex-1 h-px bg-white/[0.08]" />
+                    </div>
+
+                    <form onSubmit={doLogin} className="space-y-4">
                       <div>
                         <label htmlFor="login-email" className="text-xs font-semibold text-slate-300 mb-1.5 block">
                           Email Address
@@ -590,11 +756,11 @@ export default function Login() {
                           <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <input
                             id="login-email"
+                            name="email"
                             type="email"
-                            autoComplete="email"
+                            autoComplete="username email"
                             value={lf.email}
                             onChange={e => setLf({ ...lf, email: e.target.value })}
-                            onKeyDown={e => e.key === 'Enter' && doLogin()}
                             placeholder="you@example.com"
                             className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition"
                           />
@@ -609,11 +775,11 @@ export default function Login() {
                           <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <input
                             id="login-password"
+                            name="password"
                             type="password"
                             autoComplete="current-password"
                             value={lf.password}
                             onChange={e => setLf({ ...lf, password: e.target.value })}
-                            onKeyDown={e => e.key === 'Enter' && doLogin()}
                             placeholder="••••••••"
                             className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition"
                           />
@@ -621,9 +787,9 @@ export default function Login() {
                       </div>
 
                       <motion.button
+                        type="submit"
                         whileHover={{ scale: 1.01 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={doLogin}
                         disabled={busy || !lf.email.trim() || !lf.password}
                         className="w-full shimmer-btn bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
                       >
@@ -639,7 +805,7 @@ export default function Login() {
                           </>
                         )}
                       </motion.button>
-                    </div>
+                    </form>
 
                     <p className="text-center text-slate-400 text-xs mt-6">
                       Don&apos;t have an account?{' '}
@@ -661,11 +827,43 @@ export default function Login() {
                     transition={{ duration: 0.2 }}
                   >
                     <h2 className="text-2xl font-extrabold tracking-tight mb-1">Create your account</h2>
-                    <p className="text-slate-400 text-xs mb-6">
-                      Enter your details below to unlock CV matching &amp; live job radar
+                    <p className="text-slate-400 text-xs mb-5">
+                      Sign up in 1 click with Google or enter your details below
                     </p>
 
-                    <div className="space-y-3.5">
+                    <motion.button
+                      type="button"
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={doGoogleAuth}
+                      disabled={googleBusy || busy}
+                      className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {googleBusy ? (
+                        <>
+                          <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2, borderColor: '#334155', borderTopColor: '#2563EB' }} />
+                          <span>Connecting to Google...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                            <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.4 1 3.5 3.6 1.6 7.4l3.7 2.8C6.2 7.2 8.9 5 12 5z" />
+                            <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.6l3.7 2.9c2.2-2 3.7-5 3.7-8.7z" />
+                            <path fill="#FBBC05" d="M5.3 14.8c-.2-.8-.4-1.6-.4-2.5s.2-1.7.4-2.5L1.6 7C.6 9 0 11.2 0 12.3s.6 3.3 1.6 5.3l3.7-2.8z" />
+                            <path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3.1 0-5.8-2.1-6.7-5l-3.7 2.8c1.9 3.9 5.8 6.9 10.4 6.9z" />
+                          </svg>
+                          <span>Sign up with Google</span>
+                        </>
+                      )}
+                    </motion.button>
+
+                    <div className="relative flex items-center gap-3 my-4">
+                      <div className="flex-1 h-px bg-white/[0.08]" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">or with email</span>
+                      <div className="flex-1 h-px bg-white/[0.08]" />
+                    </div>
+
+                    <form onSubmit={doRegister} className="space-y-3.5">
                       <div>
                         <label htmlFor="reg-name" className="text-xs font-semibold text-slate-300 mb-1 block">
                           Full Name
@@ -674,6 +872,7 @@ export default function Login() {
                           <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <input
                             id="reg-name"
+                            name="name"
                             type="text"
                             required
                             autoComplete="name"
@@ -693,9 +892,10 @@ export default function Login() {
                           <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <input
                             id="reg-email"
+                            name="email"
                             type="email"
                             required
-                            autoComplete="email"
+                            autoComplete="username email"
                             value={rf.email}
                             onChange={e => setRf({ ...rf, email: e.target.value })}
                             placeholder="you@example.com"
@@ -712,6 +912,7 @@ export default function Login() {
                           <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <input
                             id="reg-password"
+                            name="password"
                             type="password"
                             required
                             minLength={6}
@@ -732,6 +933,7 @@ export default function Login() {
                           <Briefcase size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <select
                             id="reg-role"
+                            name="role"
                             value={rf.role}
                             onChange={e => setRf({ ...rf, role: e.target.value })}
                             className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition cursor-pointer"
@@ -744,9 +946,9 @@ export default function Login() {
                       </div>
 
                       <motion.button
+                        type="submit"
                         whileHover={{ scale: 1.01 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={doRegister}
                         disabled={busy || !rf.name.trim() || !rf.email.trim() || rf.password.length < 6}
                         className="w-full shimmer-btn bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
                       >
@@ -762,7 +964,7 @@ export default function Login() {
                           </>
                         )}
                       </motion.button>
-                    </div>
+                    </form>
 
                     <p className="text-center text-slate-400 text-xs mt-5">
                       Already registered?{' '}

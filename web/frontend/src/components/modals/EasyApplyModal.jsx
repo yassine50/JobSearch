@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import confetti from 'canvas-confetti'
-import client from '../../api/client.js'
+import client, { getCached } from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
+import { useAuth } from '../../context/AuthContext.jsx'
 import {
   Zap, Building2, MapPin, Check, Loader2,
   X, ShieldCheck, Sparkles, Send, ExternalLink,
@@ -16,8 +17,22 @@ export default function EasyApplyModal({
   onSuccess
 }) {
   const toast = useToast()
+  const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [pitch, setPitch] = useState('')
+  const [cvFilename, setCvFilename] = useState(() => getCached('/cv/info')?.filename || '')
+
+  useEffect(() => {
+    if (isOpen) {
+      const cached = getCached('/cv/info')?.filename
+      if (cached) setCvFilename(cached)
+      client.get('/cv/info').then(r => {
+        setCvFilename(r.data?.filename || '')
+      }).catch(() => {})
+    }
+  }, [isOpen])
+
+  const displayCvName = cvFilename || (user?.name ? `CV_${user.name.trim().replace(/\s+/g, '_')}.pdf` : 'Tailored_Resume.pdf')
 
   useEffect(() => {
     if (job) {
@@ -178,7 +193,7 @@ Best regards,`
             </div>
             <div className="text-xs">
               <span className="font-semibold text-emerald-300 flex items-center gap-1">
-                Authentic Verified Resume (CV_Yassine_Youssef.pdf)
+                Authentic Verified Resume ({displayCvName})
               </span>
               <p className="text-[11px] text-slate-400">
                 A copy of your resume tailored to this job (missing skills added, off-topic content removed) is saved on the Tracker card. Download it there to upload on the job site. Your original CV is never changed.

@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import confetti from 'canvas-confetti'
-import client from '../../api/client.js'
+import client, { getCached } from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
+import { useAuth } from '../../context/AuthContext.jsx'
 import {
   Zap, Building2, MapPin, Check, Loader2,
   X, ShieldCheck, Sparkles, CheckSquare, Square, CheckCheck,
-  ExternalLink, ArrowRight
+  ExternalLink, ArrowRight, FileText
 } from 'lucide-react'
 
 export default function BatchEasyApplyModal({
@@ -17,11 +18,25 @@ export default function BatchEasyApplyModal({
   onSuccess
 }) {
   const toast = useToast()
+  const { user } = useAuth()
   const [selectedIds, setSelectedIds] = useState([])
   const [applying, setApplying] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentTarget: '' })
   const [completed, setCompleted] = useState(false)
   const [appliedResults, setAppliedResults] = useState([])
+  const [cvFilename, setCvFilename] = useState(() => getCached('/cv/info')?.filename || '')
+
+  useEffect(() => {
+    if (isOpen) {
+      const cached = getCached('/cv/info')?.filename
+      if (cached) setCvFilename(cached)
+      client.get('/cv/info').then(r => {
+        setCvFilename(r.data?.filename || '')
+      }).catch(() => {})
+    }
+  }, [isOpen])
+
+  const displayCvName = cvFilename || (user?.name ? `CV_${user.name.trim().replace(/\s+/g, '_')}.pdf` : 'Tailored_Resume.pdf')
 
   const rawList = items && items.length > 0 ? items : (jobs || [])
 
@@ -184,7 +199,7 @@ export default function BatchEasyApplyModal({
 
                 <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold bg-emerald-950/50 border border-emerald-800/50 px-3 py-1 rounded-lg">
                   <FileText size={13} className="text-emerald-400" />
-                  <span>Attaching Original Verified Resume (CV_Yassine_Youssef.pdf)</span>
+                  <span>Attaching Original Verified Resume ({displayCvName})</span>
                 </div>
               </div>
 

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import confetti from 'canvas-confetti'
-import client from '../../api/client.js'
+import client, { getCached } from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
+import { useAuth } from '../../context/AuthContext.jsx'
 import {
   Zap, Mail, Building2, User, FileText, Check, Loader2,
   X, ShieldCheck, Sparkles, Send, ArrowRight
@@ -113,12 +114,26 @@ export default function AutoApplyModal({
   onOpenSmtpPrompt
 }) {
   const toast = useToast()
+  const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [lang, setLang] = useState('en')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [selectedEmail, setSelectedEmail] = useState('')
   const [recruiterName, setRecruiterName] = useState('')
+  const [cvFilename, setCvFilename] = useState(() => getCached('/cv/info')?.filename || '')
+
+  useEffect(() => {
+    if (isOpen) {
+      const cached = getCached('/cv/info')?.filename
+      if (cached) setCvFilename(cached)
+      client.get('/cv/info').then(r => {
+        setCvFilename(r.data?.filename || '')
+      }).catch(() => {})
+    }
+  }, [isOpen])
+
+  const displayCvName = cvFilename || (user?.name ? `CV_${user.name.trim().replace(/\s+/g, '_')}.pdf` : 'Tailored_Resume.pdf')
 
   useEffect(() => {
     if (post) {
@@ -343,7 +358,7 @@ export default function AutoApplyModal({
                 <p className="text-xs font-semibold text-white flex items-center gap-2">
                   <span>Attached: Authentic Verified Resume</span>
                   <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-700 text-emerald-300">
-                    CV_Yassine_Youssef.pdf
+                    {displayCvName}
                   </span>
                 </p>
                 <p className="text-[11px] text-slate-400">

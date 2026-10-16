@@ -139,22 +139,6 @@ function NavContent({ onClose }) {
         })}
       </nav>
 
-      {/* AI Status Mini Banner */}
-      <div className="relative z-10 mx-0.5 mb-4 p-3.5 rounded-2xl bg-gradient-to-br from-blue-950/50 via-indigo-950/40 to-slate-900/60 border border-blue-500/20">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-            Direct MX Engine
-          </span>
-          <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/60">
-            Active
-          </span>
-        </div>
-        <p className="text-[11px] text-slate-400 leading-relaxed">
-          8-layer recruiter post verification &amp; auto-apply ready.
-        </p>
-      </div>
-
       {/* User Profile Footer */}
       <div className="relative z-10 border-t border-white/[0.06] pt-4 px-0.5 space-y-2">
         <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
