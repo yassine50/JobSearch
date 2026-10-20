@@ -5,10 +5,6 @@ import crypto from 'node:crypto'
 
 const RELAY_SECRET = process.env.SMTP_RELAY_SECRET || 'jobsearcher-smtp-relay-v1-2026'
 
-function ipv4Lookup(hostname, options, callback) {
-  return dns.lookup(hostname, { family: 4 }, callback)
-}
-
 function extractAddress(addr) {
   const s = String(addr || '').trim()
   const m = s.match(/<([^>]+)>/)
@@ -149,7 +145,8 @@ async function openAuthenticatedSmtp({ host, port, user, password }) {
           host: cleanHost,
           port: 465,
           servername: cleanHost,
-          lookup: ipv4Lookup,
+          family: 4,
+          rejectUnauthorized: false,
         },
         () => {
           clearTimeout(t)
@@ -174,7 +171,7 @@ async function openAuthenticatedSmtp({ host, port, user, password }) {
         {
           host: cleanHost,
           port: Number(port) || 587,
-          lookup: ipv4Lookup,
+          family: 4,
         },
         () => {
           clearTimeout(t)

@@ -233,14 +233,14 @@ def _open_direct_smtp(settings, timeout: int = 5):
     for h, p, use_ssl in attempts:
         conn = None
         try:
+            ssl_ctx = ssl._create_unverified_context()
             if use_ssl:
-                ctx = ssl.create_default_context()
-                conn = _IPv4SMTP_SSL(h, p, timeout=timeout, context=ctx)
+                conn = _IPv4SMTP_SSL(h, p, timeout=timeout, context=ssl_ctx)
                 conn.ehlo()
             else:
                 conn = _IPv4SMTP(h, p, timeout=timeout)
                 conn.ehlo()
-                conn.starttls(context=ssl.create_default_context())
+                conn.starttls(context=ssl_ctx)
                 conn.ehlo()
             conn.login(settings.smtp_user, clean_pwd)
             return conn
