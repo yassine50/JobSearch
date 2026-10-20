@@ -38,7 +38,7 @@
     },
     {
       "source": "/api/:path((?!smtp-relay).*)",
-      "destination": "https://job-searcher-api-ux4i.onrender.com/api/:path*"
+      "destination": "http://34.41.44.162/api/:path*"
     },
     {
       "source": "/(.*)",
