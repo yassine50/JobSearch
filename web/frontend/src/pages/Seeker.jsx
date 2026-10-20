@@ -20,7 +20,7 @@ import {
 
 export default function Seeker() {
   const toast = useToast()
-  const [activeTab, setActiveTab] = useState('linkedin_posts') // 'linkedin_posts' | 'job_boards'
+  const [activeTab, setActiveTab] = useState('job_boards') // 'job_boards' | 'linkedin_posts'
   const [cvInfo, setCvInfo] = useState(() => getCached('/cv/info', { uploaded: false, personas_count: 0 }))
   const [cvUploading, setCvUploading] = useState(false)
 
@@ -217,8 +217,8 @@ export default function Seeker() {
                 {/* Mode Switcher Tabs with Sliding Pill */}
                 <div className="relative flex items-center p-1.5 bg-[#050811]/90 border border-white/[0.08] rounded-2xl backdrop-blur-xl shadow-inner">
                   {[
-                    { id: 'linkedin_posts', label: 'LinkedIn Recruiter Posts', badge: 'Live', Icon: Users },
                     { id: 'job_boards',     label: 'Formal Job Boards',        badge: null,   Icon: Briefcase },
+                    { id: 'linkedin_posts', label: 'LinkedIn Recruiter Posts', badge: 'Live', Icon: Users },
                   ].map(tab => {
                     const active = activeTab === tab.id
                     const Icon = tab.Icon

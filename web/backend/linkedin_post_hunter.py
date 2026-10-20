@@ -74,7 +74,7 @@ _POST_SESSION.mount("https://", _http_adapter)
 _POST_SESSION.mount("http://", _http_adapter)
 
 # Shared bounded worker pool + thread-local DDGS reuse to keep VPS RAM and CPU footprint minimal
-_HUNTER_POOL = ThreadPoolExecutor(max_workers=8)
+_HUNTER_POOL = ThreadPoolExecutor(max_workers=14)
 _TLS_DDGS = threading.local()
 
 
@@ -368,7 +368,7 @@ def decode_linkedin_snowflake_age(url_or_id: str) -> Optional[Dict[str, Any]]:
             "published_epoch": int(ts_ms // 1000),
             "age_hours": age_hours,
             "age_str": age_str,
-            "is_under_24h": age_hours <= 24.0,
+            "is_under_24h": age_hours <= 48.0,
         }
     except Exception:
         return None
@@ -808,12 +808,13 @@ def extract_post_location(full_text: str, author_headline: str, target_location:
         
     return "Worldwide / Flexible"
 
-def check_single_location_match(full_text: str, author_headline: str, target_location: str) -> bool:
+def check_single_location_match(full_text: str, author_headline: str, target_location: str, post_url: str = "") -> bool:
     if not target_location or target_location.strip().lower() in ("", "all", "worldwide", "anywhere"):
         return True
         
     t_clean = target_location.strip().lower()
     combined = (full_text + " " + author_headline).lower()
+    url_low = (post_url or "").lower()
     
     # 1. Negative & Positive strict checks for USA / US
     if t_clean in ("usa", "us", "united states", "america", "remote us"):
@@ -834,6 +835,13 @@ def check_single_location_match(full_text: str, author_headline: str, target_loc
         if any(im in combined for im in ["bangalore", "bengaluru", "hyderabad", "pune", "mumbai", "delhi", "noida", "gurgaon", "chennai", "lucknow", "lpa", "ctc", "+91"]):
             return False
 
+    # 3. Check if the post URL is hosted on the target country's regional LinkedIn subdomain (e.g., fr.linkedin.com, ma.linkedin.com)
+    subdom_entry = COUNTRY_LINKEDIN_SUBDOMAINS.get(t_clean, "")
+    if subdom_entry:
+        subdom_host = subdom_entry.split("/")[0]
+        if subdom_host and subdom_host in url_low:
+            return True
+
     if t_clean in ("remote", "wfh", "work from home"):
         return any(w in combined for w in ["remote", "wfh", "work from home", "anywhere", "worldwide", "telecommute"])
         
@@ -850,7 +858,7 @@ def check_single_location_match(full_text: str, author_headline: str, target_loc
         
     return False
 
-def check_location_match(full_text: str, author_headline: str, target_location: str = "", target_locations: Optional[List[str]] = None) -> bool:
+def check_location_match(full_text: str, author_headline: str, target_location: str = "", target_locations: Optional[List[str]] = None, post_url: str = "") -> bool:
     locs = []
     if target_locations:
         locs = [l.strip() for l in target_locations if l and l.strip()]
@@ -860,7 +868,7 @@ def check_location_match(full_text: str, author_headline: str, target_location: 
     if not locs or any(l.lower() in ("", "all", "worldwide", "anywhere") for l in locs):
         return True
         
-    return any(check_single_location_match(full_text, author_headline, loc) for loc in locs)
+    return any(check_single_location_match(full_text, author_headline, loc, post_url=post_url) for loc in locs)
 
 def parse_user_query(query: str, locations: Optional[List[str]] = None) -> Tuple[str, List[str]]:
     """
@@ -1220,6 +1228,9 @@ def analyze_recruitment_intent(text: str, author_headline: str = "", extra_conte
             "open position", "vacancy", "job opening", "send cv", "send your cv",
             "send resume", "share your cv", "share your resume", "poste à pourvoir",
             "recrutons", "recrutement", "offre d'emploi", "looking for a", "looking for an",
+            "new job opportunity", "job opportunity", "nous recherchons", "recherche un",
+            "besoin d'un", "apply here", "apply now", "experience required", "years experience",
+            "immediate joiner", "remote role", "contract role", "freelance", "apply:",
         ]
         if any(w in combined for w in hiring_words):
             detected_signals.append("verified_hiring_keyword")
@@ -1801,7 +1812,7 @@ def probe_or_derive_talent_emails(company_name: str, domain: str, blacklisted_se
 
 
 _BRAVE_SEMAPHORE = threading.Semaphore(2)
-_DDGS_SEMAPHORE = threading.Semaphore(4)
+_DDGS_SEMAPHORE = threading.Semaphore(8)
 
 COUNTRY_LINKEDIN_SUBDOMAINS: Dict[str, str] = {
     "france": "fr.linkedin.com/posts",
@@ -1915,48 +1926,50 @@ def fetch_deep_linkedin_postings(
 
     role_variants = [rv for rv in dict.fromkeys(role_variants) if rv]
 
-    # Build role hashtags for Hashtag-Combo queries (#flutterdeveloper, #flutter, etc.)
+    # Build role hashtags and core technology token for high-recall queries
     compact_role_tag = "#" + re.sub(r"[^a-z0-9]", "", role_lower_chk)
-    core_words = [w for w in re.findall(r"[a-z0-9]+", role_lower_chk) if w not in ("developer", "engineer", "senior", "junior", "lead", "software")]
-    core_tag = f"#{core_words[0]}" if core_words else compact_role_tag
+    core_words = [w for w in re.findall(r"[a-z0-9.#+]+", role_lower_chk) if w not in ("developer", "engineer", "senior", "junior", "lead", "software", "full", "stack", "frontend", "backend", "mobile")]
+    core_skill = core_words[0] if core_words else clean_role
+    core_tag = f"#{ re.sub(r'[^a-z0-9]', '', core_skill) }" if core_words else compact_role_tag
 
     search_tasks: List[Tuple[str, Tuple[int, int, int]]] = []
 
-    # Priority 0: Exact role + Target location + high-signal hiring & email phrases + Country Subdomains
+    # Priority 0: Mix exact role + core skill + Target location + high-signal hiring & email phrases
+    # Note: Avoid parenthesized ("A" OR "B") groups on Yahoo as Yahoo's site: parser returns 0 results for them.
     for loc_idx, loc in enumerate(sweep_locs[:3]):
         loc_str = f' "{loc}"' if loc else ''
-        for p_idx, phrase in enumerate(hiring_phrases[:5]):
-            q1 = f'site:linkedin.com/posts "{clean_role}" {phrase}{loc_str}'
-            search_tasks.append((q1, (0, loc_idx, p_idx)))
-        # High-value direct email / CV callout query
-        q_email = f'site:linkedin.com/posts "{clean_role}" ("send your cv" OR "send resume" OR "apply at" OR "email"){loc_str}'
-        search_tasks.append((q_email, (0, loc_idx, 5)))
-        # Recruiter-persona query
-        q_persona = f'site:linkedin.com/posts "{clean_role}" ("Talent Acquisition" OR "Recruiter" OR "HR") "hiring"{loc_str}'
-        search_tasks.append((q_persona, (0, loc_idx, 6)))
-        # Hashtag-Combo query
-        q_hashtag = f'site:linkedin.com/posts ("{compact_role_tag}" OR "{core_tag}") ("#hiring" OR "#wearehiring" OR "send your cv"){loc_str}'
-        search_tasks.append((q_hashtag, (0, loc_idx, 7)))
-        # Country subdomain query if location maps to a regional LinkedIn subdomain
+        loc_unq = f' {loc}' if loc else ''
+        search_tasks.append((f'site:linkedin.com/posts {core_skill} hiring{loc_unq}', (0, loc_idx, 0)))
+        search_tasks.append((f'site:linkedin.com/posts "{clean_role}" hiring{loc_str}', (0, loc_idx, 1)))
+        search_tasks.append((f'site:linkedin.com/posts {core_skill} "send your cv"{loc_unq}', (0, loc_idx, 2)))
+        search_tasks.append((f'site:linkedin.com/posts "#wearehiring" {core_skill}{loc_unq}', (0, loc_idx, 3)))
+        search_tasks.append((f'site:linkedin.com/posts "#hiring" {core_skill}{loc_unq}', (0, loc_idx, 4)))
+        search_tasks.append((f'site:linkedin.com/posts {core_skill} "we are hiring"{loc_unq}', (0, loc_idx, 5)))
+        search_tasks.append((f'site:linkedin.com/posts {core_skill} "looking for"{loc_unq}', (0, loc_idx, 6)))
+        search_tasks.append((f'site:linkedin.com/posts "{compact_role_tag}" "#hiring"{loc_unq}', (0, loc_idx, 7)))
+        search_tasks.append((f'site:linkedin.com/posts {clean_role} "share your cv"{loc_unq}', (0, loc_idx, 8)))
+        # Country subdomain queries if location maps to a regional LinkedIn subdomain
         if loc and loc.lower() in COUNTRY_LINKEDIN_SUBDOMAINS:
             subdom = COUNTRY_LINKEDIN_SUBDOMAINS[loc.lower()]
-            q_sub = f'site:{subdom} "{clean_role}" ("hiring" OR "recrutons" OR "looking for" OR "cv")'
-            search_tasks.append((q_sub, (0, loc_idx, 1)))
-        q_feed = f'site:linkedin.com/feed/update "{clean_role}" "hiring"{loc_str}'
-        search_tasks.append((q_feed, (0, loc_idx, 8)))
+            search_tasks.append((f'site:{subdom} {core_skill} hiring', (0, loc_idx, 1)))
+            search_tasks.append((f'site:{subdom} {core_skill} recrutons', (0, loc_idx, 2)))
+            search_tasks.append((f'site:{subdom} {clean_role} "looking for"', (0, loc_idx, 3)))
+        q_feed = f'site:linkedin.com/feed/update {core_skill} hiring{loc_unq}'
+        search_tasks.append((q_feed, (0, loc_idx, 9)))
 
     # Priority 1: Broad role + hiring queries (worldwide or flexible indexing)
-    for p_idx, phrase in enumerate(hiring_phrases[:6]):
-        q_ww = f'site:linkedin.com/posts "{clean_role}" {phrase}'
-        search_tasks.append((q_ww, (1, 0, p_idx)))
+    for p_idx, phrase in enumerate(hiring_phrases[:8]):
         q_ww_unq = f'site:linkedin.com/posts {clean_role} {phrase}'
-        search_tasks.append((q_ww_unq, (1, 0, p_idx + 10)))
+        search_tasks.append((q_ww_unq, (1, 0, p_idx)))
+        q_ww = f'site:linkedin.com/posts "{clean_role}" {phrase}'
+        search_tasks.append((q_ww, (1, 0, p_idx + 10)))
 
     # Priority 2: Role variants + hiring
     for r_idx, r_var in enumerate(role_variants[1:4]):
-        search_tasks.append((f'site:linkedin.com/posts "{r_var}" "hiring"', (2, r_idx, 0)))
-        search_tasks.append((f'site:linkedin.com/posts "{r_var}" "we are hiring"', (2, r_idx, 1)))
-        search_tasks.append((f'site:linkedin.com/posts {r_var} "send your cv"', (2, r_idx, 2)))
+        search_tasks.append((f'site:linkedin.com/posts {r_var} hiring', (2, r_idx, 0)))
+        search_tasks.append((f'site:linkedin.com/posts "{r_var}" hiring', (2, r_idx, 1)))
+        search_tasks.append((f'site:linkedin.com/posts {r_var} "we are hiring"', (2, r_idx, 2)))
+        search_tasks.append((f'site:linkedin.com/posts {r_var} "send your cv"', (2, r_idx, 3)))
 
     unique_tasks: List[Tuple[str, Tuple[int, int, int]]] = []
     seen_q = set()
@@ -1965,24 +1978,19 @@ def fetch_deep_linkedin_postings(
             seen_q.add(q_str)
             unique_tasks.append((q_str, prio))
 
-    yahoo_age = ""
-    brave_tf = ""
+    yahoo_btf = ""
     target_max_age_h: Optional[float] = None
     if time_range in ("24h", "1d", "day", "past-24h"):
-        yahoo_age = "&age=1d"
-        brave_tf = "&tf=pd"
-        target_max_age_h = 24.0
+        yahoo_btf = "&btf=w"
+        target_max_age_h = 48.0  # LinkedIn labels 0-48h as '1d ago'
     elif time_range in ("3d", "past-3d"):
-        yahoo_age = "&age=1w"
-        brave_tf = "&tf=pw"
+        yahoo_btf = "&btf=w"
         target_max_age_h = 72.0
     elif time_range in ("week", "7d", "1w", "past-week"):
-        yahoo_age = "&age=1w"
-        brave_tf = "&tf=pw"
+        yahoo_btf = "&btf=m"
         target_max_age_h = 168.0
     elif time_range in ("month", "30d", "1m", "past-month"):
-        yahoo_age = "&age=1m"
-        brave_tf = "&tf=pm"
+        yahoo_btf = "&btf=m"
         target_max_age_h = 720.0
 
     headers = {
@@ -2003,8 +2011,8 @@ def fetch_deep_linkedin_postings(
     except ImportError:
         has_ddgs = False
 
-    def fetch_ddgs_query(q: str) -> List[Tuple[str, str, str]]:
-        """Primary multi-backend harvester via thread-local DDGS(verify=False) reuse."""
+    def fetch_ddgs_query(q: str, tl: Optional[str] = None) -> List[Tuple[str, str, str]]:
+        """Primary Yahoo-backed harvester via thread-local DDGS(verify=False) reuse."""
         results_out: List[Tuple[str, str, str]] = []
         if not has_ddgs:
             return results_out
@@ -2014,7 +2022,7 @@ def fetch_deep_linkedin_postings(
                 if ddgs_inst is None:
                     ddgs_inst = DDGS(verify=False)
                     _TLS_DDGS.client = ddgs_inst
-                raw_list = list(ddgs_inst.text(q, max_results=20, timelimit=None))
+                raw_list = list(ddgs_inst.text(q, max_results=15, backend="yahoo", timelimit=tl))
                 for item in raw_list:
                     href = (item.get("href") or "").strip()
                     if not href:
@@ -2029,71 +2037,43 @@ def fetch_deep_linkedin_postings(
                 _TLS_DDGS.client = None
         return results_out
 
-    def fetch_brave_and_yahoo_query(q: str, b_offset: int = 1, use_brave_tf: bool = True) -> List[Tuple[str, str, str]]:
-        """Throttled Brave + Yahoo search harvester that extracts clean titles and snippets."""
+    def fetch_yahoo_direct_query(q: str, b_offset: int = 1, btf_param: str = "") -> List[Tuple[str, str, str]]:
+        """Direct fast Yahoo search harvester that extracts full compText snippets and titles."""
         posts_found: List[Tuple[str, str, str]] = []
         q_enc = urllib.parse.quote(q)
         ua = _USER_AGENTS[b_offset % len(_USER_AGENTS)]
         hdrs = {**headers, "User-Agent": ua}
 
-        # 1. Throttled Brave Search (max 2 concurrent requests to prevent HTTP 429)
-        if b_offset == 1:
-            with _BRAVE_SEMAPHORE:
-                try:
-                    tf_param = brave_tf if use_brave_tf else ""
-                    b_url = f"https://search.brave.com/search?q={q_enc}{tf_param}"
-                    if HAS_CURL_CFFI:
-                        r_brave = c_requests.get(b_url, impersonate="chrome120", timeout=2.8)
-                    else:
-                        r_brave = _POST_SESSION.get(b_url, headers=hdrs, timeout=2.8, verify=False)
-                    if r_brave.status_code == 200 and r_brave.text:
-                        soup = BeautifulSoup(r_brave.text, "html.parser")
-                        for div in soup.select("div.snippet"):
-                            a = div.find("a", href=True)
-                            if not a:
-                                continue
-                            href = a["href"]
-                            if "linkedin.com/posts" in href or "linkedin.com/feed/update" in href:
-                                clean = href.split("?")[0].rstrip("/")
-                                if clean.startswith("http") and not any(bad in clean for bad in ("cold-join", "login", "signup", "/jobs/")):
-                                    t_el = div.select_one(".title, .snippet-title")
-                                    d_el = div.select_one(".snippet-description, .snippet-content, .generic-snippet")
-                                    title_txt = clean_linkedin_boilerplate(t_el.get_text(" ", strip=True) if t_el else a.get_text(" ", strip=True))
-                                    desc_txt = clean_linkedin_boilerplate(d_el.get_text(" ", strip=True) if d_el else "")
-                                    if clean not in [p[0] for p in posts_found]:
-                                        posts_found.append((clean, title_txt, desc_txt))
-                except Exception:
-                    pass
-
-        # 2. Yahoo Search Engine fallback
-        if len(posts_found) < 4:
-            try:
-                url = f"https://search.yahoo.com/search?p={q_enc}&b={b_offset}{yahoo_age if use_brave_tf else ''}"
-                if HAS_CURL_CFFI:
-                    r = c_requests.get(url, impersonate="chrome120", headers=hdrs, timeout=2.8, verify=False)
-                else:
-                    r = _POST_SESSION.get(url, headers=hdrs, timeout=2.8, verify=False)
-                if r.status_code == 200 and r.text:
-                    soup = BeautifulSoup(r.text, "html.parser")
-                    for a in soup.find_all("a", href=True):
-                        real_url = extract_yahoo_redirect_url(a["href"])
-                        if real_url and real_url not in [p[0] for p in posts_found]:
-                            snippet_div = a.find_parent(["li", "div"])
-                            title_txt = clean_linkedin_boilerplate(a.get_text(" ", strip=True))
-                            snip_txt = clean_linkedin_boilerplate(snippet_div.get_text(" ", strip=True) if snippet_div else "")
-                            posts_found.append((real_url, title_txt, snip_txt))
-            except Exception:
-                pass
+        try:
+            url = f"https://search.yahoo.com/search?p={q_enc}&b={b_offset}{btf_param}"
+            if HAS_CURL_CFFI:
+                r = c_requests.get(url, impersonate="chrome120", headers=hdrs, timeout=3.2, verify=False)
+            else:
+                r = _POST_SESSION.get(url, headers=hdrs, timeout=3.2, verify=False)
+            if r.status_code == 200 and r.text:
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    real_url = extract_yahoo_redirect_url(a["href"])
+                    if real_url and real_url not in [p[0] for p in posts_found]:
+                        li_parent = a.find_parent("li") or a.find_parent("div", class_=re.compile(r"algo|dd"))
+                        comp_text = li_parent.find("div", class_="compText") if li_parent else None
+                        title_txt = clean_linkedin_boilerplate(a.get_text(" ", strip=True))
+                        snip_txt = clean_linkedin_boilerplate(
+                            comp_text.get_text(" ", strip=True) if comp_text else (li_parent.get_text(" ", strip=True) if li_parent else "")
+                        )
+                        posts_found.append((real_url, title_txt, snip_txt))
+        except Exception:
+            pass
 
         return posts_found
 
     harvested_by_key: Dict[str, Dict[str, Any]] = {}
     safe_page = max(1, page)
-    target_harvest = min(max(limit, 18), 26)
+    target_harvest = min(max(limit + 15, 35), 55)
 
-    start_idx = ((safe_page - 1) * 5) % max(len(unique_tasks), 1)
+    start_idx = ((safe_page - 1) * 8) % max(len(unique_tasks), 1)
     ordered_tasks = unique_tasks[start_idx:] + unique_tasks[:start_idx]
-    batch_tasks = ordered_tasks[:6]
+    batch_tasks = ordered_tasks[:12]
 
     def _ingest_harvest_items(items: List[Tuple[str, str, str]], prio: Tuple[int, int, int]) -> None:
         for u, title_txt, snip_txt in items:
@@ -2143,17 +2123,27 @@ def fetch_deep_linkedin_postings(
                     existing["search_title"] = title_txt
 
     future_map = {}
-    # Submit top 4 DDGS queries + top 2 Brave/Yahoo queries onto shared _HUNTER_POOL
-    for idx, (q_str, prio) in enumerate(batch_tasks[:4]):
-        fut_ddg = _HUNTER_POOL.submit(fetch_ddgs_query, q_str)
+    # Submit top 10 DDGS Yahoo queries + 4 direct Yahoo queries (including time-filtered & page-2 offset)
+    for idx, (q_str, prio) in enumerate(batch_tasks[:10]):
+        fut_ddg = _HUNTER_POOL.submit(fetch_ddgs_query, q_str, None)
         future_map[fut_ddg] = (prio[0], prio[1], prio[2] + idx)
 
-    for idx, (q_str, prio) in enumerate(batch_tasks[:2]):
-        fut_by = _HUNTER_POOL.submit(fetch_brave_and_yahoo_query, q_str, 1, True)
-        future_map[fut_by] = (prio[0], prio[1], prio[2] + idx)
+    if target_max_age_h is not None:
+        # Also submit time-bounded month/week queries on unquoted queries for high recency density
+        for idx, (q_str, prio) in enumerate(batch_tasks[:3]):
+            unq_q = q_str.replace('"', '')
+            fut_tl = _HUNTER_POOL.submit(fetch_ddgs_query, unq_q, "m")
+            future_map[fut_tl] = (0, prio[1], idx)
+
+    for idx, (q_str, prio) in enumerate(batch_tasks[:3]):
+        fut_yh = _HUNTER_POOL.submit(fetch_yahoo_direct_query, q_str, 1, "")
+        future_map[fut_yh] = (prio[0], prio[1], prio[2] + idx)
+        if yahoo_btf and idx == 0:
+            fut_yh_btf = _HUNTER_POOL.submit(fetch_yahoo_direct_query, q_str.replace('"', ''), 1, "&btf=m")
+            future_map[fut_yh_btf] = (0, prio[1], 0)
 
     try:
-        for fut in as_completed(future_map.keys(), timeout=3.6):
+        for fut in as_completed(future_map.keys(), timeout=4.8):
             try:
                 prio = future_map[fut]
                 results = fut.result()
@@ -2161,7 +2151,15 @@ def fetch_deep_linkedin_postings(
                     _ingest_harvest_items(results, prio)
             except Exception:
                 pass
-            if len(harvested_by_key) >= target_harvest:
+            # Only stop early if we have enough in-window posts (not just old posts)
+            if target_max_age_h is not None:
+                in_win_cnt = sum(
+                    1 for item in harvested_by_key.values()
+                    if item.get("age_hours") is not None and item["age_hours"] <= target_max_age_h
+                )
+                if in_win_cnt >= min(limit, 20) and len(harvested_by_key) >= target_harvest:
+                    break
+            elif len(harvested_by_key) >= target_harvest:
                 break
     except Exception:
         pass
@@ -2276,18 +2274,18 @@ def scrape_single_post_details(
     }
 
     now_ts = time.time()
-    should_fetch_page = (now_ts >= _LI_POST_BLOCKED_UNTIL) and (len(initial_snippet) < 110)
+    should_fetch_page = (now_ts >= _LI_POST_BLOCKED_UNTIL) and (len(initial_snippet) < 550 or "@" not in initial_snippet)
 
     try:
         r = None
         if should_fetch_page:
-            r = _POST_SESSION.get(url, headers=crawler_headers, timeout=3.5, verify=False)
+            r = _POST_SESSION.get(url, headers=crawler_headers, timeout=2.0, verify=False)
             _is_blocked = (
-                r.status_code in (999, 429, 403, 302, 301)
+                r.status_code in (999, 429)
                 or (r.status_code == 200 and ("authwall" in (r.url or "") or "login" in (r.url or "")))
             )
-            if _is_blocked:
-                _LI_POST_BLOCKED_UNTIL = now_ts + 180.0
+            if r.status_code in (999, 429):
+                _LI_POST_BLOCKED_UNTIL = now_ts + 90.0
         else:
             _is_blocked = True
 
@@ -2484,7 +2482,7 @@ def scrape_single_post_details(
 
     # 5. Location detection & accuracy filter (runs BEFORE external link unrolling)
     combined_for_fit = f"{full_text} {og_title} {url_slug_text}".strip()
-    is_loc_matched = check_location_match(combined_for_fit, author_headline, target_location, target_locations)
+    is_loc_matched = check_location_match(combined_for_fit, author_headline, target_location, target_locations, post_url=url)
     detected_loc = extract_post_location(combined_for_fit, author_headline, target_location, target_locations)
 
     active_locs = [l.strip().lower() for l in (target_locations or ([target_location] if target_location else [])) if l and l.strip()]
@@ -2622,7 +2620,7 @@ def _recompute_live_age(date_published: Optional[str], post_url: str = "") -> Tu
                 age_s = f"{int(age_h // 168)}w ago"
             else:
                 age_s = f"{max(1, int(age_h // 720))}mo ago"
-            return dp, age_h, age_s, (age_h <= 24.0)
+            return dp, age_h, age_s, (age_h <= 48.0)
         except Exception:
             pass
     if snow:
@@ -2763,7 +2761,7 @@ def load_verified_posts_from_db(
                     if age_h is None and max_age_hours <= 24:
                         continue
 
-                is_loc_ok = check_location_match(full_text, row.author_headline or "", target_loc_str, active_locs)
+                is_loc_ok = check_location_match(full_text, row.author_headline or "", target_loc_str, active_locs, post_url=row.post_url or "")
                 if active_locs and not is_loc_ok:
                     continue
 
@@ -3156,9 +3154,10 @@ def search_linkedin_recruiter_posts(
             return cached_posts
 
     # Calculate age hours
-    if time_range in ("24h", "1d", "day", "past-24h") or (max_age_hours is not None and max_age_hours <= 24):
+    # Note: On LinkedIn, posts up to 48 hours old are displayed as '1d ago' (1 day).
+    if time_range in ("24h", "1d", "day", "past-24h") or (max_age_hours is not None and max_age_hours <= 48):
         if max_age_hours is None:
-            max_age_hours = 24.0
+            max_age_hours = 48.0
     elif time_range in ("3d", "past-3d") or (max_age_hours is not None and max_age_hours <= 72):
         if max_age_hours is None:
             max_age_hours = 72.0
@@ -3217,7 +3216,7 @@ def search_linkedin_recruiter_posts(
             return voyager_posts
 
     # 1. Deep Multi-Angle LinkedIn Harvester (recruiter posts only)
-    harvest_limit = min(max(limit + 6, 20), 28)
+    harvest_limit = min(max(limit + 15, 35), 55)
     found_posts = fetch_deep_linkedin_postings(
         clean_role, target_locs, limit=harvest_limit, page=page, time_range=time_range
     )
@@ -3235,7 +3234,7 @@ def search_linkedin_recruiter_posts(
             for p in posts_to_scrape
         }
         try:
-            for fut in as_completed(futures, timeout=3.8):
+            for fut in as_completed(futures, timeout=7.5):
                 try:
                     res = fut.result()
                     if not res:
@@ -3268,11 +3267,11 @@ def search_linkedin_recruiter_posts(
     if db_verified_posts:
         detailed_posts.extend(db_verified_posts)
 
-    # Fast fallback if narrow recency window yielded fewer than 3 posts
-    if len(detailed_posts) < 3 and max_age_hours is not None and posts_to_scrape:
+    # Fast fallback if narrow recency window yielded fewer than 6 posts
+    if len(detailed_posts) < 6 and max_age_hours is not None and posts_to_scrape:
         existing_urls = {p.get("post_url") for p in detailed_posts}
-        relaxed_max_age = min(max(max_age_hours * 4.0, 720.0), 2160.0)
-        remaining_candidates = [p for p in posts_to_scrape if p.get("post_url") not in existing_urls][:12]
+        relaxed_max_age = min(max(max_age_hours * 4.5, 336.0), 2160.0)
+        remaining_candidates = [p for p in posts_to_scrape if p.get("post_url") not in existing_urls][:18]
         if remaining_candidates:
             fallback_futures = {
                 _HUNTER_POOL.submit(
@@ -3281,7 +3280,7 @@ def search_linkedin_recruiter_posts(
                 for p in remaining_candidates
             }
             try:
-                for fut in as_completed(fallback_futures, timeout=2.2):
+                for fut in as_completed(fallback_futures, timeout=3.2):
                     try:
                         res = fut.result()
                         if not res:
@@ -3298,6 +3297,22 @@ def search_linkedin_recruiter_posts(
                 for fut in fallback_futures:
                     if not fut.done():
                         fut.cancel()
+        if detailed_posts:
+            save_verified_posts_to_db(detailed_posts, clean_role)
+        # Also pull recent matching posts from SQLite within relaxed_max_age if still < 6
+        if len(detailed_posts) < 6:
+            db_fb_posts = load_verified_posts_from_db(
+                clean_role=clean_role,
+                target_locs=target_locs,
+                max_age_hours=relaxed_max_age,
+                email_only=email_only,
+                blacklisted_set=blacklisted_set,
+                tags=tags,
+            )
+            for db_p in db_fb_posts:
+                if db_p.get("post_url") not in {p.get("post_url") for p in detailed_posts}:
+                    db_p["_24h_fallback"] = True
+                    detailed_posts.append(db_p)
 
     # 3. Deduplicate reposts that share identical normalized commentary text or URL
     deduped_posts: List[Dict[str, Any]] = []

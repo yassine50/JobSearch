@@ -303,7 +303,7 @@ def search_posts(req: PostSearchRequest,
         posts = [
             p for p in posts
             if p.get("is_under_24h")
-            or (p.get("age_hours") is not None and p.get("age_hours") <= 24.0)
+            or (p.get("age_hours") is not None and p.get("age_hours") <= 48.0)
             or (p.get("age_hours") is None and p.get("age_str", "").startswith("<"))
             or p.get("_24h_fallback")  # Best-effort: no posts found in 24h, show best available
         ]

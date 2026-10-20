@@ -345,7 +345,7 @@ export default function JobBoardScraper({
     const matchDays = dateStr.match(/(\d+)\s*(?:d|day)/)
     if (matchDays) {
       const days = parseInt(matchDays[1], 10)
-      if (datePostedFilter === '24h') return false
+      if (datePostedFilter === '24h') return days <= 1
       if (datePostedFilter === 'week' && days > 7) return false
       if (datePostedFilter === 'month' && days > 30) return false
       return true
@@ -358,7 +358,7 @@ export default function JobBoardScraper({
       return true
     }
 
-    if (dateStr.includes('just now') || dateStr.includes('today') || dateStr.includes('minute') || dateStr.includes('min') || dateStr.includes('m ago') || dateStr.includes('sec')) {
+    if (dateStr.includes('just now') || dateStr.includes('today') || dateStr.includes('yesterday') || dateStr.includes('minute') || dateStr.includes('min') || dateStr.includes('m ago') || dateStr.includes('sec')) {
       return true
     }
 
@@ -366,7 +366,7 @@ export default function JobBoardScraper({
     const parsed = Date.parse(dateStr)
     if (!isNaN(parsed)) {
       const diffHours = (Date.now() - parsed) / (1000 * 3600)
-      if (datePostedFilter === '24h') return diffHours <= 24.0
+      if (datePostedFilter === '24h') return diffHours <= 36.0
       if (datePostedFilter === 'week') return diffHours <= 168.0
       if (datePostedFilter === 'month') return diffHours <= 720.0
     }

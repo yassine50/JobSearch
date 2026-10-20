@@ -14,33 +14,61 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("jobsearcher.jobs")
-_JOBS_POOL = ThreadPoolExecutor(max_workers=8)
+_JOBS_POOL = ThreadPoolExecutor(max_workers=20)
 
 def _compute_job_age_hours(date_val: Any) -> Optional[float]:
     if not date_val:
         return None
+    from datetime import timezone
     now = datetime.utcnow()
     # Check date or datetime object
     if isinstance(date_val, datetime):
-        diff = (now - date_val).total_seconds() / 3600.0
-        return max(0.0, round(diff, 1))
+        dt = date_val.astimezone(timezone.utc).replace(tzinfo=None) if date_val.tzinfo is not None else date_val
+        if dt.hour != 0 or dt.minute != 0 or dt.second != 0:
+            diff = (now - dt).total_seconds() / 3600.0
+            return max(0.5, round(diff, 1))
+        days_diff = (now.date() - dt.date()).days
+        if days_diff <= 0:
+            return 4.0
+        if days_diff == 1:
+            return 24.0
+        return float(days_diff * 24)
     elif isinstance(date_val, (date,)):
-        dt = datetime.combine(date_val, datetime.min.time())
-        diff = (now - dt).total_seconds() / 3600.0
-        return max(0.0, round(diff, 1))
+        days_diff = (now.date() - date_val).days
+        if days_diff <= 0:
+            return 4.0
+        if days_diff == 1:
+            return 24.0
+        return float(days_diff * 24)
     
     val_str = str(date_val).strip()
     if not val_str or val_str.lower() in ("none", "nan", "nat", ""):
         return None
 
-    # Check ISO / YYYY-MM-DD
+    # Check full ISO timestamp with time (YYYY-MM-DDTHH:MM...)
+    if re.search(r"\d{4}-\d{1,2}-\d{1,2}[T ]\d{1,2}:\d{2}", val_str):
+        try:
+            dt = datetime.fromisoformat(val_str.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            if dt.hour != 0 or dt.minute != 0 or dt.second != 0:
+                diff = (now - dt).total_seconds() / 3600.0
+                return max(0.5, round(diff, 1))
+        except Exception:
+            pass
+
+    # Check calendar date YYYY-MM-DD
     m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", val_str)
     if m:
         try:
             year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            d = datetime(year, month, day)
-            diff = (now - d).total_seconds() / 3600.0
-            return max(0.0, round(diff, 1))
+            d_date = date(year, month, day)
+            days_diff = (now.date() - d_date).days
+            if days_diff <= 0:
+                return 4.0
+            if days_diff == 1:
+                return 24.0
+            return float(days_diff * 24)
         except Exception:
             pass
 
@@ -758,15 +786,10 @@ def search_jobs(req: SearchRequest,
     fetch_multiplier = 3 if hours_filter and hours_filter <= 24 else 2
     per_country = max((req.results_wanted * fetch_multiplier) // max(len(countries_to_search), 1), min(max(req.results_wanted, 15), 35))
 
-    # For strict 24h searches: remove LinkedIn (it ignores f_TPR for public unauthenticated requests)
-    # Indeed and Job Bank actually honor the hours_old parameter reliably
+    # Keep LinkedIn enabled on 24h searches (f_TPR=r86400 + strict card timestamp verification)
     effective_sites = list(valid_sites)
     if hours_filter and hours_filter <= 24:
-        effective_sites = [s for s in effective_sites if s != "linkedin"]
-        if not effective_sites:
-            effective_sites = ["indeed", "job_bank"]
-        # Ensure indeed and job_bank are included for 24h
-        for must_have in ["indeed", "job_bank"]:
+        for must_have in ["linkedin", "indeed", "job_bank"]:
             if must_have not in effective_sites and must_have in SUPPORTED:
                 effective_sites.append(must_have)
 
@@ -781,9 +804,9 @@ def search_jobs(req: SearchRequest,
     from concurrent.futures import wait as _wait, FIRST_COMPLETED
 
     t_start = _time.time()
-    SCRAPE_BUDGET_S = 6.2     # tight wall-clock budget for scraping fan-out
+    SCRAPE_BUDGET_S = 10.0    # generous wall-clock budget so multi-board/multi-country scrapes complete
     # How many phrasings of the role each board is queried with
-    SITE_VARIANT_LIMIT = {"indeed": 1, "linkedin": 1, "job_bank": 1, "glassdoor": 1, "google": 1}
+    SITE_VARIANT_LIMIT = {"indeed": 2, "linkedin": 2, "job_bank": 1, "glassdoor": 1, "google": 1}
     stats = {"tasks": 0, "tasks_ok": 0, "tasks_failed": 0, "tasks_timed_out": 0,
              "raw": 0, "after_dedup": 0, "after_relevance": 0, "spam_removed": 0,
              "per_site": {}, "queries": {}, "timings": {}}
@@ -1068,18 +1091,18 @@ def search_jobs(req: SearchRequest,
                     out.append(it)
             return out
 
-        # Fast parallel enrichment ONLY for top candidates missing descriptions (skip when already present)
+        # Fast parallel enrichment for candidates missing descriptions so CV matching & email mining work on all top results
         t_enrich = _time.time()
         try:
             missing_desc_indices = [
-                idx for idx, j in enumerate(raw_jobs[:12])
+                idx for idx, j in enumerate(raw_jobs[:35])
                 if len(j.get("description") or "") < 140
-            ][:8]
+            ][:28]
             if missing_desc_indices:
                 def _enrich_idx(idx: int):
                     raw_jobs[idx] = _enrich_job_description(raw_jobs[idx])
                     return raw_jobs[idx]
-                _bounded_map(_enrich_idx, missing_desc_indices, 2.0)
+                _bounded_map(_enrich_idx, missing_desc_indices, 3.5)
         except Exception as desc_err:
             logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
         stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 2)

@@ -54,8 +54,8 @@ _open_adapter = requests.adapters.HTTPAdapter(pool_connections=24, pool_maxsize=
 _OPEN_SESSION.mount("https://", _open_adapter)
 _OPEN_SESSION.mount("http://", _open_adapter)
 
-# Shared bounded worker pool to prevent nested thread explosion on 2-vCPU VPS
-_OPEN_POOL = ThreadPoolExecutor(max_workers=8)
+# Shared bounded worker pool for fast parallel feed & ATS harvesting
+_OPEN_POOL = ThreadPoolExecutor(max_workers=20)
 
 # ── Thread-safe TTL caches ──
 _cache: Dict[str, tuple] = {}
@@ -120,22 +120,34 @@ def html_to_text(raw: str) -> str:
 
 
 def _iso_date(value) -> str:
-    """Normalise epoch seconds/ms or date strings to YYYY-MM-DD ('' if unknown)."""
+    """Normalise epoch seconds/ms or date strings to ISO-8601 (preserving time when available)."""
     if value is None or value == "":
         return ""
     try:
         if isinstance(value, (int, float)) or (isinstance(value, str) and value.strip().isdigit()):
             v = float(value)
             v = v / 1000 if v > 1e12 else v
-            return datetime.fromtimestamp(v, tz=timezone.utc).strftime("%Y-%m-%d")
+            return datetime.fromtimestamp(v, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         s = str(value).strip()
+        if re.search(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", s):
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc)
+                return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            except Exception:
+                pass
         m = re.search(r"\d{4}-\d{2}-\d{2}", s)
-        if m:
+        if m and not re.search(r"\d{2}:\d{2}:\d{2}", s):
             return m.group(0)
         from email.utils import parsedate_to_datetime
-        return parsedate_to_datetime(s).strftime("%Y-%m-%d")
+        dt_rfc = parsedate_to_datetime(s)
+        if dt_rfc.tzinfo is not None:
+            dt_rfc = dt_rfc.astimezone(timezone.utc)
+        return dt_rfc.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
-        return ""
+        m = re.search(r"\d{4}-\d{2}-\d{2}", str(value))
+        return m.group(0) if m else ""
 
 
 def _row(site: str, title: str, company: str, location: str, url: str, description: str = "",
@@ -338,17 +350,20 @@ def load_ats_companies() -> List[dict]:
             companies = json.load(f)
     except Exception:
         companies = []
-    seen = {(c["vendor"], c["slug"].lower()) for c in companies}
-    for vendor, slug in _EXTRA_ATS:
-        if (vendor, slug) not in seen:
-            companies.append({"name": _pretty_slug(slug), "vendor": vendor, "slug": slug})
-    return companies
+    priority = [{"name": _pretty_slug(slug), "vendor": vendor, "slug": slug} for vendor, slug in _EXTRA_ATS]
+    seen = {(c["vendor"], c["slug"].lower()) for c in priority}
+    for c in companies:
+        key = (c["vendor"], c["slug"].lower())
+        if key not in seen:
+            seen.add(key)
+            priority.append(c)
+    return priority
 
 
 def _greenhouse_board(slug: str, company: str = "") -> List[dict]:
     def _build():
         data = _get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs", cache_raw=False) or {}
-        return [_greenhouse_row(j, slug, company) for j in data.get("jobs", [])]
+        return [_greenhouse_row(j, slug, company) for j in (data.get("jobs") or [])[:250]]
     return _get_parsed(f"ats:gh:{slug}", _build)
 
 
@@ -364,8 +379,8 @@ def _greenhouse_row(j: dict, slug: str, company: str = "") -> dict:
 
 def _lever_board(slug: str, company: str = "") -> List[dict]:
     def _build():
-        data = _get(f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"}, cache_raw=False) or []
-        return [_lever_row(j, slug, company) for j in data if isinstance(j, dict)]
+        data = _get(f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json", "limit": 150}, cache_raw=False) or []
+        return [_lever_row(j, slug, company) for j in data[:150] if isinstance(j, dict)]
     return _get_parsed(f"ats:lever:{slug}", _build)
 
 
@@ -476,8 +491,41 @@ def _serper_ats_discovery(query: str, location: str, api_key: str, hours_old: Op
     return rows
 
 
+def _yahoo_ats_discovery(query: str, location: str, relevant: Callable[[dict], bool]) -> List[dict]:
+    """Free web-wide ATS discovery via Yahoo Search across Greenhouse, Lever, and Ashby."""
+    loc = "" if (location or "").lower() in ("", "worldwide", "global", "all") else f" {location}"
+
+    def one_host(host: str) -> List[str]:
+        try:
+            from ddgs import DDGS
+            with DDGS() as ddgs:
+                res = list(ddgs.text(f"site:{host} {query}{loc}", max_results=10, backend="yahoo"))
+            return [r.get("href", "") for r in res if r.get("href")]
+        except Exception:
+            return []
+
+    urls: List[str] = []
+    futs_h = [_OPEN_POOL.submit(one_host, h) for h in SERPER_ATS_HOSTS]
+    wait(futs_h, timeout=2.4)
+    for fh in futs_h:
+        if fh.done() and not fh.exception():
+            for link in fh.result():
+                if parse_ats_url(link) and link not in urls:
+                    urls.append(link)
+
+    if not urls:
+        return []
+    futs = [_OPEN_POOL.submit(fetch_ats_posting, u) for u in urls[:14]]
+    wait(futs, timeout=2.4)
+    rows = [f.result() for f in futs if f.done() and not f.exception() and f.result()]
+    for r in rows:
+        r.pop("_gh_slug", None)
+        r.pop("_gh_id", None)
+    return rows
+
+
 def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
-    companies = load_ats_companies()[:16]
+    companies = load_ats_companies()[:30]
 
     def one(c):
         try:
@@ -489,13 +537,13 @@ def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
 
     out: List[dict] = []
     futs = [_OPEN_POOL.submit(one, c) for c in companies]
-    wait(futs, timeout=4.2)
+    wait(futs, timeout=3.5)
     for f in futs:
         if f.done() and not f.exception():
             out.extend(f.result())
 
-    # Enrich descriptions for matched Greenhouse rows (up to 6) in parallel
-    gh_missing = [r for r in out if not r.get("description") and r.get("_gh_slug") and r.get("_gh_id")][:6]
+    # Enrich descriptions for matched Greenhouse rows (up to 10) in parallel
+    gh_missing = [r for r in out if not r.get("description") and r.get("_gh_slug") and r.get("_gh_id")][:10]
     if gh_missing:
         def _fill_gh(r):
             try:
@@ -505,7 +553,7 @@ def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
             except Exception:
                 pass
         gh_futs = [_OPEN_POOL.submit(_fill_gh, r) for r in gh_missing]
-        wait(gh_futs, timeout=2.0)
+        wait(gh_futs, timeout=1.8)
 
     for r in out:
         r.pop("_gh_slug", None)
@@ -608,12 +656,16 @@ def fetch_open_source(site: str, queries: List[str], *,
     elif site == "hackernews":
         rows = _hackernews(query)
     elif site == "ats":
-        rows.extend(_ats_direct(query, relevant))
+        ats_futs = [
+            _OPEN_POOL.submit(_ats_direct, query, relevant),
+            _OPEN_POOL.submit(_yahoo_ats_discovery, query, location or country, relevant),
+        ]
         if serper_key:
-            try:
-                rows.extend(_serper_ats_discovery(query, location or country, serper_key, hours_old))
-            except Exception as e:
-                logger.info(f"[OpenSources] Serper ATS discovery failed: {e}")
+            ats_futs.append(_OPEN_POOL.submit(_serper_ats_discovery, query, location or country, serper_key, hours_old))
+        wait(ats_futs, timeout=5.5)
+        for af in ats_futs:
+            if af.done() and not af.exception():
+                rows.extend(af.result() or [])
     elif site == "official_apis":
         from .official_apis import fetch_official
         rows = fetch_official(query, country=country, location=location, hours_old=hours_old)

@@ -65,8 +65,8 @@ def _get_shared_linkedin_session():
 
 class LinkedIn(Scraper):
     base_url = "https://www.linkedin.com"
-    delay = 0.05
-    band_delay = 0.05
+    delay = 0.25
+    band_delay = 0.25
     jobs_per_page = 25
 
     def __init__(
@@ -106,7 +106,7 @@ class LinkedIn(Scraper):
         seconds_old = (
             scraper_input.hours_old * 3600 if scraper_input.hours_old else None
         )
-        max_pages = 1 if scraper_input.results_wanted <= 25 else 2
+        max_pages = 2 if scraper_input.results_wanted <= 25 else 3
         continue_search = (
             lambda: len(job_list) < scraper_input.results_wanted and start < 1000 and request_count < max_pages
         )
@@ -144,6 +144,14 @@ class LinkedIn(Scraper):
                     params=params,
                     timeout=4.2,
                 )
+                if response.status_code == 429:
+                    time.sleep(0.8)
+                    response = self.session.get(
+                        f"{self.base_url}/jobs-guest/jobs/api/seeMoreJobPostings/search?",
+                        params=params,
+                        headers={"User-Agent": f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/12{random.randint(0,4)}.0.0.0 Safari/537.36"},
+                        timeout=4.2,
+                    )
                 if response.status_code not in range(200, 400):
                     if response.status_code == 429:
                         err = (
@@ -239,25 +247,27 @@ class LinkedIn(Scraper):
             )
         date_posted = None
         if datetime_tag:
-            if "datetime" in datetime_tag.attrs:
+            tag_text = datetime_tag.get_text(strip=True).lower()
+            now_dt = datetime.now()
+            if "hour" in tag_text or re.search(r"\b\d+\s*h\b", tag_text) or any(
+                w in tag_text for w in ["minute", "min", "just now", "moment", "today"]
+            ):
+                date_posted = now_dt
+            elif "datetime" in datetime_tag.attrs:
                 datetime_str = datetime_tag["datetime"]
                 try:
                     date_posted = datetime.strptime(datetime_str, "%Y-%m-%d")
                 except:
                     date_posted = None
             if not date_posted:
-                tag_text = datetime_tag.get_text(strip=True).lower()
-                now_dt = datetime.now()
-                if "hour" in tag_text or re.search(r"\b\d+\s*h\b", tag_text):
-                    m_h = re.search(r"(\d+)", tag_text)
-                    hrs = int(m_h.group(1)) if m_h else 1
-                    date_posted = now_dt - timedelta(hours=hrs)
-                elif "day" in tag_text or re.search(r"\b\d+\s*d\b", tag_text):
+                if "day" in tag_text or re.search(r"\b\d+\s*d\b", tag_text):
                     m_d = re.search(r"(\d+)", tag_text)
                     days = int(m_d.group(1)) if m_d else 1
                     date_posted = now_dt - timedelta(days=days)
-                elif any(w in tag_text for w in ["minute", "min", "just now", "moment"]):
-                    date_posted = now_dt
+                elif "week" in tag_text or re.search(r"\b\d+\s*w\b", tag_text):
+                    m_w = re.search(r"(\d+)", tag_text)
+                    weeks = int(m_w.group(1)) if m_w else 1
+                    date_posted = now_dt - timedelta(weeks=weeks)
         job_details = {}
         if full_descr:
             job_details = self._get_job_details(job_id)

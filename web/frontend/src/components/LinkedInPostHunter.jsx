@@ -319,13 +319,13 @@ export default function LinkedInPostHunter({
       }
 
       if (postFilters.datePosted === '24h') {
-        const is24h = p.is_under_24h || (p.age_hours != null && p.age_hours <= 24)
+        const is24h = p.is_under_24h || (p.age_hours != null && p.age_hours <= 48) || p._24h_fallback
         if (!is24h) return false
       } else if (postFilters.datePosted === 'week') {
-        const isWeek = p.age_hours != null ? p.age_hours <= 168 : true
+        const isWeek = (p.age_hours != null ? p.age_hours <= 168 : true) || p._24h_fallback
         if (!isWeek) return false
       } else if (postFilters.datePosted === 'month') {
-        const isMonth = p.age_hours != null ? p.age_hours <= 720 : true
+        const isMonth = (p.age_hours != null ? p.age_hours <= 720 : true) || p._24h_fallback
         if (!isMonth) return false
       }
 
