@@ -33,7 +33,11 @@
       "destination": "/terms.html"
     },
     {
-      "source": "/api/:path*",
+      "source": "/api/smtp-relay",
+      "destination": "/api/smtp-relay"
+    },
+    {
+      "source": "/api/:path((?!smtp-relay).*)",
       "destination": "https://job-searcher-api-ux4i.onrender.com/api/:path*"
     },
     {

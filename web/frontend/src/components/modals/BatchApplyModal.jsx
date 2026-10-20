@@ -23,6 +23,7 @@ export default function BatchApplyModal({
   const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, currentTarget: '' })
   const [results, setResults] = useState(null)
+  const [errorBanner, setErrorBanner] = useState('')
   const [cvFilename, setCvFilename] = useState(() => getCached('/cv/info')?.filename || '')
 
   useEffect(() => {
@@ -76,6 +77,7 @@ export default function BatchApplyModal({
     if (isOpen && candidateItems.length > 0) {
       setSelectedIds(candidateItems.map(i => i.id))
       setResults(null)
+      setErrorBanner('')
       setProgress({ current: 0, total: candidateItems.length, currentTarget: '' })
     }
   }, [isOpen, items.length])
@@ -104,62 +106,136 @@ export default function BatchApplyModal({
     }
 
     setSending(true)
-    setProgress({ current: 0, total: selectedList.length, currentTarget: 'Initializing batch...' })
+    setErrorBanner('')
+    setProgress({ current: 0, total: selectedList.length, currentTarget: 'Connecting to email server...' })
+
+    const CHUNK_SIZE = 5
+    let totalApplied = 0
+    let allErrors = []
+    let dispatchedItems = []
 
     try {
-      if (source === 'linkedin') {
-        const payload = {
-          applications: selectedList.map(item => ({
-            post_url: item.post_url || item.raw?.post_url || item.raw?.url || item.raw?.job_url || '',
-            role_title: item.title,
-            company: item.company,
-            recruiter_name: item.name,
-            recruiter_email: item.email,
-            post_text: item.raw.full_text || item.raw.post_snippet || '',
-            customize_cv: true,
-            site: item.raw?.site || 'linkedin'
-          }))
+      for (let offset = 0; offset < selectedList.length; offset += CHUNK_SIZE) {
+        const chunk = selectedList.slice(offset, offset + CHUNK_SIZE)
+        const targetNames = chunk.map(c => c.company).slice(0, 3).join(', ')
+        setProgress({
+          current: offset,
+          total: selectedList.length,
+          currentTarget: `Sending (${offset + 1}–${Math.min(offset + chunk.length, selectedList.length)} of ${selectedList.length}): ${targetNames}...`
+        })
+
+        if (source === 'linkedin') {
+          const payload = {
+            applications: chunk.map(item => ({
+              post_url: item.post_url || item.raw?.post_url || item.raw?.url || item.raw?.job_url || '',
+              role_title: item.title,
+              company: item.company,
+              recruiter_name: item.name,
+              recruiter_email: item.email,
+              post_text: item.raw.full_text || item.raw.post_snippet || '',
+              customize_cv: false,
+              site: item.raw?.site || 'linkedin'
+            }))
+          }
+
+          const { data } = await client.post('/linkedin-posts/batch-auto-apply', payload)
+          const chunkApplied = Number(data?.applied ?? 0)
+          totalApplied += chunkApplied
+          if (Array.isArray(data?.errors) && data.errors.length > 0) {
+            allErrors.push(...data.errors)
+          }
+
+          const sentSet = Array.isArray(data?.dispatched_emails)
+            ? new Set(data.dispatched_emails.map(e => String(e).toLowerCase()))
+            : null
+          const succeededInChunk = sentSet
+            ? chunk.filter(i => sentSet.has(String(i.email).trim().toLowerCase()))
+            : (chunkApplied > 0 ? chunk.slice(0, chunkApplied) : [])
+
+          if (succeededInChunk.length > 0) {
+            dispatchedItems.push(...succeededInChunk)
+            if (onSuccess) onSuccess(succeededInChunk)
+          }
+
+          // Fail-fast if the very first chunk sent 0 emails
+          if (offset === 0 && chunkApplied === 0) {
+            const firstErr = data?.errors?.[0] || 'Could not dispatch emails. Please check your Gmail App Password in Settings.'
+            throw new Error(firstErr)
+          }
+        } else {
+          // Formal Job Boards batch auto-apply
+          const payload = {
+            customize_cv: selectedList.length <= 3,
+            delay_seconds: 0.1,
+            jobs: chunk.map(item => ({
+              job_title: item.title,
+              company: item.company,
+              job_url: item.raw?.url || item.raw?.job_url || item.raw?.job_url_direct || item.post_url || '',
+              location: item.raw?.location || '',
+              to_email: item.email,
+              to_name: item.name,
+              job_description: item.raw?.description || '',
+              match_score: item.score || 0,
+              site: item.raw?.site || ''
+            }))
+          }
+
+          const { data } = await client.post('/email/batch-auto-apply', payload)
+          const chunkApplied = Number(data?.applied ?? 0)
+          totalApplied += chunkApplied
+          const details = Array.isArray(data?.details) ? data.details : []
+          details.forEach(d => {
+            if (d.status === 'failed' && d.error) {
+              allErrors.push(`${d.company || 'Job'}: ${d.error}`)
+            }
+          })
+
+          const succeededInChunk = chunk.filter((_, idx) => details[idx]?.status === 'sent')
+          const toMark = succeededInChunk.length > 0 ? succeededInChunk : (chunkApplied > 0 ? chunk.slice(0, chunkApplied) : [])
+          if (toMark.length > 0) {
+            dispatchedItems.push(...toMark)
+            if (onSuccess) {
+              onSuccess(toMark.map(i => ({
+                ...i,
+                url: i.raw?.url || i.raw?.job_url || i.raw?.job_url_direct || i.post_url || '',
+                ...i.raw
+              })))
+            }
+          }
+
+          if (offset === 0 && chunkApplied === 0) {
+            const firstErr = allErrors[0] || 'Could not dispatch emails. Please check your Gmail App Password in Settings.'
+            throw new Error(firstErr)
+          }
         }
 
-        const { data } = await client.post('/linkedin-posts/batch-auto-apply', payload)
-        setResults(data)
+        setProgress({
+          current: Math.min(offset + chunk.length, selectedList.length),
+          total: selectedList.length,
+          currentTarget: `Dispatched ${totalApplied} of ${selectedList.length} applications...`
+        })
+      }
+
+      if (totalApplied > 0) {
+        setResults({ applied: totalApplied, total_requested: selectedList.length, errors: allErrors })
         confetti({ particleCount: 150, spread: 90, origin: { y: 0.6 } })
-        toast(`⚡ Successfully dispatched ${data.applied || selectedList.length} applications!`, 'success')
-        if (onSuccess) onSuccess(selectedList)
+        toast(`⚡ Successfully dispatched ${totalApplied} application${totalApplied === 1 ? '' : 's'}!`, 'success')
       } else {
-        // Formal Job Boards batch auto-apply
-        const payload = {
-          customize_cv: true,
-          jobs: selectedList.map(item => ({
-            job_title: item.title,
-            company: item.company,
-            job_url: item.raw?.url || item.raw?.job_url || item.raw?.job_url_direct || item.post_url || '',
-            location: item.raw?.location || '',
-            to_email: item.email,
-            to_name: item.name,
-            job_description: item.raw?.description || '',
-            match_score: item.score || 0,
-            site: item.raw?.site || ''
-          }))
-        }
-
-        const { data } = await client.post('/email/batch-auto-apply', payload)
-        setResults(data)
-        confetti({ particleCount: 150, spread: 90, origin: { y: 0.6 } })
-        toast(`⚡ Batch auto-apply completed: ${data.applied || selectedList.length} emails dispatched!`, 'success')
-        if (onSuccess) onSuccess(selectedList.map(i => ({
-          ...i,
-          url: i.raw?.url || i.raw?.job_url || i.raw?.job_url_direct || i.post_url || '',
-          ...i.raw
-        })))
+        const msg = allErrors[0] || 'No emails were sent. Please verify your Gmail App Password in Settings.'
+        setErrorBanner(msg)
+        toast(msg, 'error')
       }
     } catch (err) {
-      const detail = err?.response?.data?.detail
-      if (typeof detail === 'string' && detail.toLowerCase().includes('smtp')) {
+      const detail = err?.response?.data?.detail || err?.message || 'Batch application dispatch failed'
+      if (typeof detail === 'string' && detail.toLowerCase().includes('configure your gmail smtp')) {
         onClose()
         if (onOpenSmtpPrompt) onOpenSmtpPrompt()
+      } else if (totalApplied > 0) {
+        setResults({ applied: totalApplied, total_requested: selectedList.length, errors: [...allErrors, String(detail)] })
+        toast(`Sent ${totalApplied} application(s), then stopped: ${detail}`, 'error')
       } else {
-        toast(detail || err.message || 'Batch application dispatch failed', 'error')
+        setErrorBanner(String(detail))
+        toast(String(detail), 'error')
       }
     } finally {
       setSending(false)
@@ -214,9 +290,20 @@ export default function BatchApplyModal({
               <div>
                 <h4 className="text-lg font-bold text-white">Batch Applications Dispatched!</h4>
                 <p className="text-xs text-slate-400 mt-1">
-                  Sent {results.applied || selectedIds.length} verified applications. Saved to your Pipeline Tracker.
+                  Sent {Number(results.applied ?? 0)} verified application{Number(results.applied ?? 0) === 1 ? '' : 's'}. Saved to your Pipeline Tracker.
                 </p>
               </div>
+              {Array.isArray(results.errors) && results.errors.length > 0 && (
+                <div className="text-left bg-amber-950/40 border border-amber-700/50 rounded-xl p-3 max-h-28 overflow-y-auto text-[11px] text-amber-200 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-300">
+                    <AlertCircle size={13} />
+                    <span>{results.errors.length} item(s) skipped or failed:</span>
+                  </div>
+                  {results.errors.slice(0, 5).map((e, idx) => (
+                    <div key={idx} className="truncate">• {e}</div>
+                  ))}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -227,6 +314,29 @@ export default function BatchApplyModal({
             </div>
           ) : (
             <>
+              {errorBanner && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-700/60 text-rose-200 flex items-start gap-2.5 text-xs">
+                  <AlertCircle size={16} className="text-rose-400 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-rose-300">Email Dispatch Error</div>
+                    <div className="text-[11px] mt-0.5 break-words">{errorBanner}</div>
+                  </div>
+                </div>
+              )}
+              {sending && progress.total > 0 && (
+                <div className="p-3 rounded-xl bg-blue-950/40 border border-blue-700/50 space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-blue-200 font-semibold">
+                    <span className="truncate pr-2">{progress.currentTarget || 'Dispatching emails...'}</span>
+                    <span className="shrink-0 font-mono">{progress.current} / {progress.total}</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+                      style={{ width: `${Math.max(8, Math.round((progress.current / Math.max(1, progress.total)) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
               {/* Controls Bar */}
               <div className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <button

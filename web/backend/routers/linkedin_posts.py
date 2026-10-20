@@ -20,7 +20,7 @@ from ..linkedin_post_hunter import (
     extract_post_required_years,
     _SEARCH_CACHE
 )
-from .email import _dispatch_smtp
+from .email import _dispatch_smtp, _build_mime_message, BatchSmtpSession, SmtpFatalError
 from ..email_templates import get_application_email, detect_language
 
 router = APIRouter(prefix="/api/linkedin-posts", tags=["linkedin-posts"])
@@ -419,7 +419,8 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
                            db: Session = Depends(get_db),
                            current_user: models.User = Depends(get_current_user)):
     """
-    Dispatches 1-click tailored applications to a batch of selected LinkedIn recruiter posts.
+    Dispatches 1-click tailored applications to a batch of selected LinkedIn recruiter posts
+    using a single persistent SMTP/Relay session.
     """
     items = req.posts or req.applications or []
     if not items:
@@ -431,10 +432,12 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
         raise HTTPException(400, "Please configure your Gmail SMTP settings first in Settings.")
 
     cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
-    cv_text = cv.text_content if cv else ""
+    sender_name = settings.sender_name or current_user.name
 
     applied_count = 0
     errors = []
+    dispatched_emails = []
+    prepared = []
 
     for item in items:
         clean_email = item.recruiter_email.strip().lower()
@@ -443,13 +446,11 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
             continue
 
         try:
-            # Automatic batch send strictly attaches authentic original CV
             custom_pdf_bytes = None
             custom_pdf_name = None
             effective_score = 75
-
-            sender_name = settings.sender_name or current_user.name
             r_name = item.recruiter_name or "Hiring Team"
+
             auto_subject, auto_body, _ = get_application_email(
                 role_title=item.role_title,
                 company=item.company,
@@ -464,12 +465,58 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
             subject = getattr(item, "custom_subject", None) or auto_subject
             body = getattr(item, "custom_body", None) or auto_body
 
-            _dispatch_smtp(settings, current_user, clean_email, r_name,
-                           subject, body, True, db,
-                           custom_attachment_bytes=custom_pdf_bytes,
-                           custom_attachment_name=custom_pdf_name)
+            msg = _build_mime_message(
+                settings=settings,
+                current_user=current_user,
+                to_email=clean_email,
+                to_name=r_name,
+                subject=subject,
+                body=body,
+                attach_cv=True,
+                db=db,
+                custom_attachment_bytes=custom_pdf_bytes,
+                custom_attachment_name=custom_pdf_name,
+                cached_cv=cv,
+            )
 
-            now = datetime.utcnow()
+            prepared.append({
+                "item": item,
+                "to_email": clean_email,
+                "r_name": r_name,
+                "subject": subject,
+                "body": body,
+                "effective_score": effective_score,
+                "custom_pdf_bytes": custom_pdf_bytes,
+                "custom_pdf_name": custom_pdf_name,
+                "raw_mime_bytes": msg.as_bytes(),
+            })
+        except Exception as prep_err:
+            errors.append(f"{item.company} ({clean_email}): {str(prep_err)}")
+
+    if prepared:
+        try:
+            with BatchSmtpSession(settings) as smtp_session:
+                send_results = smtp_session.send_many_raw(
+                    [{"to_email": p["to_email"], "raw_mime_bytes": p["raw_mime_bytes"]} for p in prepared]
+                )
+        except SmtpFatalError as fatal_err:
+            raise HTTPException(400, str(fatal_err))
+        except HTTPException:
+            raise
+        except Exception as batch_err:
+            raise HTTPException(500, f"Batch dispatch failed: {str(batch_err)}")
+
+        now = datetime.utcnow()
+        for idx, p in enumerate(prepared):
+            res = send_results[idx] if idx < len(send_results) else {"status": "failed", "error": "No result returned"}
+            item = p["item"]
+            clean_email = p["to_email"]
+            r_name = p["r_name"]
+
+            if res.get("status") != "sent":
+                errors.append(f"{item.company} ({clean_email}): {res.get('error', 'Failed to send')}")
+                continue
+
             app = models.Application(
                 user_id=current_user.id,
                 title=item.role_title,
@@ -477,12 +524,12 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
                 location="LinkedIn Post",
                 url=item.post_url,
                 status="applied",
-                match_score=effective_score,
-                notes=f"Batch applied to LinkedIn Recruiter {r_name} ({clean_email})" + (" (Tailored CV)" if custom_pdf_bytes else ""),
+                match_score=p["effective_score"],
+                notes=f"Batch applied to LinkedIn Recruiter {r_name} ({clean_email})" + (" (Tailored CV)" if p["custom_pdf_bytes"] else ""),
                 applied_at=now,
                 follow_up_date=now + timedelta(days=4),
-                tailored_cv_filename=custom_pdf_name,
-                tailored_cv_data=custom_pdf_bytes
+                tailored_cv_filename=p["custom_pdf_name"],
+                tailored_cv_data=p["custom_pdf_bytes"]
             )
             db.add(app)
             db.commit()
@@ -493,8 +540,8 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
                 application_id=app.id,
                 to_email=clean_email,
                 to_name=r_name,
-                subject=subject,
-                body=body,
+                subject=p["subject"],
+                body=p["body"],
                 template_type="auto_apply",
                 status="sent"
             )
@@ -502,15 +549,18 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
             db.commit()
 
             applied_count += 1
-        except Exception as item_err:
-            errors.append(f"{item.company} ({clean_email}): {str(item_err)}")
+            dispatched_emails.append(clean_email)
+
+    if applied_count == 0 and errors:
+        raise HTTPException(400, errors[0])
 
     return {
-        "success": True,
+        "success": applied_count > 0,
         "applied": applied_count,
+        "dispatched_emails": dispatched_emails,
         "total_requested": len(items),
         "errors": errors,
-        "message": f"🎉 Successfully dispatched {applied_count} applications with auto-tailored CVs (95–100% fit)!"
+        "message": f"🎉 Successfully dispatched {applied_count} application(s)!"
     }
 
 @router.post("/auto-apply")
@@ -622,6 +672,8 @@ def auto_apply_to_post(req: PostApplyRequest,
             "tailored_filename": custom_pdf_name,
             "tailored": bool(custom_pdf_bytes)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Failed to send email to recruiter: {str(e)}")
 

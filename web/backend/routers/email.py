@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
-import smtplib, time, re
+import smtplib, time, re, os, socket, ssl, base64, hmac, hashlib
+import requests as _http_requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -15,6 +16,41 @@ from ..auth import get_current_user
 from ..email_templates import get_application_email, get_followup_email, detect_language
 
 router = APIRouter(prefix="/api/email", tags=["email"])
+
+# Cache whether outbound TCP 465/587 is blocked by the cloud firewall (e.g. Render Free Tier)
+_DIRECT_SMTP_BLOCKED = bool(os.getenv("RENDER"))
+_RELAY_SECRET = os.getenv("SMTP_RELAY_SECRET", "jobsearcher-smtp-relay-v1-2026")
+_RELAY_URL = os.getenv("SMTP_RELAY_URL", "https://www.cvtomatch.com/api/smtp-relay")
+
+
+class SmtpFatalError(Exception):
+    """Raised when SMTP authentication or configuration fails globally so batches abort immediately."""
+    pass
+
+
+def _resolve_ipv4(host: str, port: int) -> str:
+    """Resolve hostname strictly to IPv4 so Linux/GCP VMs never hang on dead IPv6 routes."""
+    try:
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        if infos:
+            return infos[0][4][0]
+    except Exception:
+        pass
+    return host
+
+
+class _IPv4SMTP(smtplib.SMTP):
+    def _get_socket(self, host, port, timeout):
+        ipv4_host = _resolve_ipv4(host, port)
+        return socket.create_connection((ipv4_host, port), timeout, self.source_address)
+
+
+class _IPv4SMTP_SSL(smtplib.SMTP_SSL):
+    def _get_socket(self, host, port, timeout):
+        ipv4_host = _resolve_ipv4(host, port)
+        new_socket = socket.create_connection((ipv4_host, port), timeout, self.source_address)
+        return self.context.wrap_socket(new_socket, server_hostname=self._host)
+
 
 TEMPLATES = {
     "application": {
@@ -142,18 +178,17 @@ class SettingsRequest(BaseModel):
     smtp_password: str
     sender_name: str
 
-def _dispatch_smtp(settings, current_user, to_email, to_name, subject, body, attach_cv, db,
-                   custom_attachment_bytes: Optional[bytes] = None,
-                   custom_attachment_name: Optional[str] = None):
-    """Low-level robust SMTP sender with UTF-8 headers and CV attachment."""
-    if not settings or not settings.smtp_user:
-        raise HTTPException(400, "Email not configured. Go to Settings → Email Setup.")
-    clean_pwd = ''.join(settings.smtp_password.split())
-
+def _build_mime_message(settings, current_user, to_email: str, to_name: str,
+                        subject: str, body: str, attach_cv: bool, db,
+                        custom_attachment_bytes: Optional[bytes] = None,
+                        custom_attachment_name: Optional[str] = None,
+                        cached_cv=None) -> MIMEMultipart:
+    """Constructs a RFC-compliant MIME message with UTF-8 headers and CV attachment."""
     msg = MIMEMultipart("mixed")
     msg["Subject"] = Header(subject, "utf-8")
-    sender_display = settings.sender_name or current_user.name
-    msg["From"]    = f"{Header(sender_display, 'utf-8')} <{settings.smtp_user}>"
+    sender_display = (settings.sender_name if settings else None) or current_user.name
+    sender_addr = settings.smtp_user if settings else current_user.email
+    msg["From"]    = f"{Header(sender_display, 'utf-8')} <{sender_addr}>"
     recipient_name = to_name or "Hiring Team"
     msg["To"]      = f"{Header(recipient_name, 'utf-8')} <{to_email}>"
     msg.attach(MIMEText(body, "plain", "utf-8"))
@@ -164,25 +199,284 @@ def _dispatch_smtp(settings, current_user, to_email, to_name, subject, body, att
             part.add_header('Content-Disposition', 'attachment', filename=custom_attachment_name)
             msg.attach(part)
         else:
-            cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+            cv = cached_cv if cached_cv is not None else (
+                db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first() if db else None
+            )
             if cv and cv.file_data:
-                part = MIMEApplication(bytes(cv.file_data), Name=cv.filename or "Resume.pdf")
-                part.add_header('Content-Disposition', 'attachment', filename=cv.filename or "Resume.pdf")
+                fname = cv.filename or "Resume.pdf"
+                part = MIMEApplication(bytes(cv.file_data), Name=fname)
+                part.add_header('Content-Disposition', 'attachment', filename=fname)
                 msg.attach(part)
             elif cv and cv.text_content:
                 part = MIMEApplication(cv.text_content.encode("utf-8"), Name="Resume.txt")
                 part.add_header('Content-Disposition', 'attachment', filename="Resume.txt")
                 msg.attach(part)
+    return msg
 
-    if getattr(settings, "auth_method", "smtp") == "gmail_oauth":
-        from ..gmail_oauth import send_raw_via_gmail
-        send_raw_via_gmail(settings.gmail_refresh_token, msg.as_bytes())
-        return
 
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as s:
-        s.ehlo(); s.starttls(); s.ehlo()
-        s.login(settings.smtp_user, clean_pwd)
-        s.sendmail(settings.smtp_user, to_email, msg.as_string())
+def _open_direct_smtp(settings, timeout: int = 5):
+    """
+    Opens an authenticated IPv4 SMTP connection (trying SSL 465 or STARTTLS 587).
+    Raises SmtpFatalError on bad credentials (535) and ConnectionError if outbound SMTP is blocked.
+    """
+    global _DIRECT_SMTP_BLOCKED
+    host = (settings.smtp_host or "smtp.gmail.com").strip()
+    port = int(settings.smtp_port or 587)
+    clean_pwd = "".join((settings.smtp_password or "").split())
+    if not clean_pwd:
+        raise SmtpFatalError("Gmail App Password is missing. Go to Settings → Email Setup and save your 16-character App Password.")
+
+    # Try preferred port first, then fallback port (465 SSL <-> 587 STARTTLS)
+    attempts = [(host, 465, True), (host, 587, False)] if port == 465 else [(host, port, port == 465), (host, 465, True)]
+    last_conn_err = None
+
+    for h, p, use_ssl in attempts:
+        conn = None
+        try:
+            if use_ssl:
+                ctx = ssl.create_default_context()
+                conn = _IPv4SMTP_SSL(h, p, timeout=timeout, context=ctx)
+                conn.ehlo()
+            else:
+                conn = _IPv4SMTP(h, p, timeout=timeout)
+                conn.ehlo()
+                conn.starttls(context=ssl.create_default_context())
+                conn.ehlo()
+            conn.login(settings.smtp_user, clean_pwd)
+            return conn
+        except smtplib.SMTPAuthenticationError as auth_err:
+            if conn:
+                try: conn.close()
+                except Exception: pass
+            raise SmtpFatalError(
+                f"Gmail rejected your credentials ({auth_err.smtp_code}). Please verify your Gmail address and 16-character App Password in Settings."
+            )
+        except (socket.timeout, ConnectionError, OSError, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected) as conn_err:
+            if conn:
+                try: conn.close()
+                except Exception: pass
+            last_conn_err = conn_err
+            continue
+        except Exception as other_err:
+            if conn:
+                try: conn.close()
+                except Exception: pass
+            last_conn_err = other_err
+            break
+
+    _DIRECT_SMTP_BLOCKED = True
+    raise ConnectionError(f"Outbound SMTP connection blocked or timed out: {last_conn_err}")
+
+
+def _dispatch_via_https_relay(settings, messages_payload: List[dict]) -> List[dict]:
+    """
+    Sends 1 or more MIME messages over HTTPS (port 443) via the Vercel SMTP relay
+    (/api/smtp-relay) when outbound TCP ports 465/587 are blocked by the cloud host (e.g. Render).
+    Each item in messages_payload is {"to_email": str, "raw_mime_b64": str}.
+    """
+    clean_pwd = "".join((settings.smtp_password or "").split())
+    if not clean_pwd:
+        raise SmtpFatalError("Gmail App Password is missing. Go to Settings → Email Setup.")
+
+    sig = hmac.new(
+        _RELAY_SECRET.encode("utf-8"),
+        b"cvtomatch-smtp-dispatch",
+        hashlib.sha256,
+    ).hexdigest()
+
+    try:
+        resp = _http_requests.post(
+            _RELAY_URL,
+            headers={
+                "Content-Type": "application/json",
+                "X-Relay-Key": sig,
+            },
+            json={
+                "smtp_host": settings.smtp_host or "smtp.gmail.com",
+                "smtp_port": int(settings.smtp_port or 587),
+                "smtp_user": settings.smtp_user,
+                "smtp_password": clean_pwd,
+                "messages": messages_payload,
+            },
+            timeout=28,
+        )
+    except Exception as req_err:
+        raise SmtpFatalError(f"HTTPS email relay unreachable: {req_err}")
+
+    if resp.status_code in (401, 403):
+        try:
+            err_msg = resp.json().get("error") or resp.text[:200]
+        except Exception:
+            err_msg = resp.text[:200]
+        raise SmtpFatalError(err_msg)
+
+    if resp.status_code >= 400:
+        try:
+            err_msg = resp.json().get("error") or f"Relay HTTP {resp.status_code}"
+        except Exception:
+            err_msg = f"Relay HTTP {resp.status_code}: {resp.text[:200]}"
+        raise SmtpFatalError(err_msg)
+
+    data = resp.json()
+    return data.get("results") or []
+
+
+class BatchSmtpSession:
+    """
+    Reusable email dispatch session across a batch of emails:
+    - Reuses a single persistent IPv4 SMTP connection when outbound SMTP is open.
+    - Automatically routes via HTTPS (port 443) relay when running on Render or when SMTP ports are blocked.
+    - Supports Gmail OAuth API (HTTPS port 443) when auth_method == 'gmail_oauth'.
+    """
+    def __init__(self, settings):
+        if not settings or not settings.smtp_user:
+            raise HTTPException(400, "Email not configured. Go to Settings → Email Setup.")
+        self.settings = settings
+        self.is_oauth = getattr(settings, "auth_method", "smtp") == "gmail_oauth" and bool(getattr(settings, "gmail_refresh_token", ""))
+        self._smtp_conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        if self._smtp_conn is not None:
+            try:
+                self._smtp_conn.quit()
+            except Exception:
+                try:
+                    self._smtp_conn.close()
+                except Exception:
+                    pass
+            self._smtp_conn = None
+
+    def send_raw(self, to_email: str, raw_mime_bytes: bytes):
+        global _DIRECT_SMTP_BLOCKED
+        if self.is_oauth:
+            from ..gmail_oauth import send_raw_via_gmail
+            send_raw_via_gmail(self.settings.gmail_refresh_token, raw_mime_bytes)
+            return
+
+        if not _DIRECT_SMTP_BLOCKED:
+            try:
+                if self._smtp_conn is None:
+                    self._smtp_conn = _open_direct_smtp(self.settings, timeout=5)
+                self._smtp_conn.sendmail(self.settings.smtp_user, to_email, raw_mime_bytes)
+                return
+            except SmtpFatalError:
+                raise
+            except (smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError, smtplib.SMTPSenderRefused) as smtp_err:
+                err_s = str(smtp_err)
+                if "5.4.5" in err_s or "Daily user sending limit" in err_s:
+                    raise SmtpFatalError(f"Gmail daily sending limit reached: {err_s}")
+                raise
+            except Exception:
+                # Connection dropped or blocked — fall back to HTTPS relay
+                self.close()
+                _DIRECT_SMTP_BLOCKED = True
+
+        # Fallback: send over HTTPS port 443 via Vercel SMTP relay
+        results = _dispatch_via_https_relay(
+            self.settings,
+            [{"to_email": to_email, "raw_mime_b64": base64.b64encode(raw_mime_bytes).decode("ascii")}],
+        )
+        if not results or results[0].get("status") != "sent":
+            err_detail = results[0].get("error", "Failed to send email") if results else "Empty relay response"
+            if "5.4.5" in err_detail or "Daily user sending limit" in err_detail:
+                raise SmtpFatalError(f"Gmail daily sending limit reached: {err_detail}")
+            raise RuntimeError(err_detail)
+
+    def send_many_raw(self, items: List[dict]) -> List[dict]:
+        """
+        Dispatches a list of {"to_email": str, "raw_mime_bytes": bytes} items in a single
+        persistent session (1 TLS connection total, even over HTTPS relay).
+        Returns [{"to_email": str, "status": "sent"|"failed", "error": Optional[str]}].
+        """
+        global _DIRECT_SMTP_BLOCKED
+        if not items:
+            return []
+
+        if self.is_oauth:
+            from ..gmail_oauth import send_raw_via_gmail
+            out = []
+            for idx, it in enumerate(items):
+                try:
+                    send_raw_via_gmail(self.settings.gmail_refresh_token, it["raw_mime_bytes"])
+                    out.append({"index": idx, "to_email": it["to_email"], "status": "sent"})
+                except HTTPException as he:
+                    if he.status_code in (400, 401):
+                        raise SmtpFatalError(he.detail)
+                    out.append({"index": idx, "to_email": it["to_email"], "status": "failed", "error": str(he.detail)})
+                except Exception as e:
+                    out.append({"index": idx, "to_email": it["to_email"], "status": "failed", "error": str(e)})
+            return out
+
+        if not _DIRECT_SMTP_BLOCKED:
+            try:
+                if self._smtp_conn is None:
+                    self._smtp_conn = _open_direct_smtp(self.settings, timeout=5)
+                out = []
+                for idx, it in enumerate(items):
+                    try:
+                        self._smtp_conn.sendmail(self.settings.smtp_user, it["to_email"], it["raw_mime_bytes"])
+                        out.append({"index": idx, "to_email": it["to_email"], "status": "sent"})
+                    except Exception as item_err:
+                        err_s = str(item_err)
+                        if "5.4.5" in err_s or "Daily user sending limit" in err_s:
+                            raise SmtpFatalError(f"Gmail daily sending limit reached: {err_s}")
+                        out.append({"index": idx, "to_email": it["to_email"], "status": "failed", "error": err_s})
+                return out
+            except SmtpFatalError:
+                raise
+            except Exception:
+                self.close()
+                _DIRECT_SMTP_BLOCKED = True
+
+        # Send entire batch in ONE HTTPS relay request (single TLS connection on Vercel)
+        payload = [
+            {
+                "to_email": it["to_email"],
+                "raw_mime_b64": base64.b64encode(it["raw_mime_bytes"]).decode("ascii"),
+            }
+            for it in items
+        ]
+        return _dispatch_via_https_relay(self.settings, payload)
+
+
+def _dispatch_smtp(settings, current_user, to_email, to_name, subject, body, attach_cv, db,
+                   custom_attachment_bytes: Optional[bytes] = None,
+                   custom_attachment_name: Optional[str] = None,
+                   smtp_session: Optional[BatchSmtpSession] = None,
+                   cached_cv=None):
+    """Low-level robust SMTP/Relay/OAuth sender with UTF-8 headers and CV attachment."""
+    if not settings or not settings.smtp_user:
+        raise HTTPException(400, "Email not configured. Go to Settings → Email Setup.")
+
+    msg = _build_mime_message(
+        settings=settings,
+        current_user=current_user,
+        to_email=to_email,
+        to_name=to_name,
+        subject=subject,
+        body=body,
+        attach_cv=attach_cv,
+        db=db,
+        custom_attachment_bytes=custom_attachment_bytes,
+        custom_attachment_name=custom_attachment_name,
+        cached_cv=cached_cv,
+    )
+    raw_bytes = msg.as_bytes()
+
+    try:
+        if smtp_session is not None:
+            smtp_session.send_raw(to_email, raw_bytes)
+        else:
+            with BatchSmtpSession(settings) as session:
+                session.send_raw(to_email, raw_bytes)
+    except SmtpFatalError as fatal_err:
+        raise HTTPException(400, str(fatal_err))
 
 @router.post("/template")
 def get_template(req: TemplateRequest,
@@ -290,6 +584,8 @@ def send_email(req: SendEmailRequest,
             "tailored": bool(custom_pdf_bytes),
             "tailored_score": effective_score
         }
+    except HTTPException:
+        raise
     except Exception as e:
         log = models.EmailLog(
             user_id=current_user.id,
@@ -339,6 +635,7 @@ def auto_apply(req: AutoApplyRequest,
         raise HTTPException(400, "Please configure your Gmail SMTP settings first in Settings.")
 
     sender_name = settings.sender_name or current_user.name
+    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
 
     # User-clicked Auto-Apply: attach an honest per-job tailored COPY (re-ordered, nothing added).
     # Falls back to the original CV (cv.file_data) when tailoring is off, fails, or doesn't help.
@@ -348,7 +645,6 @@ def auto_apply(req: AutoApplyRequest,
     original_score = None
     if req.customize_cv:
         from ..tailoring import honest_tailored_attachment
-        cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
         custom_pdf_bytes, custom_pdf_name, original_score, t_score = honest_tailored_attachment(
             cv, req.job_title, req.company, req.job_description)
         if custom_pdf_bytes and t_score is not None:
@@ -358,39 +654,38 @@ def auto_apply(req: AutoApplyRequest,
         dispatched = []
         logs_to_create = []
 
-        # 1. Iterate through all verified recruiter emails and send personalized email to each
-        for i, r in enumerate(recipients_list):
-            r_name = r.name if r.name and r.name.strip() else "Hiring Team"
-            auto_subj, auto_body, _ = get_application_email(
-                role_title=req.job_title,
-                company=req.company,
-                recruiter_name=r_name,
-                post_text=req.job_description,
-                sender_name=sender_name,
-                sender_email=current_user.email,
-                lang=req.lang,
-                site=req.site,
-                url=req.job_url
-            )
-            subj_to_send = req.custom_subject or auto_subj
-            body_to_send = req.custom_body or auto_body
+        # 1. Iterate through all verified recruiter emails using a single shared SMTP session
+        with BatchSmtpSession(settings) as smtp_session:
+            for i, r in enumerate(recipients_list):
+                r_name = r.name if r.name and r.name.strip() else "Hiring Team"
+                auto_subj, auto_body, _ = get_application_email(
+                    role_title=req.job_title,
+                    company=req.company,
+                    recruiter_name=r_name,
+                    post_text=req.job_description,
+                    sender_name=sender_name,
+                    sender_email=current_user.email,
+                    lang=req.lang,
+                    site=req.site,
+                    url=req.job_url
+                )
+                subj_to_send = req.custom_subject or auto_subj
+                body_to_send = req.custom_body or auto_body
 
-            _dispatch_smtp(settings, current_user, r.email.strip(), r_name,
-                           subj_to_send, body_to_send, True, db,
-                           custom_attachment_bytes=custom_pdf_bytes,
-                           custom_attachment_name=custom_pdf_name)
+                _dispatch_smtp(settings, current_user, r.email.strip(), r_name,
+                               subj_to_send, body_to_send, True, db,
+                               custom_attachment_bytes=custom_pdf_bytes,
+                               custom_attachment_name=custom_pdf_name,
+                               smtp_session=smtp_session,
+                               cached_cv=cv)
 
-            dispatched.append({"email": r.email.strip(), "name": r_name})
-            logs_to_create.append({
-                "to_email": r.email.strip(),
-                "to_name": r_name,
-                "subject": subj_to_send,
-                "body": body_to_send
-            })
-
-            # Gentle spacing between sends to multiple recruiters
-            if i < len(recipients_list) - 1:
-                time.sleep(0.4)
+                dispatched.append({"email": r.email.strip(), "name": r_name})
+                logs_to_create.append({
+                    "to_email": r.email.strip(),
+                    "to_name": r_name,
+                    "subject": subj_to_send,
+                    "body": body_to_send
+                })
 
         if not dispatched:
             raise HTTPException(500, "Failed to dispatch email to recruiters.")
@@ -461,6 +756,8 @@ def auto_apply(req: AutoApplyRequest,
             "original_score": original_score,
             "tailored_score": effective_score
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Auto-apply failed: {str(e)}")
 
@@ -468,177 +765,183 @@ def auto_apply(req: AutoApplyRequest,
 def batch_auto_apply(req: BatchAutoApplyRequest,
                      db: Session = Depends(get_db),
                      current_user: models.User = Depends(get_current_user)):
-    """Batch Auto-Apply: Iterates through qualified jobs, dynamically tailors CVs, and sends applications to ALL verified recruiters found for each position."""
+    """Batch Auto-Apply: Iterates through qualified jobs, reuses a single SMTP/Relay session, and sends applications to verified recruiters."""
     settings = db.query(models.EmailSettings).filter(
         models.EmailSettings.user_id == current_user.id).first()
     if not settings or not settings.smtp_user:
         raise HTTPException(400, "Please configure your Gmail SMTP settings first in Settings.")
 
+    from ..bounce_cleaner import get_blacklisted_emails
+    blacklisted = get_blacklisted_emails(db, current_user.id)
     cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
     sender_name = settings.sender_name or current_user.name
     results = []
     applied_count = 0
     failed_count = 0
 
-    for idx, item in enumerate(req.jobs):
-        recipients_list: List[RecipientItem] = []
-        if item.recipients:
-            for r in item.recipients:
-                if r.email and "@" in r.email:
-                    recipients_list.append(r)
-        if not recipients_list:
-            if item.to_email and "@" in item.to_email:
-                recipients_list.append(RecipientItem(email=item.to_email.strip(), name=item.to_name or "Hiring Team"))
+    with BatchSmtpSession(settings) as smtp_session:
+        for idx, item in enumerate(req.jobs):
+            recipients_list: List[RecipientItem] = []
+            if item.recipients:
+                for r in item.recipients:
+                    if r.email and "@" in r.email:
+                        recipients_list.append(r)
+            if not recipients_list:
+                if item.to_email and "@" in item.to_email:
+                    recipients_list.append(RecipientItem(email=item.to_email.strip(), name=item.to_name or "Hiring Team"))
 
-        # Deduplicate
-        seen_emails = set()
-        deduped = []
-        for r in recipients_list:
-            clean = r.email.strip().lower()
-            if clean not in seen_emails:
-                seen_emails.add(clean)
-                deduped.append(r)
-        recipients_list = deduped
+            # Deduplicate
+            seen_emails = set()
+            deduped = []
+            for r in recipients_list:
+                clean = r.email.strip().lower()
+                if clean not in seen_emails:
+                    seen_emails.add(clean)
+                    deduped.append(r)
+            recipients_list = deduped
 
-        # Filter out blacklisted emails
-        from ..bounce_cleaner import get_blacklisted_emails
-        blacklisted = get_blacklisted_emails(db, current_user.id)
-        recipients_list = [r for r in recipients_list if r.email.strip().lower() not in blacklisted]
+            # Filter out blacklisted emails
+            recipients_list = [r for r in recipients_list if r.email.strip().lower() not in blacklisted]
 
-        if not recipients_list:
-            results.append({"company": item.company, "title": item.job_title, "status": "skipped", "error": "Recruiter email(s) are blacklisted (prior bounce/block)"})
-            continue
+            if not recipients_list:
+                results.append({"company": item.company, "title": item.job_title, "status": "skipped", "error": "Recruiter email(s) are blacklisted (prior bounce/block)"})
+                continue
 
-        # User-clicked batch: honest per-job tailored COPY; original CV on fallback
-        custom_pdf_bytes = None
-        custom_pdf_name = None
-        item_score = item.match_score or 0
-        item_orig_score = None
-        if req.customize_cv and item.customize_cv:
-            from ..tailoring import honest_tailored_attachment
-            custom_pdf_bytes, custom_pdf_name, item_orig_score, t_score = honest_tailored_attachment(
-                cv, item.job_title, item.company, item.job_description)
-            if custom_pdf_bytes and t_score is not None:
-                item_score = t_score
+            # For small batches (<= 3), optionally tailor per job; for larger batches attach original CV for fast dispatch
+            custom_pdf_bytes = None
+            custom_pdf_name = None
+            item_score = item.match_score or 0
+            item_orig_score = None
+            if req.customize_cv and item.customize_cv and len(req.jobs) <= 3:
+                from ..tailoring import honest_tailored_attachment
+                custom_pdf_bytes, custom_pdf_name, item_orig_score, t_score = honest_tailored_attachment(
+                    cv, item.job_title, item.company, item.job_description)
+                if custom_pdf_bytes and t_score is not None:
+                    item_score = t_score
 
-        try:
-            job_dispatched = []
-            logs_to_create = []
+            try:
+                job_dispatched = []
+                logs_to_create = []
 
-            for r_idx, r in enumerate(recipients_list):
-                r_name = r.name if r.name and r.name.strip() else "Hiring Team"
-                auto_subj, auto_body, _ = get_application_email(
-                    role_title=item.job_title,
-                    company=item.company,
-                    recruiter_name=r_name,
-                    post_text=item.job_description,
-                    sender_name=sender_name,
-                    sender_email=current_user.email,
-                    lang=getattr(item, "lang", None),
-                    site=getattr(item, "site", None),
-                    url=item.job_url
-                )
-                subject = getattr(item, "custom_subject", None) or auto_subj
-                body = getattr(item, "custom_body", None) or auto_body
+                for r_idx, r in enumerate(recipients_list):
+                    r_name = r.name if r.name and r.name.strip() else "Hiring Team"
+                    auto_subj, auto_body, _ = get_application_email(
+                        role_title=item.job_title,
+                        company=item.company,
+                        recruiter_name=r_name,
+                        post_text=item.job_description,
+                        sender_name=sender_name,
+                        sender_email=current_user.email,
+                        lang=getattr(item, "lang", None),
+                        site=getattr(item, "site", None),
+                        url=item.job_url
+                    )
+                    subject = getattr(item, "custom_subject", None) or auto_subj
+                    body = getattr(item, "custom_body", None) or auto_body
 
-                _dispatch_smtp(settings, current_user, r.email.strip(), r_name,
-                               subject, body, True, db,
-                               custom_attachment_bytes=custom_pdf_bytes,
-                               custom_attachment_name=custom_pdf_name)
+                    _dispatch_smtp(settings, current_user, r.email.strip(), r_name,
+                                   subject, body, True, db,
+                                   custom_attachment_bytes=custom_pdf_bytes,
+                                   custom_attachment_name=custom_pdf_name,
+                                   smtp_session=smtp_session,
+                                   cached_cv=cv)
 
-                job_dispatched.append(r.email.strip())
-                logs_to_create.append({
-                    "to_email": r.email.strip(),
-                    "to_name": r_name,
-                    "subject": subject,
-                    "body": body
+                    job_dispatched.append(r.email.strip())
+                    logs_to_create.append({
+                        "to_email": r.email.strip(),
+                        "to_name": r_name,
+                        "subject": subject,
+                        "body": body
+                    })
+
+                if not job_dispatched:
+                    raise ValueError(f"Could not dispatch email to any recruiter for {item.company}")
+
+                # Update existing saved application or create new Application in Tracker
+                notes_recipients = ", ".join(f"{r.name} ({r.email})" if r.name and r.name != "Hiring Team" else r.email for r in recipients_list)
+                existing_app = db.query(models.Application).filter(
+                    models.Application.user_id == current_user.id,
+                    (models.Application.company.ilike(item.company) | (models.Application.url == (item.job_url or 'nonexistent')))
+                ).first()
+
+                if existing_app:
+                    app = existing_app
+                    app.status = "applied"
+                    app.applied_at = datetime.utcnow()
+                    app.follow_up_date = datetime.utcnow() + timedelta(days=5)
+                    app.title = item.job_title or app.title
+                    app.match_score = item_score or app.match_score
+                    app.notes = (app.notes or "") + f"\nBatch auto-applied to {len(job_dispatched)} recruiter(s): {notes_recipients}" + (" (Tailored CV)" if custom_pdf_bytes else "")
+                    if custom_pdf_bytes:
+                        app.tailored_cv_filename = custom_pdf_name
+                        app.tailored_cv_data = custom_pdf_bytes
+                    db.commit()
+                    db.refresh(app)
+                else:
+                    app = models.Application(
+                        user_id=current_user.id,
+                        title=item.job_title,
+                        company=item.company,
+                        location=item.location or "",
+                        url=item.job_url or "",
+                        status="applied",
+                        match_score=item_score,
+                        notes=f"Batch auto-applied to {len(job_dispatched)} recruiter(s): {notes_recipients}" + (" (Tailored CV)" if custom_pdf_bytes else ""),
+                        applied_at=datetime.utcnow(),
+                        follow_up_date=datetime.utcnow() + timedelta(days=5),
+                        tailored_cv_filename=custom_pdf_name,
+                        tailored_cv_data=custom_pdf_bytes
+                    )
+                    db.add(app)
+                    db.commit()
+                    db.refresh(app)
+
+                for l_item in logs_to_create:
+                    log = models.EmailLog(
+                        user_id=current_user.id,
+                        application_id=app.id,
+                        to_email=l_item["to_email"],
+                        to_name=l_item["to_name"],
+                        subject=l_item["subject"],
+                        body=l_item["body"],
+                        template_type="auto_apply",
+                        status="sent"
+                    )
+                    db.add(log)
+
+                db.commit()
+
+                results.append({
+                    "company": item.company,
+                    "title": item.job_title,
+                    "to_emails": job_dispatched,
+                    "status": "sent",
+                    "app_id": app.id,
+                    "recipients_count": len(job_dispatched),
+                    "tailored": bool(custom_pdf_bytes),
+                    "original_score": item_orig_score,
+                    "tailored_score": item_score
                 })
+                applied_count += 1
+            except HTTPException:
+                # Fatal auth/config/relay error — abort batch immediately if nothing sent yet
+                if applied_count == 0:
+                    raise
+                failed_count += 1
+                break
+            except Exception as err:
+                results.append({
+                    "company": item.company,
+                    "title": item.job_title,
+                    "to_email": recipients_list[0].email if recipients_list else "",
+                    "status": "failed",
+                    "error": str(err)
+                })
+                failed_count += 1
 
-                if r_idx < len(recipients_list) - 1:
-                    time.sleep(0.4)
-
-            if not job_dispatched:
-                raise ValueError(f"Could not dispatch email to any recruiter for {item.company}")
-
-            # Update existing saved application or create new Application in Tracker
-            notes_recipients = ", ".join(f"{r.name} ({r.email})" if r.name and r.name != "Hiring Team" else r.email for r in recipients_list)
-            existing_app = db.query(models.Application).filter(
-                models.Application.user_id == current_user.id,
-                (models.Application.company.ilike(item.company) | (models.Application.url == (item.job_url or 'nonexistent')))
-            ).first()
-
-            if existing_app:
-                app = existing_app
-                app.status = "applied"
-                app.applied_at = datetime.utcnow()
-                app.follow_up_date = datetime.utcnow() + timedelta(days=5)
-                app.title = item.job_title or app.title
-                app.match_score = item_score or app.match_score
-                app.notes = (app.notes or "") + f"\nBatch auto-applied to {len(job_dispatched)} recruiter(s): {notes_recipients}" + (" (Tailored CV)" if custom_pdf_bytes else "")
-                if custom_pdf_bytes:
-                    app.tailored_cv_filename = custom_pdf_name
-                    app.tailored_cv_data = custom_pdf_bytes
-                db.commit()
-                db.refresh(app)
-            else:
-                app = models.Application(
-                    user_id=current_user.id,
-                    title=item.job_title,
-                    company=item.company,
-                    location=item.location or "",
-                    url=item.job_url or "",
-                    status="applied",
-                    match_score=item_score,
-                    notes=f"Batch auto-applied to {len(job_dispatched)} recruiter(s): {notes_recipients}" + (" (Tailored CV)" if custom_pdf_bytes else ""),
-                    applied_at=datetime.utcnow(),
-                    follow_up_date=datetime.utcnow() + timedelta(days=5),
-                    tailored_cv_filename=custom_pdf_name,
-                    tailored_cv_data=custom_pdf_bytes
-                )
-                db.add(app)
-                db.commit()
-                db.refresh(app)
-
-            for l_item in logs_to_create:
-                log = models.EmailLog(
-                    user_id=current_user.id,
-                    application_id=app.id,
-                    to_email=l_item["to_email"],
-                    to_name=l_item["to_name"],
-                    subject=l_item["subject"],
-                    body=l_item["body"],
-                    template_type="auto_apply",
-                    status="sent"
-                )
-                db.add(log)
-
-            db.commit()
-
-            results.append({
-                "company": item.company,
-                "title": item.job_title,
-                "to_emails": job_dispatched,
-                "status": "sent",
-                "app_id": app.id,
-                "recipients_count": len(job_dispatched),
-                "tailored": bool(custom_pdf_bytes),
-                "original_score": item_orig_score,
-                "tailored_score": item_score
-            })
-            applied_count += 1
-
-            # Polite delay between jobs
-            if idx < len(req.jobs) - 1 and req.delay_seconds > 0:
-                time.sleep(req.delay_seconds)
-        except Exception as err:
-            results.append({
-                "company": item.company,
-                "title": item.job_title,
-                "to_email": recipients_list[0].email if recipients_list else "",
-                "status": "failed",
-                "error": str(err)
-            })
-            failed_count += 1
+    if applied_count == 0 and failed_count > 0:
+        first_err = next((r.get("error") for r in results if r.get("error")), "Failed to send batch emails.")
+        raise HTTPException(400, first_err)
 
     return {
         "total": len(req.jobs),
@@ -729,22 +1032,17 @@ def send_test_email(db: Session = Depends(get_db),
     if not settings or not settings.smtp_user:
         raise HTTPException(400, "Email not configured")
     try:
-        import smtplib as _smtp
-        from email.mime.text import MIMEText as _MT
-        msg = _MT("This is a test email from your Job Searcher app! Your SMTP settings are working correctly.", "plain", "utf-8")
-        msg["Subject"] = "Job Searcher — Test Email ✅"
-        msg["From"] = settings.smtp_user
-        msg["To"] = settings.smtp_user
-        if getattr(settings, "auth_method", "smtp") == "gmail_oauth":
-            from ..gmail_oauth import send_raw_via_gmail
-            send_raw_via_gmail(settings.gmail_refresh_token, msg.as_bytes())
-            return {"message": f"Test email sent to {settings.smtp_user}!"}
-        with _smtp.SMTP(settings.smtp_host, settings.smtp_port) as s:
-            s.ehlo(); s.starttls(); s.ehlo()
-            clean_pwd = "".join(settings.smtp_password.split())
-            s.login(settings.smtp_user, clean_pwd)
-            s.sendmail(settings.smtp_user, settings.smtp_user, msg.as_string())
-        return {"message": "Test email sent!"}
+        _dispatch_smtp(
+            settings=settings,
+            current_user=current_user,
+            to_email=settings.smtp_user,
+            to_name=settings.sender_name or current_user.name,
+            subject="Job Searcher — Test Email ✅",
+            body="This is a test email from your Job Searcher app! Your email dispatch settings are working correctly.",
+            attach_cv=False,
+            db=db,
+        )
+        return {"message": f"Test email sent to {settings.smtp_user}!"}
     except HTTPException:
         raise
     except Exception as e:
