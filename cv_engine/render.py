@@ -413,6 +413,17 @@ def render_cv_pdf(
                     stack_str = ", ".join(_esc(s) for s in e.stack[:12])
                     block.append(Paragraph(f"<i>{lbl}:</i> {stack_str}", st_stack))
 
+        def _workday_safe_date(dt: str) -> str:
+            """
+            Workday ATS Date-Range Compatibility (ported from ai-job-search 05-cv-templates.md):
+            Workday's PDF resume parser only recognizes ASCII hyphens (-) in employment and
+            education date ranges and silently drops dates separated by Unicode en/em dashes.
+            """
+            if not dt:
+                return ""
+            s = re.sub(r"\s*[\u2012\u2013\u2014\u2015\u2212]+\s*", " - ", dt.strip())
+            return re.sub(r"\s{2,}", " ", s)
+
         def render_experience():
             if not cv.experience:
                 return []
@@ -423,7 +434,7 @@ def render_cv_pdf(
                 block = [
                     two_col(
                         Paragraph(_esc(left_top), st_role),
-                        Paragraph(_esc(e.date_text), st_date),
+                        Paragraph(_esc(_workday_safe_date(e.date_text)), st_date),
                         ratio=0.74,
                         top=0 if idx == 0 else item_gap,
                     )
@@ -471,7 +482,7 @@ def render_cv_pdf(
                     )
                     right_parts.append(link_markup(lbl, u))
                 if e.date_text:
-                    right_parts.append(_esc(e.date_text))
+                    right_parts.append(_esc(_workday_safe_date(e.date_text)))
                 right_html = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(right_parts)
                 right_style = st_link if right_parts and e.links else st_date
 
@@ -499,7 +510,7 @@ def render_cv_pdf(
                 block = [
                     two_col(
                         Paragraph(_esc(top_left), st_role),
-                        Paragraph(_esc(e.date_text), st_date),
+                        Paragraph(_esc(_workday_safe_date(e.date_text)), st_date),
                         ratio=0.78,
                         top=0 if idx == 0 else (item_gap * 0.85),
                     )

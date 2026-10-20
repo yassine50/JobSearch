@@ -4,7 +4,7 @@ import {
   Search, ExternalLink, Bookmark, Mail, Check, Sparkles,
   Building2, MapPin, Loader2, ShieldCheck, AlertCircle, Send,
   ChevronDown, ChevronUp, Zap, SlidersHorizontal, RotateCcw,
-  Globe, Briefcase, Compass, Columns, LayoutGrid, CheckCheck, Target
+  Globe, Briefcase, Compass, Columns, LayoutGrid, CheckCheck, Target, TrendingUp
 } from 'lucide-react'
 import ScoreBadge from '../ScoreBadge.jsx'
 import AutoApplyModal from '../modals/AutoApplyModal.jsx'
@@ -14,6 +14,7 @@ import BatchEasyApplyModal from '../modals/BatchEasyApplyModal.jsx'
 import SmtpPromptModal from '../modals/SmtpPromptModal.jsx'
 import InMailPitchModal from '../modals/InMailPitchModal.jsx'
 import PostReaderModal from '../modals/PostReaderModal.jsx'
+import UpskillModal from '../modals/UpskillModal.jsx'
 import JobFilterDrawer from './JobFilterDrawer.jsx'
 import LocationPickerModal from '../hunter/LocationPickerModal.jsx'
 import JobDetailWorkbench from './JobDetailWorkbench.jsx'
@@ -63,6 +64,7 @@ export default function JobBoardScraper({
 
   const [localJobs, setLocalJobs] = useState(jobs || [])
   const [hasSerperKey, setHasSerperKey] = useState(false)
+  const [upskillOpen, setUpskillOpen] = useState(false)
 
   // Every search automatically covers ALL sources — the user doesn't pick boards.
   // Google Jobs is only included when a Serper key is configured (otherwise it returns nothing).
@@ -174,6 +176,9 @@ export default function JobBoardScraper({
 
   const getHoursOld = (filterSet = filters) => {
     if (!filterSet?.datePosted || filterSet.datePosted === 'all') return null
+    if (filterSet.datePosted === '1h') return 1
+    if (filterSet.datePosted === '3h') return 3
+    if (filterSet.datePosted === '6h') return 6
     if (filterSet.datePosted === '24h') return 24
     if (filterSet.datePosted === 'week') return 168
     if (filterSet.datePosted === 'month') return 720
@@ -319,10 +324,12 @@ export default function JobBoardScraper({
 
   const checkJobAgeMatch = (job, datePostedFilter) => {
     if (!datePostedFilter || datePostedFilter === 'all') return true
-    
+    const subDayMap = { '1h': 1.0, '3h': 3.0, '6h': 6.0, '24h': 24.0 }
+    const isSubDayOr24h = datePostedFilter in subDayMap
+
     // If backend computed age_hours
     if (job.age_hours != null) {
-      if (datePostedFilter === '24h') return job.age_hours <= 24.0
+      if (isSubDayOr24h) return job.age_hours <= subDayMap[datePostedFilter]
       if (datePostedFilter === 'week') return job.age_hours <= 168.0
       if (datePostedFilter === 'month') return job.age_hours <= 720.0
     }
@@ -333,8 +340,8 @@ export default function JobBoardScraper({
     // Fallback check on date_posted or age_str
     const dateStr = String(job.date_posted || job.age_str || '').toLowerCase().trim()
     if (!dateStr) {
-      // If 24h filter is strictly requested and we have no proof it's fresh, exclude it
-      if (datePostedFilter === '24h') return false
+      // If sub-day or 24h filter is strictly requested and we have no proof it's fresh, exclude it
+      if (isSubDayOr24h) return false
       return true
     }
 
@@ -345,6 +352,7 @@ export default function JobBoardScraper({
     const matchDays = dateStr.match(/(\d+)\s*(?:d|day)/)
     if (matchDays) {
       const days = parseInt(matchDays[1], 10)
+      if (datePostedFilter in { '1h': 1, '3h': 1, '6h': 1 }) return false
       if (datePostedFilter === '24h') return days <= 1
       if (datePostedFilter === 'week' && days > 7) return false
       if (datePostedFilter === 'month' && days > 30) return false
@@ -354,24 +362,27 @@ export default function JobBoardScraper({
     const matchHours = dateStr.match(/(\d+)\s*(?:h|hr|hour)/)
     if (matchHours) {
       const hours = parseInt(matchHours[1], 10)
-      if (datePostedFilter === '24h') return hours <= 24
+      if (isSubDayOr24h) return hours <= subDayMap[datePostedFilter]
       return true
     }
 
-    if (dateStr.includes('just now') || dateStr.includes('today') || dateStr.includes('yesterday') || dateStr.includes('minute') || dateStr.includes('min') || dateStr.includes('m ago') || dateStr.includes('sec')) {
+    if (dateStr.includes('just now') || dateStr.includes('minute') || dateStr.includes('min') || dateStr.includes('m ago') || dateStr.includes('sec')) {
       return true
+    }
+    if (dateStr.includes('today') || dateStr.includes('yesterday')) {
+      return !['1h', '3h', '6h'].includes(datePostedFilter)
     }
 
     // Try parsing ISO date
     const parsed = Date.parse(dateStr)
     if (!isNaN(parsed)) {
       const diffHours = (Date.now() - parsed) / (1000 * 3600)
-      if (datePostedFilter === '24h') return diffHours <= 36.0
+      if (isSubDayOr24h) return diffHours <= (datePostedFilter === '24h' ? 36.0 : subDayMap[datePostedFilter] + 0.5)
       if (datePostedFilter === 'week') return diffHours <= 168.0
       if (datePostedFilter === 'month') return diffHours <= 720.0
     }
 
-    return datePostedFilter !== '24h'
+    return !isSubDayOr24h
   }
 
   // Multi-criteria client-side filtering matching the 14 LinkedIn categories
@@ -619,6 +630,9 @@ export default function JobBoardScraper({
               className="bg-[#050811]/90 border border-white/[0.08] rounded-xl px-2.5 py-1.5 text-xs text-slate-300 font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value="all">Date: Any time</option>
+              <option value="1h">⚡ Past 1 hour</option>
+              <option value="3h">⚡ Past 3 hours</option>
+              <option value="6h">⚡ Past 6 hours</option>
               <option value="24h">Past 24 hours</option>
               <option value="week">Past week</option>
               <option value="month">Past month</option>
@@ -697,6 +711,17 @@ export default function JobBoardScraper({
             >
               <Globe size={12} className={filters.internationalOnly ? 'text-amber-400' : 'text-slate-500'} />
               <span>International (LMIA)</span>
+            </button>
+
+            {/* Upskill & Skill-Gap Heatmap Button (ported from ai-job-search /upskill) */}
+            <button
+              type="button"
+              onClick={() => setUpskillOpen(true)}
+              className="px-3 py-1.5 rounded-xl font-bold border bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border-indigo-500/40 transition cursor-pointer flex items-center gap-1.5"
+              title="Open Aggregate Skill-Gap Heatmap & Prioritized Learning Roadmap across these jobs"
+            >
+              <TrendingUp size={12} className="text-indigo-400" />
+              <span>Upskill Heatmap</span>
             </button>
 
             {/* Reset active filters */}
@@ -1573,6 +1598,13 @@ export default function JobBoardScraper({
       <SmtpPromptModal
         isOpen={showSmtpPrompt}
         onClose={() => setShowSmtpPrompt(false)}
+      />
+
+      {/* Aggregate Skill-Gap Heatmap & Learning Plan Modal */}
+      <UpskillModal
+        isOpen={upskillOpen}
+        onClose={() => setUpskillOpen(false)}
+        jobs={filteredJobs}
       />
     </div>
   )

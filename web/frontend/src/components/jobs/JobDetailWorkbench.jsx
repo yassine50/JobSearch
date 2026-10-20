@@ -310,6 +310,23 @@ export default function JobDetailWorkbench({
             <span>Find HR &amp; Emails</span>
           </button>
 
+          {/* 1-Click LinkedIn Referral / Peer Search */}
+          {job.company && !['confidential', 'unknown', 'n/a'].includes((job.company || '').toLowerCase()) && (
+            <a
+              href={
+                job.referral_links?.peers_url ||
+                `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${job.company} ${(job.title || '').split('-')[0].trim()}`)}`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs text-sky-200 hover:text-white bg-sky-950/50 hover:bg-sky-900/60 border border-sky-500/35 px-3 py-2.5 rounded-xl transition cursor-pointer font-bold"
+              title={`Find ${job.company} engineers & hiring managers on LinkedIn for a warm referral`}
+            >
+              <ExternalLink size={12} className="text-sky-400" />
+              <span>Find Referral</span>
+            </a>
+          )}
+
           {/* Reader Mode */}
           <button
             type="button"

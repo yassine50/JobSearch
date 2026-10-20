@@ -11,12 +11,13 @@ Results: active | expired | uncertain, with a machine code and a reason.
 """
 from __future__ import annotations
 
+import codecs
 import re
 import time
 import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -24,6 +25,100 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 HEADERS = {"User-Agent": UA, "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
            "Accept-Language": "en-US,en;q=0.9,fr;q=0.8"}
+
+_LIVE_SESSION = requests.Session()
+_live_adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16, max_retries=0)
+_LIVE_SESSION.mount("https://", _live_adapter)
+_LIVE_SESSION.mount("http://", _live_adapter)
+
+# ── Browser-grade HTML charset decoder (ported from ai-job-search tools/page_decode.py) ──
+_CT_CHARSET_RE = re.compile(r"charset\s*=\s*[\"']?\s*([A-Za-z0-9._\-]+)", re.I)
+_META_TAG_RE = re.compile(rb"<meta\b[^>]*>", re.I)
+_META_CHARSET_ATTR_RE = re.compile(rb"charset\s*=\s*[\"']?\s*([A-Za-z0-9._\-]+)", re.I)
+_META_HTTP_EQUIV_RE = re.compile(rb"http-equiv\s*=\s*[\"']?\s*content-type\b", re.I)
+_META_CONTENT_RE = re.compile(rb"content\s*=\s*([\"'])(.*?)\1", re.I | re.S)
+_PRESCAN_BYTES = 8192
+
+_WHATWG_CHARSET_OVERRIDES = {
+    "iso-8859-1": "cp1252", "iso8859-1": "cp1252", "iso_8859-1": "cp1252",
+    "latin1": "cp1252", "latin-1": "cp1252", "us-ascii": "cp1252", "ascii": "cp1252",
+    "ks_c_5601-1987": "cp949", "euc-kr": "cp949",
+    "shift_jis": "cp932", "shift-jis": "cp932", "sjis": "cp932", "x-sjis": "cp932",
+    "tis-620": "cp874", "windows-874": "cp874",
+}
+
+
+def _normalize_charset(label: Optional[str]) -> Optional[str]:
+    if not label:
+        return None
+    cleaned = label.strip().strip("\"'").lower()
+    if not cleaned:
+        return None
+    mapped = _WHATWG_CHARSET_OVERRIDES.get(cleaned, cleaned)
+    try:
+        codecs.lookup(mapped)
+        return mapped
+    except LookupError:
+        return None
+
+
+def decode_page(raw: bytes, content_type: Optional[str] = None) -> str:
+    """
+    Decode raw HTTP response bytes into str without replacement-character corruption.
+    Precedence: BOM -> HTTP Content-Type -> HTML <meta charset> prescan -> UTF-8 -> CP1252.
+    """
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if raw.startswith(codecs.BOM_UTF8):
+        return raw[len(codecs.BOM_UTF8):].decode("utf-8", errors="replace")
+    if raw.startswith(codecs.BOM_UTF16_LE):
+        return raw[len(codecs.BOM_UTF16_LE):].decode("utf-16-le", errors="replace")
+    if raw.startswith(codecs.BOM_UTF16_BE):
+        return raw[len(codecs.BOM_UTF16_BE):].decode("utf-16-be", errors="replace")
+
+    if content_type:
+        m = _CT_CHARSET_RE.search(content_type)
+        if m:
+            enc = _normalize_charset(m.group(1))
+            if enc:
+                try:
+                    return raw.decode(enc)
+                except UnicodeDecodeError:
+                    pass
+
+    head = raw[:_PRESCAN_BYTES]
+    for tag_match in _META_TAG_RE.finditer(head):
+        tag = tag_match.group(0)
+        if _META_HTTP_EQUIV_RE.search(tag):
+            cm = _META_CONTENT_RE.search(tag)
+            if cm:
+                cs = _META_CHARSET_ATTR_RE.search(cm.group(2))
+                if cs:
+                    enc = _normalize_charset(cs.group(1).decode("ascii", errors="ignore"))
+                    if enc:
+                        try:
+                            return raw.decode(enc)
+                        except UnicodeDecodeError:
+                            pass
+        cs = _META_CHARSET_ATTR_RE.search(tag)
+        if cs:
+            enc = _normalize_charset(cs.group(1).decode("ascii", errors="ignore"))
+            if enc:
+                try:
+                    return raw.decode(enc)
+                except UnicodeDecodeError:
+                    pass
+
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    try:
+        return raw.decode("cp1252")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", errors="replace")
 
 HARD_EXPIRED_PATTERNS = [re.compile(p, re.I) for p in [
     r"job (is )?no longer available",
@@ -124,26 +219,29 @@ def _check_linkedin(url: str):
     m = re.search(r"currentJobId=(\d+)", url) or re.search(r"/jobs/view/(?:[^/?#]*-)?(\d{6,})", url)
     if not m:
         return None
-    r = requests.get(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}",
-                     headers=HEADERS, timeout=12)
+    r = _LIVE_SESSION.get(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}",
+                          headers=HEADERS, timeout=10)
     if r.status_code in (404, 410):
         return {"result": "expired", "code": "http_gone", "reason": f"HTTP {r.status_code}"}
     if r.status_code != 200:
         return {"result": "uncertain", "code": "access_blocked", "reason": f"LinkedIn HTTP {r.status_code}"}
-    text = r.text.lower()
-    if "no longer accepting applications" in text:
+    raw_html = decode_page(r.content, r.headers.get("Content-Type"))
+    desc_pos = raw_html.find("show-more-less-html__markup")
+    topcard = raw_html[:desc_pos].lower() if desc_pos > 0 else raw_html.lower()
+    if "closed-job__flavor" in topcard or "no longer accepting applications" in topcard:
         return {"result": "expired", "code": "expired_body", "reason": "LinkedIn: no longer accepting applications"}
-    if "apply" in text:
+    if "apply" in topcard:
         return {"result": "active", "code": "apply_control_visible", "reason": "LinkedIn: accepting applications"}
     return {"result": "uncertain", "code": "no_apply_control", "reason": "LinkedIn page without apply control"}
 
 
 def _check_page(url: str) -> dict:
-    r = requests.get(url, headers=HEADERS, timeout=14, allow_redirects=True)
+    r = _LIVE_SESSION.get(url, headers=HEADERS, timeout=12, allow_redirects=True)
+    html_text = decode_page(r.content, r.headers.get("Content-Type"))
     body, controls = "", []
     try:
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(r.text or "", "html.parser")
+        soup = BeautifulSoup(html_text, "html.parser")
         for tag in soup(["script", "style", "noscript", "nav", "footer", "header"]):
             tag.decompose()
         controls = [el.get_text(" ", strip=True)[:80] for el in soup.find_all(["a", "button", "input"])
@@ -151,7 +249,7 @@ def _check_page(url: str) -> dict:
         controls += [el.get("value", "") for el in soup.find_all("input") if el.get("value")]
         body = soup.get_text(" ", strip=True)
     except Exception:
-        body = re.sub(r"<[^>]+>", " ", r.text or "")
+        body = re.sub(r"<[^>]+>", " ", html_text)
     return classify_liveness(r.status_code, url, r.url, body, controls)
 
 

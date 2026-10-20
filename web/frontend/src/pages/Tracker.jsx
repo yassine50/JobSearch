@@ -207,6 +207,23 @@ export default function Tracker() {
     }
   }
 
+  const exportHtml = async () => {
+    try {
+      const response = await client.get('/tracker/export-html', { responseType: 'blob' })
+      const url = window.URL.createObjectURL(response.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'applications_report.html'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+      toast('Downloaded offline HTML Analytics Report!', 'success')
+    } catch (e) {
+      toast('Failed to export HTML report', 'error')
+    }
+  }
+
   const copyToClipboard = (text) => {
     if (!text) return
     navigator.clipboard.writeText(text)
@@ -390,6 +407,13 @@ export default function Tracker() {
                 title="Download all applications as CSV"
               >
                 <Download size={14} className="text-blue-400" /> Export CSV
+              </button>
+              <button
+                onClick={exportHtml}
+                className="flex items-center gap-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 border border-indigo-500/30 text-xs font-bold px-3.5 py-2.5 rounded-xl transition cursor-pointer"
+                title="Download self-contained offline HTML Analytics Report with SVG Doughnut & Funnel charts"
+              >
+                <FileText size={14} className="text-indigo-400" /> HTML Report
               </button>
               <button
                 onClick={() => setAdding(true)}

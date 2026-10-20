@@ -306,13 +306,64 @@ def is_spam(title: str, description: str = "", company: str = "") -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dedup / merge
+# Dedup / merge (ported & expanded from ai-job-search tools/job_key.py)
 # ─────────────────────────────────────────────────────────────────────────────
+import unicodedata
+
+_CHAR_MAP = str.maketrans({
+    "ø": "o", "æ": "ae", "å": "aa",
+    "ö": "o", "ä": "ae", "ü": "u", "ß": "ss", "œ": "oe",
+})
+
+_CORP_SUFFIX_RE = re.compile(
+    r"\b("
+    r"a/s|aps|i/s|p/s|k/s|"
+    r"ab|oy|oyj|as|asa|ehf|"
+    r"gmbh|ag|se|kg|ug|mbh|"
+    r"bv|nv|sarl|sas|sa|srl|spa|sl|"
+    r"plc|ltd|limited|llp|inc|incorporated|corp|corporation|llc|co|"
+    r"company|group|holding|holdings|technologies|solutions|labs"
+    r")\.?$"
+)
+
+
+def _fold_ascii(text: str) -> str:
+    """Fold Nordic/European characters and strip Unicode combining marks."""
+    s = (text or "").strip().lower().translate(_CHAR_MAP)
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in s if not unicodedata.combining(ch))
+
+
+def normalize_company_key(company: str) -> str:
+    """Canonical company key resilient to legal suffixes, parentheticals, and diacritics."""
+    s = _fold_ascii(company)
+    s = re.sub(r"\([^)]*\)", " ", s)
+    s = re.sub(r"[^a-z0-9/]+", " ", s).strip()
+    prev = None
+    while s != prev:
+        prev = s
+        s = _CORP_SUFFIX_RE.sub("", s).strip()
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def normalize_title_key(title: str) -> str:
+    """Canonical title key stripping gender markers (m/f/d, h/f) and trailing location tails."""
+    s = _fold_ascii(title)
+    s = re.sub(r"\([^)]*\)", " ", s)
+    for sep in (" - ", " – ", " — ", ", "):
+        if sep in s:
+            head, tail = s.rsplit(sep, 1)
+            # Strip trailing location/mode/gender tails while keeping real role qualifiers
+            if len(head) >= 6 and (
+                len(tail) <= 22 or any(w in tail for w in ("remote", "hybrid", "onsite", "h/f", "m/f", "f/h", "all genders"))
+            ):
+                s = head
+                break
+    return re.sub(r"[^a-z0-9+#]", "", s)
+
 
 def _norm(s: str) -> str:
-    s = (s or "").lower()
-    s = re.sub(r"\b(inc|llc|ltd|limited|corp|corporation|gmbh|sarl|sas|sa|co|company|group)\b\.?", "", s)
-    return re.sub(r"[^a-z0-9à-ÿ]", "", s)
+    return normalize_company_key(s)
 
 
 def canonical_url(url: str) -> str:
@@ -328,6 +379,15 @@ def canonical_url(url: str) -> str:
     m = re.search(r"jobbank\.gc\.ca/jobsearch/jobposting/(\d+)", u)
     if m:
         return f"jobbank:{m.group(1)}"
+    m = re.search(r"[?&]gh_jid=(\d+)", u) or re.search(r"greenhouse\.io/([^/?#]+)/jobs/(\d+)", u)
+    if m:
+        return f"greenhouse:{m.groups()[-1]}"
+    m = re.search(r"jobs\.lever\.co/([^/?#]+)/([0-9a-f-]{16,})", u)
+    if m:
+        return f"lever:{m.group(1)}/{m.group(2)}"
+    m = re.search(r"jobs\.ashbyhq\.com/([^/?#]+)/([0-9a-f-]{16,})", u)
+    if m:
+        return f"ashby:{m.group(1)}/{m.group(2)}"
     u = re.sub(r"^https?://(www\.)?", "", u.split("#")[0])
     u = u.split("?")[0].rstrip("/")
     u = re.sub(r";jsessionid=[^/?]*", "", u)
@@ -342,11 +402,16 @@ def dedup_keys(job: dict) -> List[str]:
     du = canonical_url(job.get("job_url_direct") or "")
     if du and du != cu:
         keys.append("u:" + du)
-    nt, nc = _norm(job.get("title", "")), _norm(job.get("company", ""))
-    if nt and nc and nc not in {_norm(b) for b in BAD_COMPANY}:
-        # Same title at the same company in the same city = same opening.
-        city = _norm((job.get("location") or "").split(",")[0])
+    nt = normalize_title_key(job.get("title", ""))
+    nc = normalize_company_key(job.get("company", ""))
+    if nt and nc and nc not in {normalize_company_key(b) for b in BAD_COMPANY}:
+        # Same normalized title at the same company in the same city = same opening across portals.
+        city = _fold_ascii((job.get("location") or "").split(",")[0])
+        city = re.sub(r"[^a-z0-9]", "", city)
         keys.append(f"tc:{nt}|{nc}|{city}")
+        # Also match remote/unspecified city against concrete city when company+title are specific
+        if len(nt) >= 12 and len(nc) >= 4:
+            keys.append(f"tcr:{nt}|{nc}")
     return keys
 
 

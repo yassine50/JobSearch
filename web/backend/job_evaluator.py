@@ -22,8 +22,93 @@ The candidate's CV is only read, never modified.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
+
+URGENT_DAYS = 7
+
+_MONTH_MAP = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10, "october": 10,
+    "nov": 11, "november": 11, "dec": 12, "december": 12,
+    "janvier": 1, "fevrier": 2, "février": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
+    "juillet": 7, "aout": 8, "août": 8, "septembre": 9, "octobre": 10, "novembre": 11, "decembre": 12, "décembre": 12,
+}
+
+_DEADLINE_TRIGGER_RE = re.compile(
+    r"(?:application\s+deadline|apply\s+(?:by|before|no\s+later\s+than)|"
+    r"closing\s+date|applications?\s+close(?:\s+on)?|posting\s+closes(?:\s+on)?|"
+    r"date\s+limite(?:\s+de\s+candidature)?|bewerbungsfrist|sista\s+ans[oö]kningsdag)"
+    r"\s*[:\-–]?\s*([^\n.;]{4,40})",
+    re.I,
+)
+
+
+def _parse_date_Loose(raw: str) -> Optional[date]:
+    if not raw:
+        return None
+    s = raw.strip()
+    # 1. ISO YYYY-MM-DD
+    m = re.search(r"\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b", s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    # 2. Month DD, YYYY (e.g. October 28, 2026)
+    m = re.search(r"\b([A-Za-zÀ-ÿ]{3,10})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})\b", s)
+    if m and m.group(1).lower() in _MONTH_MAP:
+        try:
+            return date(int(m.group(3)), _MONTH_MAP[m.group(1).lower()], int(m.group(2)))
+        except ValueError:
+            pass
+    # 3. DD Month YYYY (e.g. 28 October 2026)
+    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-zÀ-ÿ]{3,10})\.?,?\s+(20\d{2})\b", s)
+    if m and m.group(2).lower() in _MONTH_MAP:
+        try:
+            return date(int(m.group(3)), _MONTH_MAP[m.group(2).lower()], int(m.group(1)))
+        except ValueError:
+            pass
+    return None
+
+
+def extract_deadline(job: dict) -> dict:
+    """
+    Extract explicit application deadline from structured fields or JD text
+    and classify urgency / expiry (ported from ai-job-search tools/rank_state.py).
+    """
+    raw_dl = str(job.get("deadline") or job.get("valid_through") or "").strip()
+    dl_date = _parse_date_Loose(raw_dl)
+    if not dl_date:
+        desc = job.get("description") or ""
+        m = _DEADLINE_TRIGGER_RE.search(desc)
+        if m:
+            dl_date = _parse_date_Loose(m.group(1))
+    if not dl_date:
+        return {"deadline": None, "days_remaining": None, "is_urgent": False, "is_expired": False, "label": None}
+
+    today = datetime.utcnow().date()
+    days_rem = (dl_date - today).days
+    iso = dl_date.isoformat()
+    is_expired = days_rem < 0
+    is_urgent = 0 <= days_rem <= URGENT_DAYS
+    if is_expired:
+        label = f"Deadline passed ({iso})"
+    elif days_rem == 0:
+        label = "Closes today!"
+    elif is_urgent:
+        label = f"Closes in {days_rem}d ({iso})"
+    else:
+        label = f"Closes {iso}"
+    return {
+        "deadline": iso,
+        "days_remaining": days_rem,
+        "is_urgent": is_urgent,
+        "is_expired": is_expired,
+        "label": label,
+    }
 
 AGGREGATOR_DOMAINS = {
     "recruit.net", "builtin.com", "zippia.com", "expertini.com", "jooble.org", "adzuna.com", "neuvoo.com",
@@ -68,6 +153,215 @@ THIRD_PARTY_PATTERNS = [
 ]
 THIRD_PARTY_COMPANY = re.compile(r"\b(staffing|recruit\w*|talent|consult\w*|outsourc\w*|placement|headhunt\w*)\b", re.I)
 GENERIC_TITLE = re.compile(r"\b(rockstar|ninja|guru|wizard)\b", re.I)
+
+# Verified first-party ATS hosts (ported from ai-job-search apply.md + FreeHire 14-ATS list)
+VERIFIED_ATS_HOSTS: Dict[str, str] = {
+    "greenhouse.io": "Greenhouse",
+    "lever.co": "Lever",
+    "ashbyhq.com": "Ashby",
+    "myworkdayjobs.com": "Workday",
+    "smartrecruiters.com": "SmartRecruiters",
+    "teamtailor.com": "Teamtailor",
+    "workable.com": "Workable",
+    "bamboohr.com": "BambooHR",
+    "personio.de": "Personio",
+    "personio.com": "Personio",
+    "recruitee.com": "Recruitee",
+    "pinpointhq.com": "Pinpoint",
+    "rippling.com": "Rippling",
+    "breezy.hr": "BreezyHR",
+    "jobvite.com": "Jobvite",
+    "icims.com": "iCIMS",
+    "successfactors.com": "SuccessFactors",
+}
+
+# Zero-width / bidirectional override / tag Unicode characters (ported from tools/posting_guard.py)
+_INVISIBLE_RE = re.compile(
+    r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\U000e0000-\U000e007f]"
+)
+
+_PROMPT_INJECTION_PATTERNS = [
+    (r"\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+"
+     r"(?:instructions?|prompts?|rules?|directions?)\b", "Prompt-injection directive"),
+    (r"\b(?:you\s+are\s+now|new\s+instructions?:|system\s+prompt:|assistant:|"
+     r"<\s*/?\s*(?:system|instruction|prompt)\s*>)", "Role/delimiter hijack"),
+    (r"(?:<\|im_start\|>|<\|im_end\|>|\[INST\]|\[/INST\]|<<SYS>>)", "Model chat-template token"),
+    (r"\b(?:do\s+not\s+mention|never\s+mention|hide\s+this\s+from\s+the\s+user)\b", "Concealment instruction"),
+]
+
+# Recruiter Easter-Egg / Attention Check patterns (alert candidate to include secret phrase)
+_ATTENTION_CHECK_PATTERNS = [
+    (r"\b(?:if\s+you(?:'ve|\s+have)?\s+read\s+this(?:\s+far)?|to\s+show\s+you\s+read\s+this|"
+     r"to\s+prove\s+you(?:'re|\s+are)\s+(?:human|not\s+a\s+bot|paying\s+attention))[^.\n]{0,120}",
+     "Recruiter attention check"),
+    (r"\b(?:include|mention|write|put|add)\s+(?:the\s+)?(?:word|phrase|code\s*word|secret\s+word)\s+"
+     r"['\"“”‘’]?([A-Za-z0-9_-]{3,30})['\"“”‘’]?\s+in\s+your\s+(?:application|cover\s+letter|resume|cv|message|note)",
+     "Secret keyword required in application"),
+]
+
+# Language gate patterns (ported from 04-job-evaluation.md)
+_LANGUAGES_CATALOG = [
+    "german", "dutch", "french", "spanish", "arabic", "italian", "portuguese",
+    "danish", "swedish", "norwegian", "finnish", "polish", "mandarin", "chinese",
+    "japanese", "korean", "hebrew", "turkish", "russian",
+]
+
+
+def sanitize_and_guard_posting(text: str) -> dict:
+    """
+    Sanitize untrusted job posting text and detect:
+    1) hidden zero-width/bidi Unicode characters
+    2) adversarial prompt-injection directives
+    3) legitimate recruiter easter-egg / attention-check instructions
+    """
+    raw = text or ""
+    invisible_count = len(_INVISIBLE_RE.findall(raw))
+    cleaned = _INVISIBLE_RE.sub("", raw)
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
+
+    injections = []
+    for pat, label in _PROMPT_INJECTION_PATTERNS:
+        m = re.search(pat, cleaned, re.I)
+        if m:
+            snippet = cleaned[max(0, m.start() - 20): min(len(cleaned), m.end() + 40)].replace("\n", " ").strip()
+            injections.append({"label": label, "snippet": snippet[:120]})
+
+    attention_checks = []
+    for pat, label in _ATTENTION_CHECK_PATTERNS:
+        m = re.search(pat, cleaned, re.I)
+        if m:
+            snippet = cleaned[max(0, m.start() - 10): min(len(cleaned), m.end() + 50)].replace("\n", " ").strip()
+            attention_checks.append({"label": label, "snippet": snippet[:140]})
+
+    return {
+        "cleaned_text": cleaned,
+        "invisible_chars_stripped": invisible_count,
+        "injections": injections,
+        "attention_checks": attention_checks,
+        "has_injection": bool(injections or invisible_count >= 5),
+        "has_attention_check": bool(attention_checks),
+    }
+
+
+_FIRST_PARTY_VENDOR_NAMES = {
+    "greenhouse": "Greenhouse",
+    "lever": "Lever",
+    "ashby": "Ashby",
+    "workday": "Workday",
+    "smartrecruiters": "SmartRecruiters",
+    "teamtailor": "Teamtailor",
+    "workable": "Workable",
+    "bamboohr": "BambooHR",
+    "personio": "Personio",
+    "recruitee": "Recruitee",
+    "pinpoint": "Pinpoint",
+    "rippling": "Rippling",
+    "breezy": "BreezyHR",
+    "breezyhr": "BreezyHR",
+    "jobvite": "Jobvite",
+    "icims": "iCIMS",
+    "successfactors": "SuccessFactors",
+}
+
+
+def detect_ats_provenance(job: dict) -> dict:
+    """Identify whether a job comes directly from a verified first-party ATS."""
+    urls = [job.get("job_url_direct") or "", job.get("url") or ""]
+    site = (job.get("site") or "").lower()
+    for u in urls:
+        dom = _domain(u)
+        for host, vendor in VERIFIED_ATS_HOSTS.items():
+            if host in dom:
+                return {"is_first_party": True, "vendor": vendor, "domain": dom}
+    if site.startswith("ats_"):
+        raw_v = site.replace("ats_", "").strip().lower()
+        if raw_v in _FIRST_PARTY_VENDOR_NAMES:
+            return {"is_first_party": True, "vendor": _FIRST_PARTY_VENDOR_NAMES[raw_v], "domain": site}
+    if site == "ats":
+        return {"is_first_party": True, "vendor": "Company ATS", "domain": "ats"}
+    return {"is_first_party": False, "vendor": None, "domain": _domain(urls[0] or urls[1])}
+
+
+def assess_language_gate(job: dict, cv_text: str = "") -> dict:
+    """
+    Language Gate (ported from 04-job-evaluation.md):
+    Detects explicit fluency requirements (e.g. 'Fluent in German', 'C1 Dutch required',
+    'German (C1/C2)') and compares against the candidate's CV text.
+    """
+    desc = job.get("description") or ""
+    title = job.get("title") or ""
+    blob = f"{title}\n{desc}"
+    cv_low = (cv_text or "").lower()
+
+    required_langs: List[str] = []
+    evidence_map: Dict[str, str] = {}
+
+    for lang in _LANGUAGES_CATALOG:
+        # Match patterns like: "fluent in German", "German fluency", "German (C1", "native German",
+        # "business fluent German", "speaking German is required", "must speak German"
+        pats = [
+            rf"\b(?:fluent|fluency|proficient|proficiency|native|c1|c2|b2|business\s+level|"
+            rf"mother\s+tongue|strong\s+command|written\s+and\s+spoken)\b[^.\n]{{0,35}}\b{lang}\b",
+            rf"\b{lang}\b[^.\n]{{0,30}}\b(?:fluent|fluency|required|mandatory|essential|c1|c2|native|"
+            rf"is\s+a\s+must|speaking\s+required)\b",
+            rf"\b(?:must|need\s+to)\s+speak\s+{lang}\b",
+        ]
+        for p in pats:
+            m = re.search(p, blob, re.I)
+            if m:
+                cap = lang.capitalize()
+                if cap not in required_langs:
+                    required_langs.append(cap)
+                    evidence_map[cap] = m.group(0).replace("\n", " ").strip()[:100]
+                break
+
+    matched = []
+    missing = []
+    for cap in required_langs:
+        if cv_low and re.search(rf"\b{cap.lower()}\b", cv_low):
+            matched.append(cap)
+        else:
+            missing.append(cap)
+
+    if not required_langs:
+        return {
+            "score": 4.5,
+            "status": "supported",
+            "required_languages": [],
+            "matched_languages": [],
+            "missing_languages": [],
+            "evidence": {},
+            "note": "No special non-English language gate detected.",
+        }
+    if missing and cv_low:
+        return {
+            "score": 1.8,
+            "status": "supported",
+            "required_languages": required_langs,
+            "matched_languages": matched,
+            "missing_languages": missing,
+            "evidence": evidence_map,
+            "note": f"Requires {', '.join(missing)} fluency not found on your CV.",
+        }
+    if missing and not cv_low:
+        return {
+            "score": 3.0,
+            "status": "partial",
+            "required_languages": required_langs,
+            "matched_languages": [],
+            "missing_languages": missing,
+            "evidence": evidence_map,
+            "note": f"Requires {', '.join(required_langs)} fluency — verify before applying.",
+        }
+    return {
+        "score": 4.8,
+        "status": "supported",
+        "required_languages": required_langs,
+        "matched_languages": matched,
+        "missing_languages": [],
+        "evidence": evidence_map,
+        "note": f"Requires {', '.join(required_langs)} — matched on your CV.",
+    }
 
 
 def _clamp(x: float, lo: float = 1.0, hi: float = 5.0) -> float:
@@ -169,19 +463,26 @@ def assess_legitimacy(job: dict, sighting: Optional[dict] = None, liveness: Opti
     if GENERIC_TITLE.search(title):
         add("Requirements realism", "Buzzword title (rockstar / ninja)", 0.3, "Low")
 
-    # 6. Third-party / aggregator (medium)
+    # 6. Third-party / aggregator vs. Verified First-Party ATS (medium)
     dom = _domain(url)
+    ats_prov = detect_ats_provenance(job)
     if dom in AGGREGATOR_DOMAINS:
         add("Source", f"Re-posted by aggregator ({dom}) — find the original posting", 0.6, "Medium")
     if THIRD_PARTY_COMPANY.search(company) or any(re.search(p, low) for p in THIRD_PARTY_PATTERNS):
         add("Source", "Staffing agency / undisclosed client", 0.5, "Medium")
-    if any(h in dom for h in ("greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com")):
-        add("Source", "Posted on the company's own ATS", -0.4, "Medium")
+    if ats_prov["is_first_party"]:
+        add("Source", f"Verified first-party ATS ({ats_prov['vendor']})", -0.4, "High")
 
-    # 7. Scam signals (high when matched)
+    # 7. Scam signals & Posting Guard (high when matched)
     for pat, label in SCAM_PATTERNS:
         if re.search(pat, low):
             add("Scam signal", label, 2.0, "High")
+    guard = sanitize_and_guard_posting(desc)
+    if guard["has_injection"]:
+        add("Posting guard", "Adversarial prompt-injection or hidden Unicode detected in JD", 1.2, "High")
+    if guard["has_attention_check"]:
+        chk = guard["attention_checks"][0]["snippet"]
+        add("Attention check", f"Recruiter easter-egg test in JD: \"{chk}\"", -0.2, "High")
 
     # 8. Salary transparency (low)
     if job.get("salary") or _salary_numbers(desc):
@@ -189,13 +490,26 @@ def assess_legitimacy(job: dict, sighting: Optional[dict] = None, liveness: Opti
     else:
         add("Salary transparency", "No pay range", 0.1, "Low", "unknown")
 
+    # 9. Application deadline urgency / expiry (ported from rank_state.py)
+    dl_info = extract_deadline(job)
+    if dl_info["is_expired"]:
+        add("Deadline", f"Application deadline passed ({dl_info['deadline']})", 2.5, "High")
+    elif dl_info["is_urgent"]:
+        add("Deadline", f"{dl_info['label']} — prioritize if applying", -0.2, "High")
+
     if risk >= 2.5:
         tier = "Suspicious"
     elif risk >= 1.0:
         tier = "Proceed with Caution"
     else:
         tier = "High Confidence"
-    return {"tier": tier, "risk": round(risk, 2), "score": _clamp(4.6 - risk), "signals": signals}
+    return {"tier": tier, "risk": round(risk, 2), "score": _clamp(4.6 - risk), "signals": signals,
+            "ats_provenance": ats_prov, "deadline_info": dl_info, "posting_guard": {
+                "has_injection": guard["has_injection"],
+                "has_attention_check": guard["has_attention_check"],
+                "attention_checks": guard["attention_checks"],
+                "injections": guard["injections"],
+            }}
 
 
 # ── Block C: work authorization ────────────────────────────────────────────────
@@ -280,10 +594,16 @@ def ats_keywords(job: dict, cv_text: str = "", limit: int = 12) -> List[dict]:
 def evaluate_job(job: dict, cv_text: str = "", sighting: Optional[dict] = None,
                  liveness: Optional[dict] = None) -> dict:
     title, desc = job.get("title") or "", job.get("description") or ""
+    guard = sanitize_and_guard_posting(desc)
+    if guard["cleaned_text"] != desc:
+        job = {**job, "description": guard["cleaned_text"]}
+        desc = guard["cleaned_text"]
+
     cv = assess_cv_match(job, cv_text)
     auth = assess_work_auth(job)
     comp = assess_comp(job)
     legit = assess_legitimacy(job, sighting, liveness)
+    lang_gate = assess_language_gate(job, cv_text)
 
     weights = {"cv": 0.45, "legit": 0.25, "auth": 0.15, "comp": 0.15}
     global_score = (cv["score"] * weights["cv"] + legit["score"] * weights["legit"] +
@@ -295,6 +615,11 @@ def evaluate_job(job: dict, cv_text: str = "", sighting: Optional[dict] = None,
         red_flags.append("Posting legitimacy is suspicious.")
         global_score = min(global_score, 2.5)
         hard_stop = True
+    dl_info = legit.get("deadline_info") or extract_deadline(job)
+    if dl_info.get("is_expired"):
+        red_flags.append(f"Application deadline passed ({dl_info['deadline']}).")
+        global_score = min(global_score, 1.5)
+        hard_stop = True
     if liveness and liveness.get("result") == "expired":
         red_flags.append("The posting appears to be closed.")
         global_score = min(global_score, 1.5)
@@ -302,6 +627,12 @@ def evaluate_job(job: dict, cv_text: str = "", sighting: Optional[dict] = None,
     if auth["blockers"] and not auth["positives"]:
         red_flags.extend(b["label"] for b in auth["blockers"])
         global_score -= 0.3
+    if lang_gate["missing_languages"]:
+        red_flags.append(lang_gate["note"])
+        if cv_text:
+            global_score -= 0.6
+    if guard["has_injection"]:
+        red_flags.append("Prompt-injection / hidden Unicode instructions stripped from JD.")
     if cv.get("match_pct") is not None and cv["match_pct"] < 35:
         red_flags.append(f"Low CV match ({cv['match_pct']}%).")
     global_score = _clamp(global_score)
@@ -334,6 +665,11 @@ def evaluate_job(job: dict, cv_text: str = "", sighting: Optional[dict] = None,
     keywords = ats_keywords(job, cv_text)
     interview_focus = [f"Be ready to show production work with {k['keyword']}." for k in keywords[:3] if k["in_cv"]]
     interview_focus += [f"Prepare an honest answer on {k['keyword']} (in the JD, not on your CV)." for k in keywords if not k["in_cv"]][:2]
+    if guard["has_attention_check"]:
+        for chk in guard["attention_checks"][:2]:
+            interview_focus.insert(0, f"🎯 Recruiter Attention Check: {chk['snippet']}")
+    if dl_info.get("is_urgent"):
+        interview_focus.insert(0, f"⏰ {dl_info['label']} — submit your application promptly.")
 
     return {
         "global_score": global_score,
@@ -341,13 +677,22 @@ def evaluate_job(job: dict, cv_text: str = "", sighting: Optional[dict] = None,
         "verdict_label": label,
         "confidence": confidence,
         "red_flags": red_flags,
+        "deadline_info": dl_info,
         "role_summary": {"archetype": detect_archetype(title, desc), "seniority": seniority,
-                         "work_mode": remote, "location": loc, "company": job.get("company") or ""},
+                         "work_mode": remote, "location": loc, "company": job.get("company") or "",
+                         "ats_provenance": legit.get("ats_provenance"), "deadline_info": dl_info},
         "dimensions": {
             "cv_match": cv,
             "work_authorization": auth,
+            "language_gate": lang_gate,
             "compensation": comp,
             "legitimacy": legit,
+        },
+        "posting_guard": {
+            "has_injection": guard["has_injection"],
+            "has_attention_check": guard["has_attention_check"],
+            "attention_checks": guard["attention_checks"],
+            "injections": guard["injections"],
         },
         "customization": {"keywords": keywords,
                           "summary": "Mirror the missing keywords only where you genuinely have the experience."},

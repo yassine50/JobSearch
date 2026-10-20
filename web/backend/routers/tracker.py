@@ -339,6 +339,19 @@ def stats_detailed(db: Session = Depends(get_db),
         "this_week": this_week,
     }
 
+def _sanitize_csv_cell(val: Optional[str]) -> str:
+    """
+    Sanitize CSV cell values: flatten newlines/control chars and neutralize
+    spreadsheet formula-injection prefixes (ported from ai-job-search gmail-sync.md).
+    """
+    if val is None:
+        return ""
+    s = re.sub(r"[\r\n\t]+", " · ", str(val)).strip()
+    if s and s[0] in ("=", "+", "-", "@"):
+        s = "'" + s
+    return s
+
+
 @router.get("/export")
 def export_csv(db: Session = Depends(get_db),
                current_user: models.User = Depends(get_current_user)):
@@ -349,14 +362,19 @@ def export_csv(db: Session = Depends(get_db),
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Title","Company","Location","Status","Match Score",
-                     "Applied Date","Follow Up Date","Notes","URL"])
+    writer.writerow(["Title", "Company", "Location", "Status", "Match Score",
+                     "Applied Date", "Follow Up Date", "Notes", "URL"])
     for a in apps:
         writer.writerow([
-            a.title, a.company, a.location, a.status, a.match_score,
+            _sanitize_csv_cell(a.title),
+            _sanitize_csv_cell(a.company),
+            _sanitize_csv_cell(a.location),
+            _sanitize_csv_cell(a.status),
+            a.match_score or 0,
             str(a.applied_at)[:10] if a.applied_at else "",
             str(a.follow_up_date)[:10] if a.follow_up_date else "",
-            a.notes or "", a.url or ""
+            _sanitize_csv_cell(a.notes or ""),
+            _sanitize_csv_cell(a.url or ""),
         ])
 
     output.seek(0)
@@ -364,6 +382,282 @@ def export_csv(db: Session = Depends(get_db),
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=applications.csv"}
+    )
+
+
+@router.get("/export-html")
+def export_html_report(db: Session = Depends(get_db),
+                       current_user: models.User = Depends(get_current_user)):
+    """
+    Generate a 100% self-contained, offline-capable HTML Analytics Dashboard
+    with inline SVG Doughnut + Historical Stage Funnel charts and interactive filter table
+    (ported from ai-job-search .claude/commands/html-report.md).
+    """
+    import html as _html
+    import math
+
+    apps = (
+        db.query(models.Application)
+        .filter(models.Application.user_id == current_user.id)
+        .order_by(models.Application.applied_at.desc())
+        .all()
+    )
+
+    status_counts = {
+        "applied": 0, "review": 0, "interview": 0,
+        "offer": 0, "accepted": 0, "rejected": 0, "saved": 0,
+    }
+
+    # Historical stage progression counters (funnel)
+    reached_applied = 0
+    reached_review = 0
+    reached_interview = 0
+    reached_offer = 0
+
+    for a in apps:
+        st = (a.status or "applied").lower()
+        if st == "sent":
+            st = "applied"
+        status_counts[st] = status_counts.get(st, 0) + 1
+        notes_low = (a.notes or "").lower()
+
+        if st != "saved":
+            reached_applied += 1
+            if st in ("review", "interview", "offer", "accepted") or "status -> 'review'" in notes_low or "status -> 'interview'" in notes_low or "recruiter reply:" in notes_low:
+                reached_review += 1
+            if st in ("interview", "offer", "accepted") or "status -> 'interview'" in notes_low or "meet.google.com" in notes_low or "zoom.us" in notes_low:
+                reached_interview += 1
+            if st in ("offer", "accepted") or "status -> 'offer'" in notes_low:
+                reached_offer += 1
+
+    total_tracked = len(apps)
+    submitted = max(reached_applied, 1)
+    resolved = status_counts["rejected"] + status_counts["offer"] + status_counts["accepted"]
+    resolution_rate = round((resolved / submitted) * 100, 1) if reached_applied else 0.0
+    true_rejection_rate = round((status_counts["rejected"] / resolved) * 100, 1) if resolved else 0.0
+    interview_rate = round((reached_interview / submitted) * 100, 1) if reached_applied else 0.0
+
+    # Build SVG Doughnut segments (r=60, circumference = 2*pi*60 = 376.99)
+    circ = 2 * math.pi * 60
+    palette = [
+        ("applied", "Applied", "#3b82f6"),
+        ("review", "Under Review", "#f59e0b"),
+        ("interview", "Interview", "#a855f7"),
+        ("offer", "Offer", "#10b981"),
+        ("accepted", "Accepted", "#eab308"),
+        ("rejected", "Rejected", "#f43f5e"),
+        ("saved", "Saved", "#64748b"),
+    ]
+    offset = 0.0
+    doughnut_circles = []
+    legend_items = []
+    denom = max(total_tracked, 1)
+    for key, label, color in palette:
+        cnt = status_counts.get(key, 0)
+        if cnt <= 0:
+            continue
+        seg = (cnt / denom) * circ
+        doughnut_circles.append(
+            f'<circle cx="80" cy="80" r="60" fill="transparent" stroke="{color}" '
+            f'stroke-width="20" stroke-dasharray="{seg:.2f} {circ - seg:.2f}" '
+            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 80 80)" />'
+        )
+        offset += seg
+        pct = round((cnt / denom) * 100, 1)
+        legend_items.append(
+            f'<div class="leg-item"><span class="dot" style="background:{color}"></span>'
+            f'<span>{_html.escape(label)}: <strong>{cnt}</strong> ({pct}%)</span></div>'
+        )
+    if not doughnut_circles:
+        doughnut_circles.append('<circle cx="80" cy="80" r="60" fill="transparent" stroke="#cbd5e1" stroke-width="20" />')
+
+    # Funnel bars
+    funnel_stages = [
+        ("Submitted / Applied", reached_applied, "#3b82f6"),
+        ("Reached Review / Reply", reached_review, "#f59e0b"),
+        ("Reached Interview", reached_interview, "#a855f7"),
+        ("Reached Offer / Accepted", reached_offer, "#10b981"),
+    ]
+    funnel_html = []
+    for label, val, color in funnel_stages:
+        pct = round((val / submitted) * 100, 1) if reached_applied else 0.0
+        w = max(pct, 3.0) if val > 0 else 0.0
+        funnel_html.append(
+            f'<div class="funnel-row">'
+            f'<div class="funnel-meta"><span>{_html.escape(label)}</span><strong>{val} ({pct}%)</strong></div>'
+            f'<div class="funnel-track"><div class="funnel-fill" style="width:{w}%;background:{color}"></div></div>'
+            f'</div>'
+        )
+
+    # Table rows (strictly HTML-escaped per html-report.md security rule)
+    rows_html = []
+    for idx, a in enumerate(apps, 1):
+        st = (a.status or "applied").lower()
+        if st == "sent":
+            st = "applied"
+        dt_str = str(a.applied_at)[:10] if a.applied_at else "—"
+        fu_str = str(a.follow_up_date)[:10] if a.follow_up_date else "—"
+        url_raw = (a.url or "").strip()
+        url_cell = (
+            f'<a href="{_html.escape(url_raw, quote=True)}" target="_blank" rel="noopener">Open ↗</a>'
+            if url_raw.startswith(("http://", "https://"))
+            else "—"
+        )
+        notes_clean = _html.escape(re.sub(r"\s+", " ", (a.notes or "")).strip()[:240])
+        rows_html.append(
+            f'<tr data-status="{_html.escape(st, quote=True)}">'
+            f'<td>{idx}</td>'
+            f'<td><strong>{_html.escape(a.company or "—")}</strong></td>'
+            f'<td>{_html.escape(a.title or "—")}</td>'
+            f'<td>{_html.escape(a.location or "—")}</td>'
+            f'<td><span class="badge st-{_html.escape(st, quote=True)}">{_html.escape(st.upper())}</span></td>'
+            f'<td>{a.match_score or 0}%</td>'
+            f'<td>{_html.escape(dt_str)}</td>'
+            f'<td>{_html.escape(fu_str)}</td>'
+            f'<td class="notes-cell">{notes_clean}</td>'
+            f'<td>{url_cell}</td>'
+            f'</tr>'
+        )
+
+    gen_date = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    user_label = _html.escape(current_user.name or current_user.email or "Candidate")
+
+    doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Job Application Tracker Report — {user_label}</title>
+<style>
+  :root {{
+    --bg: #0b1120; --card: #111827; --border: #1e293b;
+    --text: #f8fafc; --muted: #94a3b8;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0; padding: 32px 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }}
+  .container {{ max-width: 1240px; margin: 0 auto; }}
+  .header {{ display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }}
+  h1 {{ margin: 0; font-size: 24px; font-weight: 800; }}
+  .sub {{ color: var(--muted); font-size: 13px; margin-top: 4px; }}
+  .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 24px; }}
+  .kpi {{ background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }}
+  .kpi-val {{ font-size: 26px; font-weight: 800; }}
+  .kpi-lbl {{ font-size: 12px; color: var(--muted); margin-top: 4px; }}
+  .charts-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 18px; margin-bottom: 24px; }}
+  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }}
+  .card h2 {{ margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }}
+  .doughnut-wrap {{ display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }}
+  .leg-item {{ display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }}
+  .dot {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; }}
+  .funnel-row {{ margin-bottom: 12px; }}
+  .funnel-meta {{ display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }}
+  .funnel-track {{ height: 10px; background: #1e293b; border-radius: 999px; overflow: hidden; }}
+  .funnel-fill {{ height: 100%; border-radius: 999px; }}
+  .controls {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }}
+  .btn {{ background: #1e293b; color: #e2e8f0; border: 1px solid #334155; padding: 7px 13px; border-radius: 10px; font-size: 12px; font-weight: 600; cursor: pointer; }}
+  .btn.active {{ background: #2563eb; border-color: #3b82f6; color: #fff; }}
+  .search {{ background: #0f172a; border: 1px solid #334155; color: #fff; padding: 7px 12px; border-radius: 10px; font-size: 12px; min-width: 220px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 12.5px; }}
+  th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  th {{ color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; }}
+  .notes-cell {{ max-width: 320px; color: #cbd5e1; font-size: 11.5px; }}
+  .badge {{ padding: 3px 8px; border-radius: 6px; font-size: 10.5px; font-weight: 700; }}
+  .st-applied {{ background: rgba(59,130,246,0.2); color: #93c5fd; }}
+  .st-review {{ background: rgba(245,158,11,0.2); color: #fcd34d; }}
+  .st-interview {{ background: rgba(168,85,247,0.2); color: #d8b4fe; }}
+  .st-offer, .st-accepted {{ background: rgba(16,185,129,0.2); color: #6ee7b7; }}
+  .st-rejected {{ background: rgba(244,63,94,0.2); color: #fda4af; }}
+  a {{ color: #60a5fa; text-decoration: none; font-weight: 600; }}
+  @media print {{ body {{ background: #fff; color: #000; }} .controls {{ display: none; }} }}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>Job Application Analytics Report</h1>
+      <div class="sub">Prepared for {user_label} · Generated {gen_date}</div>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-val">{total_tracked}</div><div class="kpi-lbl">Total Tracked Roles</div></div>
+    <div class="kpi"><div class="kpi-val">{reached_applied}</div><div class="kpi-lbl">Applications Submitted</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#c084fc">{reached_interview} ({interview_rate}%)</div><div class="kpi-lbl">Reached Interview Stage</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#34d399">{reached_offer}</div><div class="kpi-lbl">Offers / Accepted</div></div>
+    <div class="kpi"><div class="kpi-val">{resolution_rate}%</div><div class="kpi-lbl">Resolution Rate ({resolved}/{reached_applied})</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#fb7185">{true_rejection_rate}%</div><div class="kpi-lbl">True Rejection Rate (of Resolved)</div></div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="card">
+      <h2>Status Breakdown</h2>
+      <div class="doughnut-wrap">
+        <svg width="160" height="160" viewBox="0 0 160 160">
+          {''.join(doughnut_circles)}
+          <text x="80" y="85" text-anchor="middle" fill="#f8fafc" font-size="20" font-weight="800">{total_tracked}</text>
+        </svg>
+        <div>{''.join(legend_items)}</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Historical Stage Progression Funnel</h2>
+      {''.join(funnel_html)}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Applications Directory</h2>
+    <div class="controls">
+      <button class="btn active" onclick="filterRows('all', this)">All ({total_tracked})</button>
+      <button class="btn" onclick="filterRows('applied', this)">Applied ({status_counts['applied']})</button>
+      <button class="btn" onclick="filterRows('review', this)">Under Review ({status_counts['review']})</button>
+      <button class="btn" onclick="filterRows('interview', this)">Interview ({status_counts['interview']})</button>
+      <button class="btn" onclick="filterRows('offer', this)">Offer ({status_counts['offer'] + status_counts['accepted']})</button>
+      <button class="btn" onclick="filterRows('rejected', this)">Rejected ({status_counts['rejected']})</button>
+      <input id="q" class="search" placeholder="Filter by company, role, notes..." oninput="applySearch()" />
+    </div>
+    <div style="overflow-x:auto">
+      <table id="appTable">
+        <thead>
+          <tr><th>#</th><th>Company</th><th>Role</th><th>Location</th><th>Status</th><th>Fit</th><th>Applied</th><th>Follow-Up</th><th>Notes</th><th>Link</th></tr>
+        </thead>
+        <tbody>
+          {''.join(rows_html)}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+  let currentStatus = 'all';
+  function filterRows(st, btn) {{
+    currentStatus = st;
+    document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    applySearch();
+  }}
+  function applySearch() {{
+    const q = (document.getElementById('q').value || '').toLowerCase();
+    document.querySelectorAll('#appTable tbody tr').forEach(tr => {{
+      const st = tr.getAttribute('data-status');
+      const statusOk = currentStatus === 'all' || st === currentStatus || (currentStatus === 'offer' && st === 'accepted');
+      const textOk = !q || tr.innerText.toLowerCase().includes(q);
+      tr.style.display = (statusOk && textOk) ? '' : 'none';
+    }});
+  }}
+</script>
+</body>
+</html>"""
+
+    return StreamingResponse(
+        iter([doc]),
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=applications_report.html"},
     )
 
 @router.get("/{app_id}/thread")

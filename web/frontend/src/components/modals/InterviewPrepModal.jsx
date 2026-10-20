@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  X, Sparkles, Cpu, Award, HelpCircle, DollarSign, Copy, Check, RotateCw, Loader2, CheckCircle2
+  X, Sparkles, Cpu, Award, HelpCircle, DollarSign, Copy, Check, RotateCw, Loader2, CheckCircle2, ClipboardList
 } from 'lucide-react'
 import client from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -105,6 +105,7 @@ export default function InterviewPrepModal({ isOpen, onClose, application }) {
             {[
               { id: 'technical', label: 'Technical Q&A (5)', icon: Cpu },
               { id: 'star',      label: 'STAR Stories (3)',  icon: Award },
+              { id: 'portal',    label: 'Portal Form Answers', icon: ClipboardList },
               { id: 'brief',     label: 'Company & Pitch',   icon: Sparkles },
               { id: 'questions', label: 'Reverse Qs & Salary', icon: DollarSign },
             ].map(tab => {
@@ -199,6 +200,120 @@ export default function InterviewPrepModal({ isOpen, onClose, application }) {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Tab 2b: Portal Application Form Answers (08-application-forms.md) */}
+                {activeTab === 'portal' && (
+                  <div className="space-y-4">
+                    {kit.portal_form_fields?.self_intro && (
+                      <div className="glass-card rounded-2xl p-4 border border-white/[0.07] space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-extrabold text-white">1. Self-Introduction (&ldquo;Tell us about yourself&rdquo;)</h4>
+                            <p className="text-[11px] text-slate-400">
+                              Standard ~150-word portal box ({kit.portal_form_fields.self_intro.full_words} words · {kit.portal_form_fields.self_intro.full_chars} chars)
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copyBlock(kit.portal_form_fields.self_intro.full, 'Copied 130w Self-Introduction!')}
+                            className="px-3 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/30 text-xs font-bold text-blue-300 cursor-pointer"
+                          >
+                            Copy 130w
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-200 whitespace-pre-line leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-white/[0.05]">
+                          {kit.portal_form_fields.self_intro.full}
+                        </p>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-[11px] text-slate-400">
+                            Compact 500-char box variant ({kit.portal_form_fields.self_intro.short_words} words · {kit.portal_form_fields.self_intro.short_chars} chars)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyBlock(kit.portal_form_fields.self_intro.short, 'Copied compact Self-Intro!')}
+                            className="px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-bold text-slate-300 cursor-pointer"
+                          >
+                            Copy Short
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {kit.portal_form_fields?.stand_out_pitches?.length > 0 && (
+                      <div className="glass-card rounded-2xl p-4 border border-white/[0.07] space-y-2.5">
+                        <h4 className="text-xs font-extrabold text-white">
+                          2. 140-Character Stand-Out Pitch (&ldquo;What makes you stand out in one sentence?&rdquo;)
+                        </h4>
+                        {kit.portal_form_fields.stand_out_pitches.map((p, idx) => (
+                          <div key={idx} className="p-3 rounded-xl bg-slate-950/60 border border-white/[0.05] flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded">
+                                  {p.angle}
+                                </span>
+                                <span className="text-[10px] font-bold text-emerald-400">{p.chars}/140 chars</span>
+                              </div>
+                              <p className="text-xs text-slate-100">{p.text}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => copyBlock(p.text, 'Copied 140-char pitch!')}
+                              className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-[11px] font-bold text-slate-200 shrink-0 cursor-pointer"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {kit.portal_form_fields?.why_company && (
+                      <div className="glass-card rounded-2xl p-4 border border-white/[0.07] space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-extrabold text-white">3. &ldquo;Why do you want to work at {application.company}?&rdquo;</h4>
+                            <p className="text-[11px] text-slate-400">
+                              Forward-looking task-solving framing ({kit.portal_form_fields.why_company.words} words)
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copyBlock(kit.portal_form_fields.why_company.text, 'Copied Why Company answer!')}
+                            className="px-3 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/30 text-xs font-bold text-blue-300 cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-200 leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-white/[0.05]">
+                          {kit.portal_form_fields.why_company.text}
+                        </p>
+                      </div>
+                    )}
+
+                    {kit.portal_form_fields?.structured_project && (
+                      <div className="glass-card rounded-2xl p-4 border border-white/[0.07] space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-extrabold text-white">4. Structured Project Entry (Portal Form Box)</h4>
+                            <p className="text-[11px] text-slate-400">
+                              {kit.portal_form_fields.structured_project.name} · {kit.portal_form_fields.structured_project.role}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copyBlock(kit.portal_form_fields.structured_project.description_100w, 'Copied project description!')}
+                            className="px-3 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/30 text-xs font-bold text-emerald-300 cursor-pointer"
+                          >
+                            Copy 100w
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-200 leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-white/[0.05]">
+                          {kit.portal_form_fields.structured_project.description_100w}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 

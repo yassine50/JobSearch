@@ -133,9 +133,12 @@ export default function JobFilterDrawer({
             <div className="flex items-center gap-2 flex-wrap">
               {[
                 { id: 'all', label: 'Any time' },
-                { id: 'month', label: 'Past month' },
+                { id: '1h', label: '⚡ Past 1 hour' },
+                { id: '3h', label: '⚡ Past 3 hours' },
+                { id: '6h', label: '⚡ Past 6 hours' },
+                { id: '24h', label: 'Past 24 hours' },
                 { id: 'week', label: 'Past week' },
-                { id: '24h', label: 'Past 24 hours' }
+                { id: 'month', label: 'Past month' }
               ].map(opt => (
                 <button
                   key={opt.id}

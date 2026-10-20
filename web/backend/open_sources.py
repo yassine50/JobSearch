@@ -561,6 +561,143 @@ def _ats_direct(query: str, relevant: Callable[[dict], bool]) -> List[dict]:
     return out
 
 
+_FREEHIRE_ISO2: Dict[str, str] = {
+    "usa": "US", "us": "US", "united states": "US",
+    "uk": "GB", "gb": "GB", "united kingdom": "GB",
+    "canada": "CA", "ca": "CA",
+    "germany": "DE", "de": "DE",
+    "france": "FR", "fr": "FR",
+    "netherlands": "NL", "nl": "NL",
+    "morocco": "MA", "ma": "MA",
+    "singapore": "SG", "sg": "SG",
+    "uae": "AE", "united arab emirates": "AE", "dubai": "AE",
+    "saudi arabia": "SA", "sa": "SA",
+    "india": "IN", "in": "IN",
+    "australia": "AU", "au": "AU",
+    "switzerland": "CH", "ch": "CH",
+    "spain": "ES", "es": "ES",
+    "italy": "IT", "it": "IT",
+    "sweden": "SE", "se": "SE",
+    "denmark": "DK", "dk": "DK",
+    "norway": "NO", "no": "NO",
+    "finland": "FI", "fi": "FI",
+    "ireland": "IE", "ie": "IE",
+    "poland": "PL", "pl": "PL",
+    "portugal": "PT", "pt": "PT",
+    "belgium": "BE", "be": "BE",
+    "austria": "AT", "at": "AT",
+}
+
+
+def _freehire_ats(query: str, country: str = "", location: str = "",
+                  hours_old: Optional[int] = None,
+                  relevant: Optional[Callable[[dict], bool]] = None) -> List[dict]:
+    """
+    FreeHire public 14-ATS aggregation API (https://freehire.me/api/v1/agent/jobs/search).
+    Searches directly across Greenhouse, Lever, Ashby, Workday, SmartRecruiters, BambooHR,
+    Workable, Recruitee, Personio, Pinpoint, Rippling, Teamtailor, BreezyHR, and Jobvite
+    with full descriptions, structured skills, work_mode, and salary enrichment.
+    """
+    import math
+    base_url = "https://freehire.me/api/v1/agent/jobs/search"
+    params: Dict[str, str] = {
+        "q": query,
+        "limit": "40",
+        "offset": "0",
+        "description_format": "text",
+    }
+    if hours_old and hours_old > 0:
+        params["posted_within_days"] = str(max(1, int(math.ceil(hours_old / 24.0))))
+
+    c_norm = (country or "").strip().lower()
+    iso2 = _FREEHIRE_ISO2.get(c_norm)
+    if iso2:
+        params["country"] = iso2
+    if location and location.strip().lower() not in ("", "worldwide", "global", "all", c_norm):
+        params["location"] = location.strip()
+
+    def _call_freehire(p: Dict[str, str]) -> List[dict]:
+        for attempt in range(2):
+            try:
+                r = _OPEN_SESSION.get(
+                    base_url,
+                    params=p,
+                    headers={"User-Agent": "freehire-search-cli/0.1.0", "Accept": "application/json"},
+                    timeout=5.0,
+                )
+                if r.status_code == 429 and attempt == 0:
+                    retry_after = min(float(r.headers.get("retry-after", "1.5") or 1.5), 2.5)
+                    time.sleep(retry_after)
+                    continue
+                if r.status_code != 200:
+                    return []
+                payload = r.json()
+                return payload.get("data") or []
+            except Exception as exc:
+                logger.debug(f"[FreeHire] request failed: {exc}")
+                return []
+        return []
+
+    items = _call_freehire(params)
+    # If strict country/location filter yielded very few hits, broaden to global ATS and let _location_ok filter
+    if len(items) < 4 and ("country" in params or "location" in params):
+        broad = {k: v for k, v in params.items() if k not in ("country", "location")}
+        more = _call_freehire(broad)
+        seen_slugs = {it.get("public_slug") or it.get("url") for it in items}
+        for it in more:
+            k = it.get("public_slug") or it.get("url")
+            if k not in seen_slugs:
+                items.append(it)
+                seen_slugs.add(k)
+
+    out: List[dict] = []
+    for item in items:
+        url = (item.get("url") or "").strip()
+        title = (item.get("title") or "").strip()
+        if not title or not url:
+            continue
+        enrichment = item.get("enrichment") or {}
+        sal_min = enrichment.get("salary_min")
+        sal_max = enrichment.get("salary_max")
+        sal_cur = enrichment.get("salary_currency") or "$"
+        sal_per = enrichment.get("salary_period") or ""
+        sal_txt = ""
+        if sal_min or sal_max:
+            lo = f"{sal_cur} {int(sal_min):,}" if sal_min else ""
+            hi = f"{sal_cur} {int(sal_max):,}" if sal_max and sal_max != sal_min else ""
+            sal_txt = f"{lo}{' - ' + hi if hi else ''}{(' / ' + sal_per) if sal_per else ''}".strip()
+
+        work_mode = (item.get("work_mode") or "").lower()
+        loc_str = (item.get("location") or "").strip() or ("Remote" if work_mode == "remote" else "Worldwide")
+        vendor = (item.get("source") or "ats").lower()
+        desc = html_to_text(item.get("description") or "")
+        skills = item.get("skills") or []
+        if skills and isinstance(skills, list):
+            skills_line = ", ".join(str(s) for s in skills[:18] if s)
+            if skills_line and skills_line.lower() not in desc.lower():
+                desc = f"{desc}\n\nKey Technologies: {skills_line}".strip()
+
+        row = _row(
+            site=f"ats_{vendor}" if not vendor.startswith("ats") else vendor,
+            title=title,
+            company=(item.get("company") or "").strip(),
+            location=loc_str,
+            url=url,
+            description=desc,
+            date_posted=_iso_date(item.get("posted_at")),
+            is_remote=(work_mode == "remote" or "remote" in loc_str.lower()),
+            min_amount=sal_min,
+            max_amount=sal_max,
+        )
+        if sal_txt:
+            row["salary_text"] = sal_txt
+        if enrichment.get("category"):
+            row["company_industry"] = enrichment["category"]
+        if relevant is None or relevant(row):
+            out.append(row)
+    return out
+
+
 # ── public entry point ─────────────────────────────────────────────────────────
 _ANYWHERE = ("anywhere", "worldwide", "global", "remote", "")
 
@@ -657,9 +794,12 @@ def fetch_open_source(site: str, queries: List[str], *,
         rows = _hackernews(query)
     elif site == "ats":
         ats_futs = [
+            _OPEN_POOL.submit(_freehire_ats, query, country, location, hours_old, relevant),
             _OPEN_POOL.submit(_ats_direct, query, relevant),
             _OPEN_POOL.submit(_yahoo_ats_discovery, query, location or country, relevant),
         ]
+        if len(queries) > 1:
+            ats_futs.append(_OPEN_POOL.submit(_freehire_ats, queries[1], country, location, hours_old, relevant))
         if serper_key:
             ats_futs.append(_OPEN_POOL.submit(_serper_ats_discovery, query, location or country, serper_key, hours_old))
         wait(ats_futs, timeout=5.5)

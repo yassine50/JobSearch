@@ -442,6 +442,27 @@ def generate_interview_prep(
     primary_skill = skills_focus[0] if skills_focus else title.split()[0]
     secondary_skill = skills_focus[1] if len(skills_focus) > 1 else "Scalable Architecture"
 
+    portal_form_fields = {}
+    cv_ev = {}
+    try:
+        from .coverletter import build_portal_form_fields, _extract_cv_evidence
+        from ..email_templates import detect_language
+        lang = detect_language(f"{title} {company} {description}")
+        portal_form_fields = build_portal_form_fields(
+            cv_text=cv_text,
+            user_name=current_user.name or "",
+            job_title=title,
+            company=company,
+            job_description=description,
+            lang=lang,
+        )
+        cv_ev = _extract_cv_evidence(cv_text, description)
+    except Exception:
+        pass
+
+    real_proj = (cv_ev or {}).get("best_project") or (cv_ev or {}).get("recent_role")
+    real_bullet = ((cv_ev or {}).get("bullets") or [None])[0]
+
     kit = {
         "role_title": title,
         "company": company,
@@ -449,6 +470,7 @@ def generate_interview_prep(
         "generated_at": datetime.utcnow().isoformat(),
         "matched_skills": skills_focus,
         "gap_skills": missing_skills,
+        "portal_form_fields": portal_form_fields,
         "company_brief": {
             "summary": f"{company} is evaluating candidates for {title} ({location}) with a strong emphasis on production velocity, clean architecture, and cross-functional ownership.",
             "key_focus_areas": [
@@ -457,9 +479,10 @@ def generate_interview_prep(
                 f"Rapid ramp-up on {company}'s domain workflows and engineering standards",
             ],
             "elevator_pitch": (
-                f"I'm a {title} with hands-on production experience across {', '.join(skills_focus[:4])}. "
-                f"In my recent work, I've focused on building high-reliability, user-centric systems and optimizing performance, "
-                f"which directly aligns with what {company} is building."
+                (portal_form_fields.get("self_intro") or {}).get("short")
+                or f"I'm a {title} with hands-on production experience across {', '.join(skills_focus[:4])}. "
+                   f"In my recent work, I've focused on building high-reliability, user-centric systems and optimizing performance, "
+                   f"which directly aligns with what {company} is building."
             ),
         },
         "technical_questions": [
@@ -499,17 +522,17 @@ def generate_interview_prep(
         ],
         "behavioral_star": [
             {
-                "title": "Delivering Under Tight Deadlines",
-                "situation": f"Critical product milestone requiring rapid delivery with {primary_skill}.",
-                "task": "Ship a production-ready feature without compromising stability or technical debt.",
-                "action": f"Scoped the MVP with stakeholders, modularized the {primary_skill} implementation, and automated regression checks.",
-                "result": "Delivered on schedule with zero critical post-launch regressions and high user adoption.",
+                "title": f"CV Grounded Story: {(real_proj or {}).get('name') or (real_proj or {}).get('title') or 'Delivering Under Tight Deadlines'}",
+                "situation": f"Leading engineering delivery on {(real_proj or {}).get('name') or (real_proj or {}).get('company') or 'a critical production milestone'} using {', '.join(skills_focus[:2])}.",
+                "task": "Ship a production-ready system without compromising stability, test coverage, or maintainability.",
+                "action": real_bullet or f"Scoped the architecture with stakeholders, modularized the {primary_skill} implementation, and automated regression checks.",
+                "result": "Delivered on schedule with zero critical post-launch regressions and measurable reliability gains.",
             },
             {
-                "title": "Resolving Technical Disagreements",
-                "situation": f"Architectural trade-off decision around {secondary_skill} and data flow.",
+                "title": "Resolving Technical Trade-Offs",
+                "situation": f"Architectural decision around {secondary_skill} and data flow under changing requirements.",
                 "task": "Align the engineering team on a scalable, maintainable approach.",
-                "action": "Built a lightweight benchmark prototype comparing both approaches on latency and developer velocity.",
+                "action": "Built a focused benchmark prototype comparing both approaches on latency, complexity, and developer velocity.",
                 "result": "Team reached consensus quickly and reduced future maintenance overhead.",
             },
             {
@@ -540,3 +563,237 @@ def generate_interview_prep(
         db.commit()
 
     return kit
+
+
+# ─── 4. /upskill Aggregate Skill-Gap Heatmap & Prioritized Learning Plan ─────
+# Ported from ai-job-search .claude/skills/upskill/SKILL.md
+
+_SKILL_BRIDGES = {
+    "kubernetes": ("docker", "Focus on Pod/Deployment manifests, Helm, and ingress controllers rather than container basics."),
+    "docker": ("linux", "Focus on multi-stage Dockerfiles, layer caching, and docker-compose service orchestration."),
+    "terraform": ("aws", "Focus on HCL state management, modules, and drift detection for cloud resources you already know."),
+    "next.js": ("react", "Skip React fundamentals; focus on App Router, Server Components, SSR/ISR caching, and middleware."),
+    "typescript": ("javascript", "Focus on generic type constraints, discriminated unions, and strict tsconfig patterns."),
+    "fastapi": ("python", "Focus on Pydantic v2 validation, async dependency injection, and OpenAPI schema generation."),
+    "django": ("python", "Focus on Django ORM query optimization (select_related/prefetch_related), DRF serializers, and migrations."),
+    "graphql": ("rest", "Focus on schema design, resolvers, DataLoader N+1 batching, and Apollo/urql caching."),
+    "postgresql": ("sql", "Focus on indexing strategies (GIN/B-tree), EXPLAIN ANALYZE query tuning, and JSONB operations."),
+    "redis": ("postgresql", "Focus on TTL caching patterns, pub/sub, distributed locks, and rate-limiting pipelines."),
+    "kafka": ("redis", "Focus on partitioned topics, consumer groups, offset management, and idempotent event producers."),
+    "pytorch": ("python", "Focus on tensor autograd, custom Dataset/DataLoader pipelines, and model fine-tuning loops."),
+    "aws": ("docker", "Focus on IAM least-privilege, ECS/EKS deployment, S3/RDS integration, and CloudWatch observability."),
+    "gcp": ("aws", "Map your cloud knowledge directly to Cloud Run, GKE, BigQuery, and IAM service accounts."),
+    "azure": ("aws", "Map your cloud knowledge directly to Azure Container Apps, AKS, Azure AD, and Key Vault."),
+    "ci/cd": ("git", "Focus on GitHub Actions / GitLab CI matrix workflows, automated test gates, and artifact caching."),
+}
+
+_SKILL_CATEGORIES = {
+    "Cloud & DevOps": {"aws", "gcp", "azure", "docker", "kubernetes", "terraform", "ansible", "jenkins", "ci/cd", "github actions", "gitlab", "linux", "helm", "prometheus", "grafana"},
+    "Data & AI": {"python", "sql", "postgresql", "mysql", "mongodb", "redis", "elasticsearch", "kafka", "spark", "airflow", "snowflake", "bigquery", "pandas", "pytorch", "tensorflow", "llm", "rag", "machine learning", "nlp"},
+    "Languages & Frameworks": {"javascript", "typescript", "react", "next.js", "vue", "angular", "node", "node.js", "express", "nestjs", "fastapi", "django", "flask", "java", "spring", "kotlin", "swift", "flutter", "dart", "go", "golang", "rust", "c#", ".net", "php", "laravel", "ruby", "rails"},
+}
+
+
+def _classify_skill_category(skill: str) -> str:
+    s = skill.lower()
+    for cat, members in _SKILL_CATEGORIES.items():
+        if s in members:
+            return cat
+    return "Architecture & Tooling"
+
+
+class UpskillJobItem(BaseModel):
+    title: str = ""
+    company: str = ""
+    description: str = ""
+    score: Optional[float] = None
+
+
+class UpskillRequest(BaseModel):
+    jobs: List[UpskillJobItem] = []
+
+
+@router.post("/upskill-plan")
+def generate_upskill_plan(
+    req: UpskillRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Aggregate Skill-Gap Heatmap & Prioritized Learning Plan across target jobs
+    and tracked applications (ported from ai-job-search .claude/skills/upskill/SKILL.md).
+    Weights each missing skill by (100 - fit_score) / 100 across all analyzed postings.
+    """
+    from cv_matcher import _extract_skills, TECH_SKILLS, compute_match
+
+    active_cv = _get_active_cv(db, current_user.id)
+    cv_text = active_cv.text_content if active_cv else ""
+    cv_skills = {s.lower() for s in _extract_skills(cv_text, TECH_SKILLS)} if cv_text else set()
+
+    # Combine passed-in search jobs + user's SavedJobs + user's tracked Applications
+    corpus = []
+    seen_keys = set()
+
+    for j in (req.jobs or [])[:60]:
+        key = f"{(j.title or '').strip().lower()}|{(j.company or '').strip().lower()}"
+        if key not in seen_keys and (j.description or j.title):
+            seen_keys.add(key)
+            corpus.append({
+                "title": j.title or "Target Role",
+                "company": j.company or "Company",
+                "text": f"{j.title or ''}\n{j.description or ''}",
+                "score": j.score,
+            })
+
+    saved_rows = (
+        db.query(models.SavedJob)
+        .filter(models.SavedJob.user_id == current_user.id)
+        .order_by(models.SavedJob.saved_at.desc())
+        .limit(40)
+        .all()
+    )
+    for s in saved_rows:
+        key = f"{(s.title or '').strip().lower()}|{(s.company or '').strip().lower()}"
+        if key not in seen_keys and (s.description or s.title):
+            seen_keys.add(key)
+            corpus.append({
+                "title": s.title or "Saved Role",
+                "company": s.company or "Company",
+                "text": f"{s.title or ''}\n{s.description or ''}",
+                "score": s.match_score,
+            })
+
+    app_rows = (
+        db.query(models.Application)
+        .filter(models.Application.user_id == current_user.id)
+        .order_by(models.Application.applied_at.desc())
+        .limit(40)
+        .all()
+    )
+    for a in app_rows:
+        key = f"{(a.title or '').strip().lower()}|{(a.company or '').strip().lower()}"
+        if key not in seen_keys and (a.notes or a.title):
+            seen_keys.add(key)
+            corpus.append({
+                "title": a.title or "Tracked Role",
+                "company": a.company or "Company",
+                "text": f"{a.title or ''}\n{a.notes or ''}",
+                "score": a.match_score,
+            })
+
+    total_jobs = len(corpus)
+    gap_stats = {}
+    matched_freq = {}
+
+    for item in corpus:
+        job_skills = {s.lower() for s in _extract_skills(item["text"], TECH_SKILLS)}
+        if not job_skills:
+            continue
+        fit = item.get("score")
+        if fit is None and cv_text:
+            try:
+                fit, _ = compute_match(cv_text, item["text"], item["title"])
+            except Exception:
+                fit = 55
+        fit_val = float(fit if fit is not None else 55.0)
+        # Exact weight formula from upskill/SKILL.md: (100 - fit_score) / 100
+        weight = max(0.15, min(1.0, (100.0 - fit_val) / 100.0))
+
+        for sk in job_skills:
+            if sk in cv_skills:
+                matched_freq[sk] = matched_freq.get(sk, 0) + 1
+            else:
+                entry = gap_stats.setdefault(sk, {
+                    "skill": sk,
+                    "job_count": 0,
+                    "weighted_demand": 0.0,
+                    "sample_companies": [],
+                })
+                entry["job_count"] += 1
+                entry["weighted_demand"] += weight
+                comp = item.get("company") or ""
+                if comp and comp not in entry["sample_companies"] and len(entry["sample_companies"]) < 4:
+                    entry["sample_companies"].append(comp)
+
+    ranked_gaps = sorted(
+        gap_stats.values(),
+        key=lambda x: (-round(x["weighted_demand"], 2), -x["job_count"], x["skill"]),
+    )[:14]
+
+    heatmap = []
+    study_order = []
+    total_hours = 0
+
+    for idx, g in enumerate(ranked_gaps):
+        sk = g["skill"]
+        pct = round((g["job_count"] / max(total_jobs, 1)) * 100)
+        if pct >= 35 or idx < 2:
+            priority = "Critical"
+            est_hours = 14
+        elif pct >= 20 or idx < 5:
+            priority = "High"
+            est_hours = 10
+        elif pct >= 10 or idx < 9:
+            priority = "Medium"
+            est_hours = 6
+        else:
+            priority = "Low"
+            est_hours = 4
+
+        bridge_from, direction = _SKILL_BRIDGES.get(sk, (None, ""))
+        if bridge_from and bridge_from in cv_skills:
+            tailored_note = f"You already know {bridge_from.upper()} — {direction}"
+        elif direction:
+            tailored_note = direction
+        else:
+            tailored_note = f"Focus on production architecture, testing, and idiomatic {sk.upper()} patterns required in interviews."
+
+        category = _classify_skill_category(sk)
+        milestone = f"Build & deploy a production-grade {sk.upper()} mini-service with automated tests and add it to your CV Projects section."
+        q_encoded = sk.replace(" ", "+")
+        resources = [
+            {"label": f"Official {sk.title()} Docs & Architecture Guide", "url": f"https://www.google.com/search?q={q_encoded}+official+documentation"},
+            {"label": f"roadmap.sh / Hands-On {sk.title()} Path", "url": f"https://www.google.com/search?q=site:roadmap.sh+OR+site:freecodecamp.org+{q_encoded}"},
+        ]
+
+        item_out = {
+            "skill": sk,
+            "category": category,
+            "priority": priority,
+            "job_count": g["job_count"],
+            "job_pct": pct,
+            "weighted_demand": round(g["weighted_demand"], 2),
+            "sample_companies": g["sample_companies"],
+            "tailored_direction": tailored_note,
+            "milestone_project": milestone,
+            "estimated_hours": est_hours,
+            "resources": resources,
+        }
+        heatmap.append(item_out)
+        if len(study_order) < 6:
+            total_hours += est_hours
+            study_order.append({
+                "step": len(study_order) + 1,
+                "skill": sk,
+                "priority": priority,
+                "estimated_hours": est_hours,
+                "goal": tailored_note,
+            })
+
+    strongest_matched = [
+        {"skill": k, "job_count": v}
+        for k, v in sorted(matched_freq.items(), key=lambda x: (-x[1], x[0]))[:8]
+    ]
+
+    return {
+        "summary": {
+            "jobs_analyzed": total_jobs,
+            "cv_skills_count": len(cv_skills),
+            "total_gaps_found": len(heatmap),
+            "critical_gaps_count": sum(1 for h in heatmap if h["priority"] in ("Critical", "High")),
+            "total_study_hours": total_hours,
+        },
+        "gap_heatmap": heatmap,
+        "study_order": study_order,
+        "strongest_matched": strongest_matched,
+    }

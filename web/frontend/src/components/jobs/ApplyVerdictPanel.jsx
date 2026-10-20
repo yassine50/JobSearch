@@ -90,10 +90,13 @@ export default function ApplyVerdictPanel({ job }) {
   const d = result.dimensions || {}
   const legit = d.legitimacy || {}
   const auth = d.work_authorization || {}
+  const langGate = d.language_gate || {}
   const comp = d.compensation || {}
   const cv = d.cv_match || {}
   const live = result.liveness
   const rs = result.role_summary || {}
+  const atsProv = rs.ats_provenance || legit.ats_provenance
+  const guard = result.posting_guard || {}
 
   return (
     <div className={`p-4 rounded-xl border space-y-3.5 ${v.box}`}>
@@ -115,12 +118,17 @@ export default function ApplyVerdictPanel({ job }) {
         </div>
       </div>
 
-      {/* Liveness + legitimacy chips */}
+      {/* Liveness + legitimacy + ATS provenance chips */}
       <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-semibold">
         {live && (
           <span className={`px-2 py-0.5 rounded-md border flex items-center gap-1 ${LIVE_STYLE[live.result] || LIVE_STYLE.uncertain}`} title={live.reason}>
             <Radio size={10} />
             {live.result === 'active' ? 'Still open' : live.result === 'expired' ? 'Closed' : 'Open? unverified'}
+          </span>
+        )}
+        {atsProv?.is_first_party && atsProv?.vendor && (
+          <span className="px-2 py-0.5 rounded-md border text-teal-300 bg-teal-950/70 border-teal-700/70 flex items-center gap-1">
+            <ShieldCheck size={10} /> First-Party ATS ({atsProv.vendor})
           </span>
         )}
         {legit.tier && (
@@ -133,6 +141,17 @@ export default function ApplyVerdictPanel({ job }) {
           <span key={p} className="px-2 py-0.5 rounded-md border text-emerald-300 bg-emerald-950/70 border-emerald-800/70 flex items-center gap-1"><Plane size={10} />{p}</span>
         ))}
       </div>
+
+      {/* Recruiter Attention Check callout */}
+      {guard.has_attention_check && (
+        <div className="p-2.5 rounded-lg bg-purple-950/60 border border-purple-700/70 text-[11px] text-purple-200 flex items-start gap-2">
+          <span className="shrink-0">🎯</span>
+          <div>
+            <span className="font-bold text-purple-100">Recruiter Attention Check Detected: </span>
+            <span>{guard.attention_checks?.[0]?.snippet}</span>
+          </div>
+        </div>
+      )}
 
       {/* Red flags */}
       {result.red_flags?.length > 0 && (
@@ -152,6 +171,9 @@ export default function ApplyVerdictPanel({ job }) {
         <ScoreBar label="Work authorization" Icon={Plane} score={auth.score}
           note={auth.blockers?.length ? auth.blockers.map(b => b.label).join(' · ') : auth.positives?.length ? 'Open to international candidates' : 'Not stated in the posting'} />
         <ScoreBar label="Compensation" Icon={DollarSign} score={comp.score} note={comp.note} />
+        {langGate.required_languages?.length > 0 && (
+          <ScoreBar label="Language gate" Icon={MessageSquare} score={langGate.score} note={langGate.note} />
+        )}
       </div>
 
       {/* Gaps */}

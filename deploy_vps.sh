@@ -20,16 +20,29 @@ echo "--> Installing system packages..."
 sudo apt-get update -y
 sudo apt-get install -y python3 python3-pip python3-venv git nginx build-essential ca-certificates curl
 
-# 3. Clone or Update the Repository
+# 3. Clone or Update the Repository (while strictly preserving production DB & config!)
 if [ ! -d "/opt/cvtomatch" ]; then
   echo "--> Cloning repository into /opt/cvtomatch..."
   sudo git clone https://github.com/yassine50/JobSearch.git /opt/cvtomatch
   sudo chown -R $USER:$USER /opt/cvtomatch
 else
+  echo "--> Backing up production database & config before pulling..."
+  mkdir -p ~/cvtomatch_backup
+  for f in jobsearcher.db jobsearcher.db-wal jobsearcher.db-shm scraper_config.json; do
+    if [ -f "/opt/cvtomatch/web/backend/$f" ]; then
+      cp -p "/opt/cvtomatch/web/backend/$f" "~/cvtomatch_backup/$f.bak" 2>/dev/null || cp -p "/opt/cvtomatch/web/backend/$f" "$HOME/cvtomatch_backup/$f"
+    fi
+  done
   echo "--> Pulling latest changes in /opt/cvtomatch..."
   cd /opt/cvtomatch
   git fetch origin main
   git reset --hard origin/main
+  echo "--> Restoring production database & config..."
+  for f in jobsearcher.db jobsearcher.db-wal jobsearcher.db-shm scraper_config.json; do
+    if [ -f "$HOME/cvtomatch_backup/$f" ]; then
+      cp -p "$HOME/cvtomatch_backup/$f" "/opt/cvtomatch/web/backend/$f"
+    fi
+  done
 fi
 
 cd /opt/cvtomatch

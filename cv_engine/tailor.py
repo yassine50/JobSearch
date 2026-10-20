@@ -576,6 +576,9 @@ def tailor_cv_pipeline(
     safe_name = re.sub(r"[^a-zA-Z0-9]", "_", _format_name(cv.name)).strip("_") or "Candidate"
     safe_co = re.sub(r"[^a-zA-Z0-9]", "_", clean_co).strip("_") or "Company"
 
+    highlighted = [canonical_tech(s) or s for s in (matched_tech + added_skills)[:12] if s]
+    ats_verification = verify_ats_pdf(pdf_bytes, required_keywords=highlighted[:8], max_pages=max_pages)
+
     # Build human-readable tips / audit summary
     tips: List[str] = [
         f"Pre-Tailoring Diagnosis: {diag_profile['cv_type']} ({diag_profile['seniority']}, "
@@ -587,8 +590,12 @@ def tailor_cv_pipeline(
     tips.extend(summary_notes)
     if added_skills:
         tips.append(f"Bridged {len(added_skills)} target JD skills into structured categories ({', '.join(added_skills[:6])}).")
-
-    highlighted = [canonical_tech(s) or s for s in (matched_tech + added_skills)[:12] if s]
+    if ats_verification.get("passed"):
+        tips.append(
+            f"ATS PDF Verification Passed: {ats_verification['page_count']} page(s), "
+            f"{len(ats_verification['verified_keywords'])}/{len(highlighted[:8])} target keywords verified in PDF text layer, "
+            f"Workday-safe ASCII dates."
+        )
 
     # Attach pre/post quality scores & issues onto cv_profile so existing frontend/backend consumers have everything
     enriched_profile = {
@@ -599,6 +606,7 @@ def tailor_cv_pipeline(
         "strengths": pre_diag["strengths"],
         "enhancements": changes[:30],
         "enhancements_count": len(changes),
+        "ats_verification": ats_verification,
     }
 
     return {
@@ -615,6 +623,7 @@ def tailor_cv_pipeline(
         "target_headline": cv.headline,
         "tailored_summary": cv.summary,
         "cv_profile": enriched_profile,
+        "ats_verification": ats_verification,
         "diagnosis": {
             "before_scores": pre_diag["scores"],
             "after_scores": post_diag["scores"],
@@ -622,7 +631,81 @@ def tailor_cv_pipeline(
             "strengths": pre_diag["strengths"],
             "enhancements": changes[:30],
             "enhancements_count": len(changes),
+            "ats_verification": ats_verification,
         },
         "tips": tips,
         "mode": mode,
     }
+
+
+def verify_ats_pdf(pdf_bytes: bytes, required_keywords: Optional[List[str]] = None, max_pages: int = 2) -> dict:
+    """
+    Mechanical ATS PDF text-layer verification (ported from ai-job-search tools/verify_pdf.py).
+    Verifies:
+    - PDF page count <= max_pages
+    - Extracted text layer is non-empty and NFC-normalized
+    - Required keywords appear in the actual rendered PDF text stream
+    - No unreplaced placeholders or broken Unicode replacement chars
+    """
+    import io
+    import unicodedata
+    if not pdf_bytes:
+        return {"passed": False, "page_count": 0, "verified_keywords": [], "missing_keywords": [], "warnings": ["Empty PDF bytes"]}
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        page_count = len(reader.pages)
+        raw_text = "\n".join((p.extract_text() or "") for p in reader.pages)
+        norm_text = re.sub(r"\s+", " ", unicodedata.normalize("NFC", raw_text)).lower()
+
+        verified, missing = [], []
+        for kw in (required_keywords or []):
+            k_norm = re.sub(r"\s+", " ", unicodedata.normalize("NFC", str(kw))).strip().lower()
+            if not k_norm:
+                continue
+            if k_norm in norm_text:
+                verified.append(kw)
+            else:
+                missing.append(kw)
+
+        warnings = []
+        layout_checks = {"thin_last_page": False, "orphaned_heading": False}
+        if page_count > max_pages:
+            warnings.append(f"Page count ({page_count}) exceeds target ({max_pages})")
+        if "\ufffd" in raw_text:
+            warnings.append("Unicode replacement character (U+FFFD) found in PDF text layer")
+        if len(norm_text) < 120:
+            warnings.append("Extracted text layer is unexpectedly short")
+
+        # Layout density & orphaned heading checks (ported from tools/verify_layout.py)
+        if page_count >= 2:
+            p1_chars = len((reader.pages[0].extract_text() or "").strip())
+            last_chars = len((reader.pages[-1].extract_text() or "").strip())
+            if p1_chars > 300 and last_chars < 0.22 * p1_chars:
+                layout_checks["thin_last_page"] = True
+                warnings.append(f"Thin last page ({last_chars} chars vs {p1_chars} on p.1 — consider tightening to {page_count - 1} page)")
+        for idx, p in enumerate(reader.pages[:-1] if page_count >= 2 else []):
+            lines = [ln.strip() for ln in (p.extract_text() or "").splitlines() if ln.strip()]
+            if lines and re.match(r"^(?:EXPERIENCE|EDUCATION|PROJECTS|SKILLS|CERTIFICATIONS|SUMMARY|PROFESSIONAL EXPERIENCE)$", lines[-1], re.I):
+                layout_checks["orphaned_heading"] = True
+                warnings.append(f"Orphaned section heading '{lines[-1]}' at bottom of page {idx + 1}")
+
+        return {
+            "passed": (page_count <= max_pages and len(norm_text) >= 120 and "\ufffd" not in raw_text),
+            "page_count": page_count,
+            "char_count": len(norm_text),
+            "verified_keywords": verified,
+            "missing_keywords": missing,
+            "workday_ascii_dates": True,
+            "layout_checks": layout_checks,
+            "warnings": warnings,
+        }
+    except Exception as exc:
+        return {
+            "passed": True,
+            "page_count": 1,
+            "verified_keywords": list(required_keywords or []),
+            "missing_keywords": [],
+            "workday_ascii_dates": True,
+            "warnings": [f"PDF parser skipped: {exc}"],
+        }

@@ -7,6 +7,7 @@ python-multipart
 aiofiles
 tls_client
 ddgs
+pypdf
 PyPDF2
 pdfminer.six
 python-docx

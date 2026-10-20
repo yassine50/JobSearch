@@ -153,14 +153,32 @@ def _clean_job_url(url: str) -> str:
     return canonical_url(url)
 
 def _norm_company(c: str) -> str:
-    if not c: return ""
-    s = c.lower().strip()
-    s = re.sub(r"\b(inc|incorporated|llc|ltd|limited|corp|corporation|technologies|solutions|group|labs|holdings|company|co)\b", "", s)
-    return re.sub(r"[^a-z0-9]", "", s)
+    if not c:
+        return ""
+    from ..search_engine import normalize_company_key
+    return normalize_company_key(c)
 
 def _norm_title(t: str) -> str:
-    if not t: return ""
-    return re.sub(r"[^a-z0-9]", "", t.lower().strip())
+    if not t:
+        return ""
+    from ..search_engine import normalize_title_key
+    return normalize_title_key(t)
+
+def _build_referral_links(company: str, title: str) -> dict:
+    """
+    1-Click LinkedIn Referral / Peer & Hiring Manager Search Links
+    (ported from ai-job-search 04-job-evaluation.md).
+    """
+    comp = (company or "").strip()
+    if not comp or comp.lower() in ("confidential", "unknown", "n/a", "none"):
+        return {}
+    clean_role = re.sub(r"\([^)]*\)", "", title or "").split("-")[0].split(",")[0].strip()
+    peer_q = urllib.parse.quote_plus(f"{comp} {clean_role}".strip())
+    recruiter_q = urllib.parse.quote_plus(f"{comp} Technical Recruiter Talent Acquisition")
+    return {
+        "peers_url": f"https://www.linkedin.com/search/results/people/?keywords={peer_q}",
+        "recruiters_url": f"https://www.linkedin.com/search/results/people/?keywords={recruiter_q}",
+    }
 
 EMAIL_RE = re.compile(
     r"[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,10}",
@@ -246,8 +264,12 @@ _jobs_adapter = _req_lib.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=
 _JOBS_SESSION.mount("https://", _jobs_adapter)
 _JOBS_SESSION.mount("http://", _jobs_adapter)
 
-def _fetch_linkedin_description(url_or_id: str) -> str:
-    """Fetches full job description via LinkedIn public guest API."""
+def _fetch_linkedin_details(url_or_id: str) -> dict:
+    """
+    Fetches full job description, closed-banner status, and structured criteria
+    (Seniority level, Employment type, Job function, Industries) via LinkedIn's
+    public guest API (ported from ai-job-search linkedin-search/cli/src/helpers.ts).
+    """
     job_id = None
     url_or_id = str(url_or_id or "").strip()
     if url_or_id.isdigit():
@@ -264,10 +286,10 @@ def _fetch_linkedin_description(url_or_id: str) -> str:
             job_id = m.group(1)
 
     if not job_id:
-        return ""
+        return {"description": "", "is_closed": False, "criteria": {}}
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
     }
     try:
@@ -275,13 +297,44 @@ def _fetch_linkedin_description(url_or_id: str) -> str:
         g_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
         resp = _JOBS_SESSION.get(g_url, headers=headers, timeout=3.5)
         if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
+            raw_html = resp.text or ""
+            # Check closed-job banner strictly inside topcard (before description body)
+            desc_pos = raw_html.find("show-more-less-html__markup")
+            topcard_slice = raw_html[:desc_pos] if desc_pos > 0 else raw_html
+            is_closed = bool(
+                "closed-job__flavor" in topcard_slice
+                or re.search(r"no\s+longer\s+accepting\s+applications", topcard_slice, re.I)
+            )
+            soup = BeautifulSoup(raw_html, "html.parser")
+            desc_text = ""
             div = soup.find("div", class_=lambda x: x and "show-more-less-html__markup" in x)
             if div:
-                return div.get_text(separator="\n").strip()
+                desc_text = div.get_text(separator="\n").strip()
+
+            criteria = {}
+            for item in soup.find_all("li", class_=lambda x: x and "description__job-criteria-item" in x):
+                hdr = item.find(class_=lambda x: x and "description__job-criteria-subheader" in x)
+                val = item.find(class_=lambda x: x and "description__job-criteria-text" in x)
+                if hdr and val:
+                    k = hdr.get_text(strip=True).lower()
+                    v = val.get_text(strip=True)
+                    if "seniority" in k:
+                        criteria["seniority"] = v
+                    elif "employment" in k:
+                        criteria["employment_type"] = v
+                    elif "function" in k:
+                        criteria["job_function"] = v
+                    elif "industr" in k:
+                        criteria["industries"] = v
+            return {"description": desc_text, "is_closed": is_closed, "criteria": criteria}
     except Exception:
         pass
-    return ""
+    return {"description": "", "is_closed": False, "criteria": {}}
+
+
+def _fetch_linkedin_description(url_or_id: str) -> str:
+    """Fetches full job description via LinkedIn public guest API."""
+    return _fetch_linkedin_details(url_or_id).get("description", "")
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "scraper_config.json")
 
@@ -295,11 +348,129 @@ def _get_scraper_config() -> dict:
     return {}
 
 def _save_scraper_config(cfg: dict):
+    """Atomic file write via temp file + os.replace (ported from ai-job-search tools/rank_state.py)."""
+    import tempfile
+    parent = os.path.dirname(os.path.abspath(CONFIG_PATH))
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".scraper_config.", suffix=".tmp", dir=parent)
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, CONFIG_PATH)
     except Exception as e:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         logger.error(f"Failed to save scraper config: {e}")
+
+
+_JSONLD_SCRIPT_RE = re.compile(
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>([\s\S]*?)</script>',
+    re.I,
+)
+
+
+def _find_job_posting_node(node: Any) -> Optional[dict]:
+    """Recursively locate a schema.org JobPosting object inside parsed JSON-LD (ported from jobbank-search)."""
+    if isinstance(node, list):
+        for item in node:
+            found = _find_job_posting_node(item)
+            if found:
+                return found
+        return None
+    if isinstance(node, dict):
+        t = node.get("@type")
+        is_jp = (t == "JobPosting") or (isinstance(t, list) and "JobPosting" in t)
+        if is_jp:
+            return node
+        if isinstance(node.get("@graph"), list):
+            return _find_job_posting_node(node["@graph"])
+    return None
+
+
+def _extract_jsonld_job_posting(html_text: str) -> dict:
+    """
+    Extract structured JobPosting metadata (title, company, location, description,
+    date_posted, deadline/validThrough, salary) from application/ld+json blocks.
+    """
+    if not html_text:
+        return {}
+    for m in _JSONLD_SCRIPT_RE.finditer(html_text):
+        raw_json = (m.group(1) or "").strip()
+        if not raw_json:
+            continue
+        try:
+            parsed = json.loads(raw_json)
+        except Exception:
+            continue
+        jp = _find_job_posting_node(parsed)
+        if not jp:
+            continue
+
+        title = str(jp.get("title") or "").strip()
+        company = ""
+        org = jp.get("hiringOrganization")
+        if isinstance(org, dict):
+            company = str(org.get("name") or "").strip()
+        elif isinstance(org, str):
+            company = org.strip()
+
+        location = ""
+        loc = jp.get("jobLocation")
+        if isinstance(loc, list) and loc:
+            loc = loc[0]
+        if isinstance(loc, dict):
+            addr = loc.get("address")
+            if isinstance(addr, dict):
+                parts = [
+                    str(addr.get("addressLocality") or "").strip(),
+                    str(addr.get("addressRegion") or "").strip(),
+                    str(addr.get("addressCountry") or "").strip(),
+                ]
+                location = ", ".join(p for p in parts if p)
+            elif isinstance(addr, str):
+                location = addr.strip()
+
+        raw_desc = str(jp.get("description") or "").strip()
+        clean_desc = ""
+        if raw_desc:
+            try:
+                from bs4 import BeautifulSoup
+                clean_desc = BeautifulSoup(raw_desc, "html.parser").get_text("\n", strip=True)
+            except Exception:
+                clean_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()
+
+        date_posted = str(jp.get("datePosted") or "").strip()
+        valid_through = str(jp.get("validThrough") or "").strip()
+
+        salary = ""
+        base_sal = jp.get("baseSalary")
+        if isinstance(base_sal, dict):
+            currency = str(base_sal.get("currency") or "").strip()
+            val = base_sal.get("value")
+            if isinstance(val, dict):
+                lo = val.get("minValue") or val.get("value")
+                hi = val.get("maxValue")
+                unit = str(val.get("unitText") or "").lower()
+                if lo and hi:
+                    salary = f"{currency} {lo}–{hi}" + (f" / {unit}" if unit else "")
+                elif lo:
+                    salary = f"{currency} {lo}" + (f" / {unit}" if unit else "")
+            elif val:
+                salary = f"{currency} {val}".strip()
+
+        return {
+            "title": title,
+            "company": company,
+            "location": location,
+            "description": clean_desc,
+            "date_posted": date_posted,
+            "deadline": valid_through,
+            "salary": salary.strip(),
+        }
+    return {}
 
 
 # ── Platform admin (only admins can see / change the server-side API keys) ─────
@@ -619,7 +790,14 @@ def _enrich_job_description(job: dict) -> dict:
         return job
 
     if "linkedin" in site or "linkedin.com" in url:
-        desc = _fetch_linkedin_description(url)
+        li_info = _fetch_linkedin_details(url)
+        if li_info.get("is_closed"):
+            job["is_closed"] = True
+        if li_info.get("criteria"):
+            job["job_criteria"] = li_info["criteria"]
+            if not job.get("company_industry") and li_info["criteria"].get("industries"):
+                job["company_industry"] = li_info["criteria"]["industries"]
+        desc = li_info.get("description") or ""
         if desc:
             job["description"] = desc
             new_emails = _extract_emails_from_text(desc)
@@ -1148,15 +1326,23 @@ def search_jobs(req: SearchRequest,
                 return j
             _bounded_map(_deep_hunt, deep_indices, 1.2)
 
+        # Drop any postings confirmed closed on LinkedIn's topcard banner during enrichment
+        closed_before = len(raw_jobs)
+        raw_jobs = [j for j in raw_jobs if not j.get("is_closed")]
+        if closed_before > len(raw_jobs):
+            stats["closed_removed"] = closed_before - len(raw_jobs)
+
         jobs = raw_jobs
         stats["timings"]["email_hunt_s"] = round(_time.time() - t_hunt, 2)
 
         # Automatic High-Accuracy AI Matching if user has a CV (uses cached CV profile & fast TF-IDF)
+        cv_text_for_signals = ""
         try:
             cv_rec = db.query(models.CvUpload.text_content).filter(models.CvUpload.user_id == current_user.id).first()
             if cv_rec and cv_rec[0] and jobs:
                 from cv_matcher import compute_match
                 cv_text = cv_rec[0]
+                cv_text_for_signals = cv_text
                 for j in jobs:
                     try:
                         s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
@@ -1170,24 +1356,56 @@ def search_jobs(req: SearchRequest,
         except Exception as auto_err:
             logger.warning(f"[Matching] Auto-match exception: {auto_err}")
 
-        # ── career-ops signals: repost history, posting legitimacy, work-authorization gates ──
+        # ── career-ops + ai-job-search signals: repost history, legitimacy, work-auth, language gate, ATS provenance, posting guard, mass-posting ──
         t_sig = _time.time()
         try:
             record_and_annotate(db, jobs)
         except Exception:
             pass
-        from ..job_evaluator import assess_legitimacy, assess_work_auth
+        from ..job_evaluator import (
+            assess_legitimacy, assess_work_auth, assess_language_gate,
+            sanitize_and_guard_posting, detect_ats_provenance, extract_deadline,
+        )
+        company_counts: dict = {}
+        for j in jobs:
+            nc = _norm_company(j.get("company") or "")
+            if nc and nc not in ("confidential", "unknown", "na", "none"):
+                company_counts[nc] = company_counts.get(nc, 0) + 1
+
         for j in jobs:
             try:
+                guard = sanitize_and_guard_posting(j.get("description") or "")
+                if guard["cleaned_text"] != (j.get("description") or ""):
+                    j["description"] = guard["cleaned_text"]
+                j["posting_guard"] = {
+                    "has_injection": guard["has_injection"],
+                    "has_attention_check": guard["has_attention_check"],
+                    "attention_checks": guard["attention_checks"],
+                }
                 lg = assess_legitimacy(j, j.get("sighting"))
                 j["legitimacy"] = {"tier": lg["tier"], "risk": lg["risk"],
                                    "flags": [s["finding"] for s in lg["signals"] if s["impact"] >= 0.5]}
+                j["ats_provenance"] = lg.get("ats_provenance") or detect_ats_provenance(j)
+                j["deadline_info"] = lg.get("deadline_info") or extract_deadline(j)
                 wa = assess_work_auth(j)
                 j["work_auth"] = {"blockers": [b["label"] for b in wa["blockers"]],
                                   "positives": wa["positives"][:3]}
+                lang_g = assess_language_gate(j, cv_text_for_signals)
+                j["language_gate"] = {
+                    "required": lang_g["required_languages"],
+                    "missing": lang_g["missing_languages"],
+                    "matched": lang_g["matched_languages"],
+                    "note": lang_g["note"],
+                }
+                nc = _norm_company(j.get("company") or "")
+                j["company_openings_count"] = company_counts.get(nc, 1) if nc else 1
+                j["referral_links"] = _build_referral_links(j.get("company") or "", j.get("title") or "")
             except Exception as sig_err:
                 logger.debug(f"[Signals] {j.get('title')}: {sig_err}")
         stats["timings"]["signals_s"] = round(_time.time() - t_sig, 1)
+
+        # Drop postings whose explicit application deadline has already passed
+        jobs = [j for j in jobs if not (j.get("deadline_info") or {}).get("is_expired")]
 
         # ── Final ranking: CV fit (if available) blended with listing quality ──
         for j in jobs:
@@ -1198,6 +1416,11 @@ def search_jobs(req: SearchRequest,
             tier = (j.get("legitimacy") or {}).get("tier")
             j["rank_score"] -= 15 if tier == "Suspicious" else (5 if tier == "Proceed with Caution" else 0)
             j["rank_score"] -= 3 * min(j.get("repost_count") or 0, 3)
+            # First-party ATS provenance boost & Language Gate blocker penalty (ai-job-search)
+            if (j.get("ats_provenance") or {}).get("is_first_party"):
+                j["rank_score"] = round(j["rank_score"] + 2.5, 1)
+            if cv_text_for_signals and (j.get("language_gate") or {}).get("missing"):
+                j["rank_score"] = round(j["rank_score"] - 6.0, 1)
         jobs.sort(key=lambda x: x["rank_score"], reverse=True)
         stats["timings"]["total_s"] = round(_time.time() - t_start, 1)
 
@@ -1349,17 +1572,22 @@ def fetch_job_description(req: JobDescriptionRequest,
     if not desc and url.startswith("http"):
         try:
             from bs4 import BeautifulSoup
-            import requests as req_lib
+            from ..liveness import decode_page
             headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Accept-Language": "en-US,en;q=0.9",
             }
-            resp = req_lib.get(url, headers=headers, timeout=6)
+            resp = _JOBS_SESSION.get(url, headers=headers, timeout=6)
             if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for tag in soup(["script", "style", "noscript", "nav", "footer"]):
-                    tag.decompose()
-                desc = soup.get_text("\n", strip=True)[:4500]
+                html_text = decode_page(resp.content, resp.headers.get("Content-Type"))
+                jld = _extract_jsonld_job_posting(html_text)
+                if jld.get("description") and len(jld["description"]) > 120:
+                    desc = jld["description"][:4500]
+                else:
+                    soup = BeautifulSoup(html_text, "html.parser")
+                    for tag in soup(["script", "style", "noscript", "nav", "footer", "svg"]):
+                        tag.decompose()
+                    desc = soup.get_text("\n", strip=True)[:4500]
         except Exception:
             pass
 
@@ -1398,7 +1626,7 @@ def fetch_job_description(req: JobDescriptionRequest,
 def import_from_url(req: ImportUrlRequest,
                     db: Session = Depends(get_db),
                     current_user: models.User = Depends(get_current_user)):
-    """Scrape any job posting URL and extract emails + basic info."""
+    """Scrape any job posting URL and extract emails + structured JSON-LD / HTML info."""
     clean_url = req.url.strip()
 
     # 1. Specialized instant handler for Job Bank Canada URLs
@@ -1446,60 +1674,86 @@ def import_from_url(req: ImportUrlRequest,
             }
     try:
         from bs4 import BeautifulSoup
+        from ..liveness import decode_page
+        from ..job_evaluator import extract_deadline, detect_ats_provenance
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36",
+                          "Chrome/124.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        # Try curl_cffi first (bypasses anti-bot / Cloudflare)
-        # Fall back to regular requests if not available
         try:
             from curl_cffi import requests as c_requests
             resp = c_requests.get(
-                req.url, impersonate="chrome", timeout=15,
+                clean_url, impersonate="chrome", timeout=15,
                 headers={"Accept-Language": "en-US,en;q=0.9"}
             )
-            html = resp.text
             if resp.status_code != 200:
                 raise Exception(f"HTTP {resp.status_code}")
+            html = decode_page(resp.content, resp.headers.get("Content-Type"))
         except ImportError:
-            import requests as r
-            import urllib3; urllib3.disable_warnings()
-            resp = r.get(req.url, headers=headers, timeout=12, verify=False)
+            import urllib3
+            urllib3.disable_warnings()
+            resp = _JOBS_SESSION.get(clean_url, headers=headers, timeout=12, verify=False)
             resp.raise_for_status()
-            html = resp.text
+            html = decode_page(resp.content, resp.headers.get("Content-Type"))
 
-        soup  = BeautifulSoup(html, "html.parser")
-        # Strip scripts/styles
-        for tag in soup(["script","style","noscript"]): tag.decompose()
-        text = soup.get_text(" ", strip=True)
+        jld = _extract_jsonld_job_posting(html)
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "noscript", "svg"]):
+            tag.decompose()
+        text = jld.get("description") or soup.get_text(" ", strip=True)
 
-        # Try to extract title
-        title = ""
-        if soup.title: title = soup.title.string or ""
-        for sel in ["h1","[class*='job-title']","[class*='title']"]:
-            el = soup.select_one(sel)
-            if el and el.get_text(strip=True): title = el.get_text(strip=True); break
+        title = jld.get("title") or ""
+        if not title:
+            for sel in ["h1", "[class*='job-title']", "[class*='title']"]:
+                el = soup.select_one(sel)
+                if el and el.get_text(strip=True):
+                    title = el.get_text(strip=True)
+                    break
+            if not title and soup.title:
+                title = soup.title.string or ""
 
-        # Company from meta or og tags
-        company = ""
-        for attr in [("property","og:site_name"),("name","author"),("property","og:title")]:
-            tag = soup.find("meta", {attr[0]:attr[1]})
-            if tag and tag.get("content"): company = tag["content"]; break
+        company = jld.get("company") or ""
+        if not company:
+            for attr in [("property", "og:site_name"), ("name", "author"), ("property", "og:title")]:
+                tag = soup.find("meta", {attr[0]: attr[1]})
+                if tag and tag.get("content"):
+                    company = tag["content"]
+                    break
+
+        parsed_u = urllib.parse.urlparse(clean_url)
+        domain = re.sub(r"^www\.", "", (parsed_u.netloc or "").lower())
+
+        score = None
+        breakdown = {}
+        matched_skills = []
+        missing_skills = []
+        tips = []
+        cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+        if cv_rec and cv_rec.text_content and text:
+            try:
+                from cv_matcher import compute_match
+                score, breakdown = compute_match(cv_rec.text_content, text, title or "")
+                matched_skills = breakdown.get("matched_tech", [])
+                missing_skills = breakdown.get("missing_tech", [])
+                tips = breakdown.get("tips", [])
+            except Exception:
+                pass
 
         from recruiter_hunter import enrich_job_emails
         job_data = {
-            "title":    title[:120] or "Imported Job",
-            "company":  company[:80] or domain,
-            "location": "",
-            "url":      req.url,
-            "job_url_direct": req.url,
-            "description": text,
-            "site":     "custom",
-            "date_posted": "",
-            "salary":   "",
-            "emails":   [],
+            "title": (title or "")[:120] or "Imported Job",
+            "company": (company or "")[:80] or domain,
+            "location": jld.get("location") or "",
+            "url": clean_url,
+            "job_url_direct": clean_url,
+            "description": text[:4500],
+            "site": "custom",
+            "date_posted": jld.get("date_posted") or "",
+            "deadline": jld.get("deadline") or "",
+            "salary": jld.get("salary") or "",
+            "emails": [],
             "company_domain": domain,
             "imported": True,
             "score": score,
@@ -1508,12 +1762,14 @@ def import_from_url(req: ImportUrlRequest,
             "missing_skills": missing_skills,
             "tips": tips,
         }
+        job_data["deadline_info"] = extract_deadline(job_data)
+        job_data["ats_provenance"] = detect_ats_provenance(job_data)
+        job_data["referral_links"] = _build_referral_links(job_data["company"], job_data["title"])
         job_data["emails"] = enrich_job_emails(job_data)
         if not job_data.get("company_domain") and job_data["emails"]:
             job_data["company_domain"] = job_data["emails"][0]["email"].split("@")[-1]
 
-        job_data["description"] = text[:800]
-        return job_data
+        return {"job": job_data, **job_data}
     except Exception as e:
         raise HTTPException(400, f"Could not import URL: {str(e)}")
 
