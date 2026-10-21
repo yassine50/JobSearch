@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 from typing import Optional
 
@@ -19,12 +20,12 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "scraper_config.json
 
 def _get_google_client_id() -> str:
     env_cid = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
-    if env_cid:
+    if env_cid and not env_cid.startswith("503660329507-"):
         return env_cid
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg_cid = str(json.load(f).get("google_client_id", "") or "").strip()
-            if cfg_cid:
+            if cfg_cid and not cfg_cid.startswith("503660329507-"):
                 return cfg_cid
     except Exception:
         pass
@@ -148,7 +149,24 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email and password are required")
 
     user = db.query(models.User).filter(models.User.email == email).first()
-    if not user or not verify_password(password, user.hashed_password):
+    if not user:
+        if "@" not in email or "." not in email.split("@")[-1]:
+            raise HTTPException(status_code=400, detail="Please enter a valid email address")
+        if len(password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        auto_name = re.sub(r"\d+$", "", email.split("@")[0]).replace(".", " ").replace("_", " ").replace("-", " ").strip().title()
+        if len(auto_name) < 2:
+            auto_name = email.split("@")[0].title()
+        user = models.User(
+            name=auto_name,
+            email=email,
+            hashed_password=get_password_hash(password),
+            role="seeker",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    elif not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer", "user": _user_dict(user)}

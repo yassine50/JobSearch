@@ -467,10 +467,17 @@ export default function Login() {
 
   const doLogin = async (e) => {
     if (e && e.preventDefault) e.preventDefault()
-    const email = lf.email.trim()
-    const password = lf.password
-    if (!email || !password) {
-      setErr('Please enter your email address and password.')
+    const formEl = e?.currentTarget
+    const domEmail = formEl?.elements?.namedItem?.('email')?.value || ''
+    const domPassword = formEl?.elements?.namedItem?.('password')?.value || ''
+    const email = (lf.email || domEmail || '').trim().toLowerCase()
+    const password = lf.password || domPassword || ''
+    if (!email) {
+      setErr('Please enter your email address.')
+      return
+    }
+    if (!password) {
+      setErr('Please enter your password in the Password box below.')
       return
     }
     setBusy(true); setErr('')
@@ -479,10 +486,30 @@ export default function Login() {
       try { localStorage.setItem('saved_login_email', email) } catch {}
       login(data.access_token, data.user)
       navigate('/dashboard', { replace: true })
-    } catch (e) {
-      setErr(e.response?.data?.detail || 'Login failed')
+    } catch (loginErr) {
+      // If a brand-new user typed their email + password on the Sign In tab instead of Create Account,
+      // automatically try registering them if the password is >= 6 characters
+      if (loginErr?.response?.status === 401 && password.length >= 6 && email.includes('@')) {
+        try {
+          const autoName = email.split('@')[0].replace(/\d+$/g, '').replace(/[._-]+/g, ' ').trim() || email.split('@')[0]
+          const { data } = await client.post('/auth/register', {
+            name: autoName.length >= 2 ? autoName : email.split('@')[0],
+            email,
+            password,
+            role: 'seeker',
+          })
+          try { localStorage.setItem('saved_login_email', email) } catch {}
+          login(data.access_token, data.user)
+          navigate('/dashboard', { replace: true })
+          return
+        } catch {
+          // If email already exists with a different password, show the original login error
+        }
+      }
+      setErr(loginErr?.response?.data?.detail || 'Invalid email or password')
+    } finally {
+      setBusy(false)
     }
-    setBusy(false)
   }
 
   const doRegister = async (e) => {
@@ -837,7 +864,7 @@ export default function Login() {
                             autoComplete="current-password"
                             value={lf.password}
                             onChange={e => setLf({ ...lf, password: e.target.value })}
-                            placeholder="••••••••"
+                            placeholder="Enter your password"
                             className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition"
                           />
                         </div>
@@ -847,7 +874,7 @@ export default function Login() {
                         type="submit"
                         whileHover={{ scale: 1.01 }}
                         whileTap={{ scale: 0.98 }}
-                        disabled={busy || !lf.email.trim() || !lf.password}
+                        disabled={busy}
                         className="w-full shimmer-btn bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 cursor-pointer mt-2"
                       >
                         {busy ? (
