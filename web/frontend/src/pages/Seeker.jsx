@@ -59,7 +59,7 @@ export default function Seeker() {
     client.get('/cv/info').then(r => setCvInfo(r.data)).catch(() => {})
   }
 
-  // Load CV Status & Tracker sync
+  // Load CV Status, Tracker sync & Pre-load Daily Top 5 Matches from Email
   useEffect(() => {
     if (!isAuth) return
     loadCvInfo()
@@ -67,6 +67,12 @@ export default function Seeker() {
       const { applied, saved } = buildTrackerLookupSets(r.data || [])
       setAppliedJobs(applied)
       setSavedJobs(saved)
+    }).catch(() => {})
+    client.get('/jobs/daily-digest').then(r => {
+      const digestJobs = r.data?.jobs
+      if (Array.isArray(digestJobs) && digestJobs.length > 0) {
+        setBoardJobs(prev => (prev.length === 0 ? digestJobs : prev))
+      }
     }).catch(() => {})
   }, [isAuth])
 

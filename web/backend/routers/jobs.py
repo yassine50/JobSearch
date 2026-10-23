@@ -2166,10 +2166,21 @@ class DailyDigestUpdateRequest(BaseModel):
 
 @router.get("/daily-digest")
 def get_daily_digest_settings(current_user: models.User = Depends(get_current_user)):
+    import json as _json
+    digest_jobs = []
+    raw_json = getattr(current_user, "last_digest_jobs_json", "") or ""
+    if raw_json:
+        try:
+            loaded = _json.loads(raw_json)
+            if isinstance(loaded, list):
+                digest_jobs = loaded
+        except Exception:
+            digest_jobs = []
     return {
         "enabled": True,
         "role": getattr(current_user, "daily_digest_role", "") or "",
         "last_sent_at": str(current_user.last_digest_sent_at) if getattr(current_user, "last_digest_sent_at", None) else None,
+        "jobs": digest_jobs,
     }
 
 

@@ -185,6 +185,8 @@ def init_db():
         "UPDATE users SET daily_digest_enabled = 1",
         "ALTER TABLE users ADD COLUMN daily_digest_role VARCHAR DEFAULT ''",
         "ALTER TABLE users ADD COLUMN last_digest_sent_at DATETIME",
+        "ALTER TABLE users ADD COLUMN last_digest_jobs_json TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN seen_digest_urls_json TEXT DEFAULT ''",
         "ALTER TABLE email_settings ADD COLUMN auth_method VARCHAR DEFAULT 'smtp'",
         "ALTER TABLE email_settings ADD COLUMN gmail_refresh_token TEXT DEFAULT ''",
         "ALTER TABLE cv_uploads ADD COLUMN persona_name VARCHAR DEFAULT 'Primary Resume'",

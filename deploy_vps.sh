@@ -63,9 +63,9 @@ After=network.target
 [Service]
 User=$USER
 WorkingDirectory=/opt/cvtomatch
+EnvironmentFile=-/opt/cvtomatch/.env
 Environment="PATH=/opt/cvtomatch/venv/bin"
 Environment="PYTHONUNBUFFERED=1"
-Environment="RESEND_API_KEY=re_Ph6cNz28_AQi1mTkSWut8aWEofaejWPkt"
 Environment="PLATFORM_FROM_EMAIL=support@cvtomatch.com"
 Environment="PLATFORM_REPLY_TO_EMAIL=support@cvtomatch.com"
 Environment="PLATFORM_FROM_NAME=CVtoMatch AI"

@@ -15,6 +15,8 @@ class User(Base):
     daily_digest_enabled = Column(Boolean, default=True)
     daily_digest_role = Column(String, default="")
     last_digest_sent_at = Column(DateTime, nullable=True)
+    last_digest_jobs_json = Column(Text, default="")
+    seen_digest_urls_json = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     saved_jobs     = relationship("SavedJob",      back_populates="user")
     cv_uploads     = relationship("CvUpload",      back_populates="user")
