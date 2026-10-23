@@ -1,8 +1,7 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List, Dict, Any
 from .. import models
 from ..database import get_db
 from ..auth import get_current_user
@@ -64,10 +63,10 @@ def _extract_years(cv_text: str) -> str:
     return f"{m.group(1)}+ years" if m else "hands-on experience"
 
 
-def _extract_cv_evidence(cv_text: str, jd: str) -> dict:
+def _extract_cv_evidence(cv_text: str, jd: str, cv_rec=None) -> dict:
     """
-    Parse the candidate's real CV via cv_engine.parse_cv to ground cover letters
-    and portal form answers in verified projects, roles, and achievements.
+    Parse the candidate's real CV via cv_engine.parse_cv (or reviewed / spatial CV structure)
+    to ground cover letters and portal form answers in verified projects, roles, and achievements.
     """
     evidence = {
         "specialty": "",
@@ -75,13 +74,23 @@ def _extract_cv_evidence(cv_text: str, jd: str) -> dict:
         "best_project": None,
         "recent_role": None,
     }
-    if not cv_text:
+    if not cv_text and not cv_rec:
         return evidence
 
     jd_words = {w.lower() for w in re.findall(r"[A-Za-z0-9+#.]{3,}", jd or "")}
     try:
-        from cv_engine.parse import parse_cv
-        parsed = parse_cv(cv_text)
+        parsed = None
+        if cv_rec is not None:
+            try:
+                from ..tailoring import extract_cv_structure
+                from cv_engine.quality import cv_from_dict
+                structured_dict, _ = extract_cv_structure(cv_rec)
+                parsed = cv_from_dict(structured_dict)
+            except Exception:
+                parsed = None
+        if parsed is None:
+            from cv_engine.parse import parse_cv
+            parsed = parse_cv(cv_text or "")
         evidence["specialty"] = (parsed.headline or "").split("|")[0].split("•")[0].strip()
 
         scored_bullets = []
@@ -153,6 +162,7 @@ def build_portal_form_fields(
     company: str,
     job_description: str,
     lang: str = "en",
+    cv_rec=None,
 ) -> dict:
     """
     Generate copy-pasteable Portal Application Form Answers
@@ -168,7 +178,7 @@ def build_portal_form_fields(
     s3 = top_skills[2] if len(top_skills) > 2 else "automated testing"
     skills_inline = ", ".join(top_skills[:4]) if top_skills else "modern software stacks"
     years = _extract_years(cv_text)
-    ev = _extract_cv_evidence(cv_text, job_description)
+    ev = _extract_cv_evidence(cv_text, job_description, cv_rec=cv_rec)
     specialty = ev["specialty"] or job_title or "Software Engineer"
     comp = (company or "your team").strip()
     role = (job_title or "this role").strip()
@@ -269,13 +279,14 @@ def build_portal_form_fields(
 @router.post("/generate")
 def generate(req: CLRequest, db: Session = Depends(get_db),
              current_user: models.User = Depends(get_current_user)):
-    cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv_rec = _get_active_cv(db, current_user.id)
     cv_text = cv_rec.text_content if cv_rec else ""
 
     top_skills = _extract_top_skills(cv_text, req.job_description, n=5)
     skills_str = ", ".join(top_skills) if top_skills else "modern software engineering"
     years = _extract_years(cv_text)
-    ev = _extract_cv_evidence(cv_text, req.job_description)
+    ev = _extract_cv_evidence(cv_text, req.job_description, cv_rec=cv_rec)
     specialty = ev["specialty"] or req.job_title
 
     lang = detect_language(f"{req.job_title} {req.company} {req.job_description}")
@@ -369,6 +380,7 @@ Sincerely,
         company=req.company,
         job_description=req.job_description,
         lang=lang,
+        cv_rec=cv_rec,
     )
     word_count = len(letter.split())
 

@@ -7,21 +7,14 @@ import re
 
 from .. import models
 from ..database import get_db
-from ..auth import get_current_user
+from ..auth import get_current_user, get_optional_user
 from ..bounce_cleaner import get_blacklisted_emails
 from ..linkedin_post_hunter import (
     search_linkedin_recruiter_posts,
-    canonicalize_linkedin_post_url,
-    generate_stable_post_id,
-    extract_clean_emails_from_text,
-    verify_recruiter_email_strictly,
-    extract_accurate_job_title,
-    check_role_and_skill_fit,
     extract_post_required_years,
-    _SEARCH_CACHE
 )
 from .email import _dispatch_smtp, _build_mime_message, BatchSmtpSession, SmtpFatalError
-from ..email_templates import get_application_email, detect_language
+from ..email_templates import get_application_email
 
 router = APIRouter(prefix="/api/linkedin-posts", tags=["linkedin-posts"])
 
@@ -82,9 +75,9 @@ class BatchApplyRequest(BaseModel):
     applications: Optional[List[PostApplyRequest]] = None
 
 @router.get("/account-status")
-def get_account_status(current_user: models.User = Depends(get_current_user)):
+def get_account_status(current_user: Optional[models.User] = Depends(get_optional_user)):
     """Check whether a live LinkedIn session cookie (li_at) is connected for this user."""
-    cookie = (getattr(current_user, "linkedin_cookie", "") or "").strip()
+    cookie = (getattr(current_user, "linkedin_cookie", "") or "").strip() if current_user else ""
     is_connected = bool(cookie)
     masked = ""
     if is_connected:
@@ -123,13 +116,13 @@ def disconnect_linkedin_account(db: Session = Depends(get_db),
 @router.post("/search")
 def search_posts(req: PostSearchRequest,
                  db: Session = Depends(get_db),
-                 current_user: models.User = Depends(get_current_user)):
+                 current_user: Optional[models.User] = Depends(get_optional_user)):
     """
     Scans live LinkedIn recruiter posts announcing open positions,
     extracts direct emails and performs deep hunter verification.
     Supports multi-country simultaneous search and autonomous AI Agent mode.
     """
-    blacklisted = get_blacklisted_emails(db, current_user.id)
+    blacklisted = get_blacklisted_emails(db, current_user.id if current_user else None)
     
     # Normalize locations list from request
     loc_list: List[str] = []
@@ -141,7 +134,7 @@ def search_posts(req: PostSearchRequest,
         elif req.location.strip():
             loc_list = [req.location.strip()]
 
-    li_at_cookie = (req.li_at or "").strip() or (getattr(current_user, "linkedin_cookie", "") or "").strip()
+    li_at_cookie = (req.li_at or "").strip() or ((getattr(current_user, "linkedin_cookie", "") or "").strip() if current_user else "")
 
     posts, agent_stats = search_linkedin_recruiter_posts(
         role_query=req.role,
@@ -162,12 +155,14 @@ def search_posts(req: PostSearchRequest,
     # Run AI match scoring using compute_match from cv_matcher
     cv_text = ""
     cv_years = None
-    try:
-        cv = db.query(models.CvUpload.text_content).filter(models.CvUpload.user_id == current_user.id).first()
-        cv_text = cv[0] if cv and cv[0] else ""
-        cv_years = extract_post_required_years(cv_text) if cv_text else None
-    except Exception:
-        pass
+    if current_user:
+        try:
+            from .cv import _get_active_cv
+            active_cv = _get_active_cv(db, current_user.id)
+            cv_text = active_cv.text_content if active_cv and active_cv.text_content else ""
+            cv_years = extract_post_required_years(cv_text) if cv_text else None
+        except Exception:
+            pass
     
     # Load user's application tracker and email logs using lightweight column projections
     applied_urls = set()
@@ -177,46 +172,47 @@ def search_posts(req: PostSearchRequest,
     saved_urls = set()
     saved_title_company = set()
 
-    try:
-        app_rows = db.query(
-            models.Application.status,
-            models.Application.url,
-            models.Application.title,
-            models.Application.company,
-            models.Application.notes,
-        ).filter(models.Application.user_id == current_user.id).all()
+    if current_user:
+        try:
+            app_rows = db.query(
+                models.Application.status,
+                models.Application.url,
+                models.Application.title,
+                models.Application.company,
+                models.Application.notes,
+            ).filter(models.Application.user_id == current_user.id).all()
 
-        for st_val, url_val, title_val, comp_val, notes_val in app_rows:
-            status_norm = (st_val or "").lower()
-            url_norm = (url_val or "").strip().lower()
-            title_norm = (title_val or "").strip().lower()
-            comp_norm = (comp_val or "").strip().lower()
-            tc_key = f"{title_norm}|{comp_norm}"
+            for st_val, url_val, title_val, comp_val, notes_val in app_rows:
+                status_norm = (st_val or "").lower()
+                url_norm = (url_val or "").strip().lower()
+                title_norm = (title_val or "").strip().lower()
+                comp_norm = (comp_val or "").strip().lower()
+                tc_key = f"{title_norm}|{comp_norm}"
 
-            if status_norm != "saved":
-                if url_norm:
-                    applied_urls.add(url_norm)
-                if title_norm and comp_norm:
-                    applied_title_company.add(tc_key)
-                if comp_norm:
-                    applied_company_set.add(comp_norm)
-                if notes_val:
-                    for em in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", notes_val.lower()):
-                        applied_emails.add(em)
-            elif status_norm == "saved":
-                if url_norm:
-                    saved_urls.add(url_norm)
-                if title_norm and comp_norm:
-                    saved_title_company.add(tc_key)
+                if status_norm != "saved":
+                    if url_norm:
+                        applied_urls.add(url_norm)
+                    if title_norm and comp_norm:
+                        applied_title_company.add(tc_key)
+                    if comp_norm:
+                        applied_company_set.add(comp_norm)
+                    if notes_val:
+                        for em in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+", notes_val.lower()):
+                            applied_emails.add(em)
+                elif status_norm == "saved":
+                    if url_norm:
+                        saved_urls.add(url_norm)
+                    if title_norm and comp_norm:
+                        saved_title_company.add(tc_key)
 
-        for (to_email,) in db.query(models.EmailLog.to_email).filter(
-            models.EmailLog.user_id == current_user.id,
-            models.EmailLog.status != "failed"
-        ).all():
-            if to_email:
-                applied_emails.add(to_email.strip().lower())
-    except Exception:
-        pass
+            for (to_email,) in db.query(models.EmailLog.to_email).filter(
+                models.EmailLog.user_id == current_user.id,
+                models.EmailLog.status != "failed"
+            ).all():
+                if to_email:
+                    applied_emails.add(to_email.strip().lower())
+        except Exception:
+            pass
 
     for p in posts:
         desc = p.get("full_text") or p.get("post_snippet") or p.get("role_title")
@@ -390,7 +386,8 @@ def generate_inmail(req: InMailGenerateRequest,
     if first_name.lower() in ("linkedin", "recruiter", "hiring", "talent", "team"):
         first_name = "there"
 
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
     top_skills = []
     if cv and cv.text_content:
         try:
@@ -431,7 +428,8 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
     if not settings or not settings.smtp_user:
         raise HTTPException(400, "Please configure your Gmail SMTP settings first in Settings.")
 
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
     sender_name = settings.sender_name or current_user.name
 
     applied_count = 0

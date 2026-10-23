@@ -3,14 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search, Radar, KanbanSquare, LayoutDashboard, FileText,
-  Mail, Settings, Users, Sparkles, ArrowRight, Layers, Bell, Command, X
+  Mail, Settings, Users, Sparkles, ArrowRight, Layers, Bell, Command, X, Sun
 } from 'lucide-react'
+import { useTheme } from '../context/ThemeContext.jsx'
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const navigate = useNavigate()
+  const { theme, toggleTheme } = useTheme()
   const inputRef = useRef(null)
 
   useEffect(() => {
@@ -103,6 +105,15 @@ export default function CommandPalette() {
       icon: Settings,
       color: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
       run: () => navigate('/settings'),
+    },
+    {
+      id: 'power-theme',
+      category: 'Power Tools',
+      label: `Switch to ${theme === 'light' ? 'Night Mode (Dark)' : 'Light Mode'}`,
+      sub: 'Toggle workspace appearance between Light Mode and Night Mode',
+      icon: Sun,
+      color: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
+      run: () => toggleTheme(),
     },
     {
       id: 'power-personas',

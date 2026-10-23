@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Link2, ShieldCheck, CheckCircle2, AlertCircle, Eye, EyeOff, Loader2, X, ExternalLink, Trash2, Sparkles } from 'lucide-react'
 import client from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -128,14 +128,14 @@ export default function LinkedInConnectModal({ isOpen, onClose, onConnected }) {
         {/* Current Connection Status Badge */}
         <div className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${
           connected 
-            ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300' 
+            ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' 
             : 'bg-slate-800/60 border-slate-700/60 text-slate-300'
         }`}>
           <div className="flex items-center gap-2.5">
             {connected ? (
-              <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
+              <CheckCircle2 size={18} className="text-blue-400 shrink-0" />
             ) : (
-              <AlertCircle size={18} className="text-amber-400 shrink-0" />
+              <AlertCircle size={18} className="text-blue-400 shrink-0" />
             )}
             <div>
               <div className="font-semibold text-white">
@@ -152,10 +152,10 @@ export default function LinkedInConnectModal({ isOpen, onClose, onConnected }) {
               type="button"
               onClick={handleDisconnect}
               disabled={loading}
-              className="px-2.5 py-1.5 rounded-lg bg-red-950/50 hover:bg-red-900/60 border border-red-800/40 text-red-300 hover:text-white text-[11px] font-medium transition cursor-pointer flex items-center gap-1 shrink-0"
+              className="px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.12] text-slate-200 hover:text-white text-[11px] font-bold transition cursor-pointer flex items-center gap-1 shrink-0"
               title="Disconnect LinkedIn session"
             >
-              <Trash2 size={12} />
+              <Trash2 size={12} className="text-blue-400" />
               <span>Disconnect</span>
             </button>
           )}
@@ -165,16 +165,16 @@ export default function LinkedInConnectModal({ isOpen, onClose, onConnected }) {
         <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 text-xs text-slate-300 space-y-2.5 leading-relaxed">
           <p className="font-semibold text-white flex items-center gap-1.5">
             <Sparkles size={14} className="text-blue-400" />
-            How to get your <code className="text-blue-300 bg-blue-950/60 px-1 py-0.5 rounded">li_at</code> cookie in 30 seconds:
+            How to get your <code className="text-blue-300 bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 rounded font-mono">li_at</code> cookie in 30 seconds:
           </p>
           <ol className="list-decimal list-inside space-y-1.5 text-slate-300 pl-1 text-[11.5px]">
             <li>Open <a href="https://www.linkedin.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline font-medium inline-flex items-center gap-0.5">LinkedIn.com <ExternalLink size={10} /></a> in Chrome / Safari / Edge and ensure you are logged in.</li>
-            <li>Press <kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-[10px] text-white">F12</kbd> (or right click page &rarr; <span className="text-slate-100 font-medium">Inspect</span>).</li>
-            <li>Click the <span className="text-slate-100 font-medium">Application</span> tab (or Storage) &rarr; Expand <span className="text-slate-100 font-medium">Cookies</span> &rarr; Click <code className="text-blue-300">https://www.linkedin.com</code>.</li>
-            <li>Find the cookie named <strong className="text-white font-bold bg-slate-700/60 px-1 rounded">li_at</strong>, double click its value, copy it, and paste below.</li>
+            <li>Press <kbd className="bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 rounded text-[10px] font-bold text-blue-300 font-mono">F12</kbd> (or right click page &rarr; <span className="text-slate-100 font-semibold">Inspect</span>).</li>
+            <li>Click the <span className="text-slate-100 font-semibold">Application</span> tab (or Storage) &rarr; Expand <span className="text-slate-100 font-semibold">Cookies</span> &rarr; Click <code className="text-blue-300 font-mono">https://www.linkedin.com</code>.</li>
+            <li>Find the cookie named <strong className="text-blue-300 font-bold bg-blue-500/10 border border-blue-500/25 px-1.5 py-0.5 rounded font-mono text-[10.5px]">li_at</strong>, double click its value, copy it, and paste below.</li>
           </ol>
-          <p className="text-[11px] text-slate-500 pt-1.5 border-t border-slate-700/40 flex items-center gap-1">
-            <ShieldCheck size={12} className="text-emerald-400 shrink-0" />
+          <p className="text-[11px] text-slate-400 pt-1.5 border-t border-slate-700/40 flex items-center gap-1">
+            <ShieldCheck size={12} className="text-blue-400 shrink-0" />
             <span>Used only for read-only querying of LinkedIn's live public Content Search feed.</span>
           </p>
         </div>
@@ -215,7 +215,7 @@ export default function LinkedInConnectModal({ isOpen, onClose, onConnected }) {
             <button
               type="submit"
               disabled={loading || !cookieInput.trim()}
-              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {loading ? (
                 <>

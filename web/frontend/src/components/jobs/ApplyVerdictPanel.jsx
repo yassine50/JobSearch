@@ -71,14 +71,14 @@ export default function ApplyVerdictPanel({ job }) {
 
   if (!result) {
     return (
-      <div className="p-3.5 rounded-xl bg-slate-850/60 bg-slate-800/40 border border-slate-700/80 flex items-center justify-between gap-3">
+      <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/[0.07] flex items-center justify-between gap-3">
         <div className="space-y-0.5">
-          <p className="text-xs font-bold text-slate-100 flex items-center gap-1.5"><Scale size={13} className="text-sky-400" /> Should I apply?</p>
+          <p className="text-xs font-bold text-slate-100 flex items-center gap-1.5"><Scale size={13} className="text-blue-400" /> Should I apply?</p>
           <p className="text-[11px] text-slate-400">Checks it's still open, ghost/scam signals, visa blockers, pay and CV fit — then gives a verdict.</p>
-          {error && <p className="text-[11px] text-red-400">{error}</p>}
+          {error && <p className="text-[11px] text-rose-400">{error}</p>}
         </div>
         <button type="button" onClick={run} disabled={loading}
-          className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-60">
+          className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition cursor-pointer disabled:opacity-60">
           {loading ? <Loader2 size={13} className="animate-spin" /> : <Scale size={13} />}
           {loading ? 'Evaluating…' : 'Evaluate'}
         </button>

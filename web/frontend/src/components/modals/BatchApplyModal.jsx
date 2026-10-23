@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import confetti from 'canvas-confetti'
 import client, { getCached } from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -252,7 +252,7 @@ export default function BatchApplyModal({
         onClick={e => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-gradient-to-r from-blue-950/40 to-slate-900">
+        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25">
               <Zap size={20} className="text-white" />

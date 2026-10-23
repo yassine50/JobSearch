@@ -7,11 +7,13 @@ import JobBoardScraper from '../components/jobs/JobBoardScraper.jsx'
 import TailorCvModal from '../components/modals/TailorCvModal.jsx'
 import CvPersonasModal from '../components/modals/CvPersonasModal.jsx'
 import WatchlistModal from '../components/modals/WatchlistModal.jsx'
+import AuthGateModal from '../components/modals/AuthGateModal.jsx'
 import ScoreModal from '../components/ScoreModal.jsx'
 import client, { getCached } from '../api/client.js'
+import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import {
-  Upload, CheckCircle2, Briefcase, Sparkles, Users, Radar, Layers, Bell
+  Upload, CheckCircle2, Briefcase, Sparkles, Users, Radar, Layers, Bell, Loader2, Lock
 } from 'lucide-react'
 import {
   getCleanJobUrl,
@@ -20,48 +22,81 @@ import {
 
 export default function Seeker() {
   const toast = useToast()
-  const [activeTab, setActiveTab] = useState('job_boards') // 'job_boards' | 'linkedin_posts'
+  const { isAuth } = useAuth()
+  const [activeTab, setActiveTab] = useState(() => sessionStorage.getItem('guest_active_tab') || 'job_boards') // 'job_boards' | 'linkedin_posts'
   const [cvInfo, setCvInfo] = useState(() => getCached('/cv/info', { uploaded: false, personas_count: 0 }))
   const [cvUploading, setCvUploading] = useState(false)
 
   // Power Modals State
   const [personasModalOpen, setPersonasModalOpen] = useState(false)
   const [watchlistModalOpen, setWatchlistModalOpen] = useState(false)
+  const [authGateReason, setAuthGateReason] = useState(null)
 
-  // Job boards scraper state
-  const [boardJobs, setBoardJobs] = useState([])
+  // Job boards scraper state (hydrates from sessionStorage if user just unlocked a guest search on the Landing Page)
+  const [boardJobs, setBoardJobs] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('guest_board_jobs') || '[]')
+    } catch {
+      return []
+    }
+  })
   const [boardLoading, setBoardLoading] = useState(false)
-  const [boardMeta, setBoardMeta] = useState(null)
+  const [boardMeta, setBoardMeta] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('guest_board_meta') || 'null')
+    } catch {
+      return null
+    }
+  })
   const [tailorJob, setTailorJob] = useState(null)
   const [scoreModalJob, setScoreModalJob] = useState(null)
   const [appliedJobs, setAppliedJobs] = useState(() => buildTrackerLookupSets(getCached('/tracker', [])).applied)
   const [savedJobs, setSavedJobs] = useState(() => buildTrackerLookupSets(getCached('/tracker', [])).saved)
 
   const loadCvInfo = () => {
+    if (!isAuth) return
     client.get('/cv/info').then(r => setCvInfo(r.data)).catch(() => {})
   }
 
   // Load CV Status & Tracker sync
   useEffect(() => {
+    if (!isAuth) return
     loadCvInfo()
     client.get('/tracker').then(r => {
       const { applied, saved } = buildTrackerLookupSets(r.data || [])
       setAppliedJobs(applied)
       setSavedJobs(saved)
     }).catch(() => {})
-  }, [])
+  }, [isAuth])
 
-  // Listen for CommandPalette power events
+  // Listen for CommandPalette & AuthGate power events
   useEffect(() => {
-    const onOpenPersonas = () => setPersonasModalOpen(true)
-    const onOpenWatchlists = () => setWatchlistModalOpen(true)
+    const onOpenPersonas = () => {
+      if (!isAuth) {
+        setAuthGateReason('Create a Free Account to Manage CV Personas')
+        return
+      }
+      setPersonasModalOpen(true)
+    }
+    const onOpenWatchlists = () => {
+      if (!isAuth) {
+        setAuthGateReason('Create a Free Account to Save Job Watchlists')
+        return
+      }
+      setWatchlistModalOpen(true)
+    }
+    const onOpenAuthGate = (ev) => {
+      setAuthGateReason(ev.detail?.reason || 'Create a Free Account to Continue')
+    }
     window.addEventListener('open-cv-personas', onOpenPersonas)
     window.addEventListener('open-watchlists', onOpenWatchlists)
+    window.addEventListener('open-auth-gate', onOpenAuthGate)
     return () => {
       window.removeEventListener('open-cv-personas', onOpenPersonas)
       window.removeEventListener('open-watchlists', onOpenWatchlists)
+      window.removeEventListener('open-auth-gate', onOpenAuthGate)
     }
-  }, [])
+  }, [isAuth])
 
   // Handle CV Upload
   const handleCvUpload = async (e) => {
@@ -104,8 +139,15 @@ export default function Seeker() {
         easy_apply: Boolean(params.filters?.easyApply || params.easy_apply),
         international_only: Boolean(params.filters?.internationalOnly || params.international_only)
       })
-      setBoardJobs(data.jobs || [])
-      setBoardMeta({ queries: data.queries_used || [], stats: data.stats || null })
+      const foundJobs = data.jobs || []
+      const metaObj = { queries: data.queries_used || [], stats: data.stats || null }
+      setBoardJobs(foundJobs)
+      setBoardMeta(metaObj)
+      try {
+        sessionStorage.setItem('guest_board_jobs', JSON.stringify(foundJobs))
+        sessionStorage.setItem('guest_board_meta', JSON.stringify(metaObj))
+        sessionStorage.setItem('guest_active_tab', 'job_boards')
+      } catch {}
       const st = data.stats || {}
       const merged = st.raw && st.after_dedup ? ` · ${st.raw - st.after_dedup} duplicates merged` : ''
       toast(`Found ${data.jobs?.length || 0} relevant jobs${merged}`, 'success')
@@ -257,7 +299,13 @@ export default function Seeker() {
                   whileHover={{ y: -2, scale: 1.02 }}
                   whileTap={{ scale: 0.97 }}
                   type="button"
-                  onClick={() => setWatchlistModalOpen(true)}
+                  onClick={() => {
+                    if (!isAuth) {
+                      setAuthGateReason('Create a Free Account to Save Auto-Pilot Watchlists')
+                      return
+                    }
+                    setWatchlistModalOpen(true)
+                  }}
                   className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-200 text-xs font-bold transition cursor-pointer shadow-sm"
                   title="Manage Auto-Pilot Saved Watchlists"
                 >
@@ -265,12 +313,51 @@ export default function Seeker() {
                   <span>Watchlists</span>
                 </motion.button>
 
+                {/* Direct 1-Click CV Upload Trigger */}
+                {isAuth ? (
+                  <label
+                    className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border transition cursor-pointer text-xs font-bold shadow-sm ${
+                      cvInfo.uploaded
+                        ? 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.1] text-slate-200'
+                        : 'shimmer-btn bg-gradient-to-r from-blue-600 to-indigo-600 border-blue-400/40 text-white shadow-lg shadow-blue-600/25'
+                    }`}
+                    title="Upload a PDF, DOCX, or TXT resume"
+                  >
+                    {cvUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} className={cvInfo.uploaded ? 'text-blue-400' : 'text-white'} />}
+                    <span>{cvUploading ? 'Uploading...' : (cvInfo.uploaded ? 'Update CV' : 'Upload CV First')}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.txt"
+                      onChange={handleCvUpload}
+                      disabled={cvUploading}
+                      className="hidden"
+                    />
+                  </label>
+                ) : (
+                  <motion.button
+                    whileHover={{ y: -2, scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    type="button"
+                    onClick={() => setAuthGateReason('Create a Free Account to Upload & Tailor Your CV')}
+                    className="shimmer-btn flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 border border-blue-400/40 text-white text-xs font-extrabold shadow-lg shadow-blue-600/25 transition cursor-pointer"
+                  >
+                    <Lock size={13} className="text-amber-300" />
+                    <span>Sign Up Free / Upload CV</span>
+                  </motion.button>
+                )}
+
                 {/* Multi-CV Personas Vault Trigger */}
                 <motion.button
                   whileHover={{ y: -2, scale: 1.02 }}
                   whileTap={{ scale: 0.97 }}
                   type="button"
-                  onClick={() => setPersonasModalOpen(true)}
+                  onClick={() => {
+                    if (!isAuth) {
+                      setAuthGateReason('Create a Free Account to Access Your CV Personas Vault')
+                      return
+                    }
+                    setPersonasModalOpen(true)
+                  }}
                   className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border transition cursor-pointer text-xs font-bold shadow-sm ${
                     cvInfo.uploaded
                       ? 'bg-emerald-950/40 border-emerald-500/35 hover:border-emerald-400/60 text-emerald-200'
@@ -364,6 +451,12 @@ export default function Seeker() {
             onClose={() => setScoreModalJob(null)}
           />
         )}
+
+        <AuthGateModal
+          isOpen={Boolean(authGateReason)}
+          onClose={() => setAuthGateReason(null)}
+          reason={authGateReason}
+        />
       </div>
     </PageWrapper>
   )

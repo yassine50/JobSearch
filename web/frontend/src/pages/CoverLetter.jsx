@@ -3,10 +3,12 @@ import { motion } from 'framer-motion'
 import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
 import LoadingSpinner from '../components/LoadingSpinner.jsx'
+import TailorCvModal from '../components/modals/TailorCvModal.jsx'
+import CvPersonasModal from '../components/modals/CvPersonasModal.jsx'
 import client, { getCached } from '../api/client.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { parseApiError } from '../utils/jobUtils.js'
-import { FileText, Copy, Mail, Check, Download, Sparkles, ClipboardList } from 'lucide-react'
+import { FileText, Copy, Mail, Check, Download, Sparkles, ClipboardList, Upload, CheckCircle2, Layers, Loader2 } from 'lucide-react'
 
 const STYLES = [
   { key: 'professional', label: '🏢 Professional', desc: 'Formal & results-driven' },
@@ -26,15 +28,43 @@ export default function CoverLetter() {
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
   const [copiedKey, setCopiedKey] = useState('')
-  const [cvUploaded, setCvUploaded] = useState(() => Boolean(getCached('/cv/info', null)?.uploaded))
+  const [cvInfo, setCvInfo] = useState(() => getCached('/cv/info', { uploaded: false, personas_count: 0 }))
+  const [cvUploading, setCvUploading] = useState(false)
+  const [personasOpen, setPersonasOpen] = useState(false)
+  const [tailorOpen, setTailorOpen] = useState(false)
   const [emailModal, setEmailModal] = useState(false)
   const [emailForm, setEmailForm] = useState({ to_email: '', to_name: '' })
   const [sending, setSending] = useState(false)
   const [sendMsg, setSendMsg] = useState('')
 
+  const cvUploaded = Boolean(cvInfo?.uploaded)
+
+  const loadCvInfo = () => {
+    client.get('/cv/info').then(r => setCvInfo(r.data || { uploaded: false })).catch(() => {})
+  }
+
   useEffect(() => {
-    client.get('/cv/info').then(r => setCvUploaded(Boolean(r.data?.uploaded))).catch(() => {})
+    loadCvInfo()
   }, [])
+
+  const handleDirectUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCvUploading(true)
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const { data } = await client.post('/cv/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      toast(`CV uploaded: ${data.filename}`, 'success')
+      loadCvInfo()
+    } catch (err) {
+      toast(parseApiError(err, 'Failed to upload CV'), 'error')
+    } finally {
+      setCvUploading(false)
+    }
+  }
 
   const generate = async () => {
     if (!form.job_title || !form.job_description) return
@@ -105,27 +135,76 @@ export default function CoverLetter() {
       <div className="flex min-h-screen bg-[#050811] text-white">
         <Sidebar />
         <main className="md:ml-64 flex-1 min-w-0 px-5 sm:px-8 lg:px-10 pt-20 md:pt-8 lg:pt-10 pb-14 w-full">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
-              <FileText size={20} />
+          {/* Hero Header */}
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-panel rounded-3xl p-5 md:p-6 mb-6 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          >
+            <div className="glow-line-top" />
+            <div className="flex items-center gap-3.5 relative z-10">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                <FileText size={20} />
+              </div>
+              <div>
+                <h1 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+                  AI Documents &amp; <span className="text-gradient-blue">CV Tailoring Studio</span>
+                </h1>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Paste any job description to tailor your A4 ATS resume, generate cover letters, and prepare portal answers
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tight">AI Cover Letter Studio</h1>
-              <p className="text-xs text-slate-400">Generate role-specific cover letters aligned with your uploaded resume</p>
+
+            <div className="flex items-center gap-2.5 flex-wrap relative z-10">
+              <label className="px-3.5 py-2.5 rounded-2xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/35 text-blue-200 text-xs font-bold flex items-center gap-2 cursor-pointer transition">
+                {cvUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                <span>{cvUploading ? 'Uploading...' : (cvUploaded ? 'Update CV' : 'Upload CV (PDF/DOCX)')}</span>
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.txt"
+                  onChange={handleDirectUpload}
+                  disabled={cvUploading}
+                  className="hidden"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => setPersonasOpen(true)}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl border transition cursor-pointer text-xs font-bold ${
+                  cvUploaded
+                    ? 'bg-emerald-950/40 border-emerald-500/35 text-emerald-200'
+                    : 'bg-slate-900/90 border-white/[0.1] text-slate-300 hover:text-white'
+                }`}
+              >
+                <Layers size={14} className="text-emerald-400" />
+                {cvUploaded ? (
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                    <span className="truncate max-w-[140px]">{cvInfo.persona_name || cvInfo.filename}</span>
+                  </span>
+                ) : (
+                  <span>CV Personas Vault</span>
+                )}
+              </button>
             </div>
-          </div>
+          </motion.div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Left: Configuration Form */}
             <div className="glass-card rounded-3xl p-6 relative overflow-hidden">
               <div className="glow-line-top" />
               <h2 className="font-extrabold text-sm uppercase tracking-wider text-slate-300 mb-4">
-                Target Role & Tone
+                Target Role &amp; Job Description
               </h2>
 
               {!cvUploaded && (
-                <div className="bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs rounded-xl px-4 py-3 mb-4">
-                  ⚠️ Upload your PDF resume in Post Hunter for personalized skill extraction.
+                <div className="bg-slate-950/60 border border-blue-500/30 text-slate-300 text-xs rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3">
+                  <span>⚠️ Upload your PDF or DOCX resume to unlock 100% ATS CV tailoring &amp; grounded letters.</span>
+                  <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shrink-0 cursor-pointer transition">
+                    Upload Now
+                    <input type="file" accept=".pdf,.docx,.txt" onChange={handleDirectUpload} className="hidden" />
+                  </label>
                 </div>
               )}
 
@@ -140,7 +219,7 @@ export default function CoverLetter() {
                       value={form[key]}
                       onChange={e => setForm({ ...form, [key]: e.target.value })}
                       placeholder={ph}
-                      className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition"
+                      className="w-full glass-input rounded-xl px-3.5 py-2.5 text-sm placeholder-slate-500"
                     />
                   </div>
                 ))}
@@ -173,26 +252,47 @@ export default function CoverLetter() {
                     onChange={e => setForm({ ...form, job_description: e.target.value })}
                     rows={8}
                     placeholder="Paste the job description or recruiter post content here..."
-                    className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition resize-none"
+                    className="w-full glass-input rounded-xl px-3.5 py-2.5 text-sm placeholder-slate-500 resize-none"
                   />
                 </div>
 
-                <motion.button
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={generate}
-                  disabled={loading || !form.job_title || !form.job_description}
-                  className="w-full shimmer-btn flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm shadow-lg shadow-blue-600/25 transition cursor-pointer"
-                >
-                  {loading ? (
-                    <LoadingSpinner label="Crafting cover letter..." />
-                  ) : (
-                    <>
-                      <Sparkles size={16} className="text-amber-300" />
-                      <span>Generate Tailored Cover Letter</span>
-                    </>
-                  )}
-                </motion.button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                  <motion.button
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    onClick={generate}
+                    disabled={loading || !form.job_title || !form.job_description}
+                    className="shimmer-btn flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl text-xs sm:text-sm shadow-lg shadow-blue-600/25 transition cursor-pointer"
+                  >
+                    {loading ? (
+                      <LoadingSpinner label="Crafting letter..." />
+                    ) : (
+                      <>
+                        <Sparkles size={15} className="text-amber-300 shrink-0" />
+                        <span>Generate Cover Letter</span>
+                      </>
+                    )}
+                  </motion.button>
+
+                  <motion.button
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    onClick={() => {
+                      if (!cvUploaded) {
+                        toast('Please upload your CV first to tailor it', 'error')
+                        return
+                      }
+                      setTailorOpen(true)
+                    }}
+                    disabled={!form.job_title || !form.job_description}
+                    className="flex items-center justify-center gap-2 bg-purple-600/20 hover:bg-purple-600/35 border border-purple-500/40 disabled:opacity-50 text-purple-200 font-bold py-3 px-4 rounded-xl text-xs sm:text-sm transition cursor-pointer"
+                  >
+                    <FileText size={15} className="text-purple-300 shrink-0" />
+                    <span>Tailor CV PDF &amp; Preview</span>
+                  </motion.button>
+                </div>
               </div>
             </div>
 
@@ -482,6 +582,22 @@ export default function CoverLetter() {
             </div>
           </div>
         )}
+
+        <TailorCvModal
+          isOpen={tailorOpen}
+          onClose={() => setTailorOpen(false)}
+          job={{
+            title: form.job_title,
+            company: form.company || 'Target Company',
+            description: form.job_description,
+          }}
+        />
+
+        <CvPersonasModal
+          isOpen={personasOpen}
+          onClose={() => setPersonasOpen(false)}
+          onPersonaChanged={loadCvInfo}
+        />
       </div>
     </PageWrapper>
   )

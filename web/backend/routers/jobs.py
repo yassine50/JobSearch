@@ -5,7 +5,6 @@ from pydantic import BaseModel
 from typing import List, Optional, Any
 from datetime import datetime, timedelta, date
 import os
-import sys
 import re
 import json
 import logging
@@ -125,7 +124,7 @@ def _format_age_str(age_hours: Optional[float]) -> str:
     return f"{months}mo ago"
 from .. import models
 from ..database import get_db
-from ..auth import get_current_user
+from ..auth import get_current_user, get_optional_user
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -522,7 +521,7 @@ _search_quota: dict = {}
 
 def _check_and_count_search_quota(user):
     from datetime import date as _date
-    if is_admin(user) or SEARCH_DAILY_LIMIT <= 0:
+    if not user or is_admin(user) or SEARCH_DAILY_LIMIT <= 0:
         return
     key = (user.id, _date.today().isoformat())
     with _search_cache_lock:
@@ -873,13 +872,13 @@ class ScraperConfigModel(BaseModel):
     google_client_secret: Optional[str] = None
 
 @router.get("/scraper-config")
-def get_scraper_config_route(current_user: models.User = Depends(get_current_user)):
+def get_scraper_config_route(current_user: Optional[models.User] = Depends(get_optional_user)):
     from ..official_apis import configured_providers, get_key, KEY_NAMES
     cfg = _get_scraper_config()
     serper = cfg.get("serper_api_key") or os.getenv("SERPER_API_KEY", "")
     proxy = cfg.get("scraper_proxy") or os.getenv("SCRAPER_PROXY") or os.getenv("GLASSDOOR_PROXY", "")
     public = {
-        "is_admin": is_admin(current_user),
+        "is_admin": is_admin(current_user) if current_user else False,
         "has_serper": bool(serper.strip()),
         "has_proxy": bool(proxy.strip()),
         "official_providers": configured_providers(),
@@ -939,7 +938,7 @@ COUNTRY_NORM = {
 @router.post("/search")
 def search_jobs(req: SearchRequest,
                 db: Session = Depends(get_db),
-                current_user: models.User = Depends(get_current_user)):
+                current_user: Optional[models.User] = Depends(get_optional_user)):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from jobspy import scrape_jobs
     import pandas as pd
@@ -1337,24 +1336,26 @@ def search_jobs(req: SearchRequest,
 
         # Automatic High-Accuracy AI Matching if user has a CV (uses cached CV profile & fast TF-IDF)
         cv_text_for_signals = ""
-        try:
-            cv_rec = db.query(models.CvUpload.text_content).filter(models.CvUpload.user_id == current_user.id).first()
-            if cv_rec and cv_rec[0] and jobs:
-                from cv_matcher import compute_match
-                cv_text = cv_rec[0]
-                cv_text_for_signals = cv_text
-                for j in jobs:
-                    try:
-                        s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
-                        j["score"] = s
-                        j["breakdown"] = bd
-                        j["matched_skills"] = bd.get("matched_tech", [])
-                        j["missing_skills"] = bd.get("missing_tech", [])
-                        j["tips"] = bd.get("tips", [])
-                    except Exception as match_e:
-                        logger.debug(f"Match error on '{j.get('title')}': {match_e}")
-        except Exception as auto_err:
-            logger.warning(f"[Matching] Auto-match exception: {auto_err}")
+        if current_user:
+            try:
+                from .cv import _get_active_cv
+                active_cv_rec = _get_active_cv(db, current_user.id)
+                if active_cv_rec and active_cv_rec.text_content and jobs:
+                    from cv_matcher import compute_match
+                    cv_text = active_cv_rec.text_content
+                    cv_text_for_signals = cv_text
+                    for j in jobs:
+                        try:
+                            s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
+                            j["score"] = s
+                            j["breakdown"] = bd
+                            j["matched_skills"] = bd.get("matched_tech", [])
+                            j["missing_skills"] = bd.get("missing_tech", [])
+                            j["tips"] = bd.get("tips", [])
+                        except Exception as match_e:
+                            logger.debug(f"Match error on '{j.get('title')}': {match_e}")
+            except Exception as auto_err:
+                logger.warning(f"[Matching] Auto-match exception: {auto_err}")
 
         # ── career-ops + ai-job-search signals: repost history, legitimacy, work-auth, language gate, ATS provenance, posting guard, mass-posting ──
         t_sig = _time.time()
@@ -1437,47 +1438,48 @@ def search_jobs(req: SearchRequest,
         saved_title_comp: set = set()
         applied_emails: set = set()
 
-        try:
-            apps = db.query(
-                models.Application.status,
-                models.Application.url,
-                models.Application.company,
-                models.Application.title,
-                models.Application.notes,
-            ).filter(models.Application.user_id == current_user.id).all()
+        if current_user:
+            try:
+                apps = db.query(
+                    models.Application.status,
+                    models.Application.url,
+                    models.Application.company,
+                    models.Application.title,
+                    models.Application.notes,
+                ).filter(models.Application.user_id == current_user.id).all()
 
-            for a in apps:
-                st = (a.status or "").lower()
-                raw_url = (a.url or "").strip().lower()
-                cl_url = _clean_job_url(raw_url)
-                jid = _extract_job_id(raw_url)
-                nc = _norm_company(a.company or "")
-                nt = _norm_title(a.title or "")
-                tc = f"{nt}|{nc}"
+                for a in apps:
+                    st = (a.status or "").lower()
+                    raw_url = (a.url or "").strip().lower()
+                    cl_url = _clean_job_url(raw_url)
+                    jid = _extract_job_id(raw_url)
+                    nc = _norm_company(a.company or "")
+                    nt = _norm_title(a.title or "")
+                    tc = f"{nt}|{nc}"
 
-                if st != "saved":
-                    if raw_url: applied_urls.add(raw_url)
-                    if cl_url: applied_clean_urls.add(cl_url)
-                    if jid: applied_job_ids.add(jid)
-                    if nt and nc: applied_title_comp.add(tc)
-                    if nc and nt:
-                        applied_company_to_titles.setdefault(nc, set()).add(nt)
-                    if a.notes:
-                        applied_emails.update(m.lower() for m in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+\w", a.notes))
-                else:
-                    if raw_url: saved_urls.add(raw_url)
-                    if cl_url: saved_clean_urls.add(cl_url)
-                    if jid: saved_job_ids.add(jid)
-                    if nt and nc: saved_title_comp.add(tc)
+                    if st != "saved":
+                        if raw_url: applied_urls.add(raw_url)
+                        if cl_url: applied_clean_urls.add(cl_url)
+                        if jid: applied_job_ids.add(jid)
+                        if nt and nc: applied_title_comp.add(tc)
+                        if nc and nt:
+                            applied_company_to_titles.setdefault(nc, set()).add(nt)
+                        if a.notes:
+                            applied_emails.update(m.lower() for m in re.findall(r"[\w.+-]+@[\w-]+\.[\w.-]+\w", a.notes))
+                    else:
+                        if raw_url: saved_urls.add(raw_url)
+                        if cl_url: saved_clean_urls.add(cl_url)
+                        if jid: saved_job_ids.add(jid)
+                        if nt and nc: saved_title_comp.add(tc)
 
-            for (to_email,) in db.query(models.EmailLog.to_email).filter(
-                    models.EmailLog.user_id == current_user.id,
-                    models.EmailLog.status != "failed").all():
-                if to_email:
-                    applied_emails.add(to_email.strip().lower())
-        except Exception:
-            pass
-        applied_emails.discard((current_user.email or "").lower())
+                for (to_email,) in db.query(models.EmailLog.to_email).filter(
+                        models.EmailLog.user_id == current_user.id,
+                        models.EmailLog.status != "failed").all():
+                    if to_email:
+                        applied_emails.add(to_email.strip().lower())
+            except Exception:
+                pass
+            applied_emails.discard((current_user.email or "").lower())
         hidden_by_email = 0
 
         for j in jobs:
@@ -1601,7 +1603,8 @@ def fetch_job_description(req: JobDescriptionRequest,
     missing_skills = []
     tips = []
 
-    cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv_rec = _get_active_cv(db, current_user.id)
     if cv_rec and cv_rec.text_content and desc:
         try:
             from cv_matcher import compute_match
@@ -1639,7 +1642,8 @@ def import_from_url(req: ImportUrlRequest,
             matched_skills = []
             missing_skills = []
             tips = []
-            cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+            from .cv import _get_active_cv
+            cv_rec = _get_active_cv(db, current_user.id)
             if cv_rec and cv_rec.text_content and jb_data.get("description"):
                 try:
                     from cv_matcher import compute_match
@@ -1730,7 +1734,8 @@ def import_from_url(req: ImportUrlRequest,
         matched_skills = []
         missing_skills = []
         tips = []
-        cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+        from .cv import _get_active_cv
+        cv_rec = _get_active_cv(db, current_user.id)
         if cv_rec and cv_rec.text_content and text:
             try:
                 from cv_matcher import compute_match
@@ -1895,7 +1900,8 @@ def easy_apply_job(req: EasyApplyRequest,
             models.Application.title.ilike(title)
         ).first()
 
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
     cv_text = cv.text_content if cv else ""
 
     # User-clicked Easy Apply: honest per-job tailored COPY saved on the Tracker card
@@ -1975,7 +1981,8 @@ def batch_easy_apply_jobs(req: BatchEasyApplyJobsRequest,
     if not req.jobs:
         return {"success": True, "applied_count": 0, "message": "No jobs provided for batch application."}
 
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
     cv_text = cv.text_content if cv else ""
 
     applied_jobs = []
@@ -2113,7 +2120,8 @@ def evaluate_job_route(req: EvaluateJobRequest,
         except Exception:
             pass
 
-    cv_rec = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv_rec = _get_active_cv(db, current_user.id)
     cv_text = cv_rec.text_content if cv_rec and cv_rec.text_content else ""
     live = None
     if req.check_liveness:

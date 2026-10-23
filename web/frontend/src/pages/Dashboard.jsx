@@ -10,37 +10,37 @@ import client, { getCached } from '../api/client.js'
 import {
   Search, Users, Bookmark, Trash2, ExternalLink, Bell,
   Mail, TrendingUp, Briefcase, Calendar, ArrowRight,
-  Sparkles, Radar, CheckCircle2, Send, Activity
+  Sparkles, Radar, CheckCircle2, Send, Activity, Upload, Loader2, Settings
 } from 'lucide-react'
 
 const STATUS_COLORS = {
   applied:   { bg: 'bg-blue-500',    text: 'text-blue-400',    border: 'border-blue-500/30',    label: 'Applied'   },
-  interview: { bg: 'bg-amber-400',   text: 'text-amber-300',   border: 'border-amber-500/30',   label: 'Interview' },
-  offer:     { bg: 'bg-emerald-500', text: 'text-emerald-400', border: 'border-emerald-500/30', label: 'Offer'     },
-  rejected:  { bg: 'bg-rose-500',    text: 'text-rose-400',    border: 'border-rose-500/30',    label: 'Rejected'  },
-  accepted:  { bg: 'bg-purple-500',  text: 'text-purple-400',  border: 'border-purple-500/30',  label: 'Accepted'  },
+  interview: { bg: 'bg-indigo-500',  text: 'text-indigo-400',  border: 'border-indigo-500/30',  label: 'Interview' },
+  offer:     { bg: 'bg-blue-400',    text: 'text-blue-300',    border: 'border-blue-400/30',    label: 'Offer'     },
+  rejected:  { bg: 'bg-slate-500',   text: 'text-slate-400',   border: 'border-slate-500/30',   label: 'Rejected'  },
+  accepted:  { bg: 'bg-indigo-400',  text: 'text-indigo-300',  border: 'border-indigo-400/30',  label: 'Accepted'  },
 }
 
 const CARD_THEMES = {
   blue: {
     iconBg: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
     valueText: 'text-blue-400',
-    glow: 'from-blue-600/15 to-transparent'
+    glow: 'from-blue-600/10 to-transparent'
   },
   emerald: {
-    iconBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-    valueText: 'text-emerald-400',
-    glow: 'from-emerald-600/15 to-transparent'
+    iconBg: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    valueText: 'text-blue-400',
+    glow: 'from-blue-600/10 to-transparent'
   },
   purple: {
-    iconBg: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
-    valueText: 'text-purple-400',
-    glow: 'from-purple-600/15 to-transparent'
+    iconBg: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
+    valueText: 'text-indigo-400',
+    glow: 'from-indigo-600/10 to-transparent'
   },
   amber: {
-    iconBg: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-    valueText: 'text-amber-400',
-    glow: 'from-amber-600/15 to-transparent'
+    iconBg: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    valueText: 'text-blue-400',
+    glow: 'from-blue-600/10 to-transparent'
   },
 }
 
@@ -165,16 +165,38 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [saved, setSaved] = useState(() => getCached('/jobs/saved', []))
   const [cvInfo, setCvInfo] = useState(() => getCached('/cv/info', { uploaded: false }))
+  const [smtpCfg, setSmtpCfg] = useState(() => getCached('/email/settings', { configured: false }))
   const [stats, setStats] = useState(() => getCached('/tracker/stats/detailed', null))
   const [loading, setLoading] = useState(() => !getCached('/tracker/stats/detailed', null))
+  const [cvUploading, setCvUploading] = useState(false)
 
   useEffect(() => {
     Promise.all([
       client.get('/jobs/saved').then(r => setSaved(r.data)).catch(() => {}),
       client.get('/cv/info').then(r => setCvInfo(r.data)).catch(() => {}),
+      client.get('/email/settings').then(r => setSmtpCfg(r.data)).catch(() => {}),
       client.get('/tracker/stats/detailed').then(r => setStats(r.data)).catch(() => {}),
     ]).finally(() => setLoading(false))
   }, [])
+
+  const handleCvUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCvUploading(true)
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const { data } = await client.post('/cv/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      toast(`CV uploaded: ${data.filename}`, 'success')
+      client.get('/cv/info').then(r => setCvInfo(r.data)).catch(() => {})
+    } catch {
+      toast('Failed to upload CV', 'error')
+    } finally {
+      setCvUploading(false)
+    }
+  }
 
   const deleteSaved = async (id) => {
     await client.delete(`/jobs/saved/${id}`)
@@ -218,7 +240,12 @@ export default function Dashboard() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5 relative z-10 shrink-0">
+            <div className="flex items-center gap-2.5 relative z-10 shrink-0 flex-wrap">
+              <label className="px-3.5 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] text-slate-200 text-xs font-bold flex items-center gap-2 cursor-pointer transition">
+                {cvUploading ? <Loader2 size={14} className="animate-spin text-blue-400" /> : <Upload size={14} className="text-emerald-400" />}
+                <span>{cvUploading ? 'Uploading...' : (cvInfo.uploaded ? 'Update CV' : 'Upload CV')}</span>
+                <input type="file" accept=".pdf,.docx,.txt" onChange={handleCvUpload} disabled={cvUploading} className="hidden" />
+              </label>
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.97 }}
@@ -226,13 +253,105 @@ export default function Dashboard() {
                 className="shimmer-btn px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white text-xs font-bold shadow-lg shadow-blue-600/25 flex items-center gap-2 cursor-pointer"
               >
                 <Radar size={15} />
-                <span>Launch Post Hunter</span>
+                <span>Launch Opportunity Hunter</span>
               </motion.button>
               <span className="px-3 py-2 bg-white/[0.04] border border-white/[0.08] text-slate-300 text-[11px] font-bold rounded-xl uppercase tracking-wider">
                 {user?.role || 'seeker'}
               </span>
             </div>
           </motion.div>
+
+          {/* Guided Onboarding Progress Card (shown when any step is incomplete) */}
+          {(!cvInfo.uploaded || !smtpCfg?.configured || totalApps === 0) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="glass-card rounded-2xl p-5 mb-6 border border-blue-500/25"
+            >
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-3.5">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={15} className="text-amber-400" />
+                  <h2 className="text-xs sm:text-sm font-extrabold text-white">
+                    Quick Setup Checklist
+                  </h2>
+                </div>
+                <span className="text-[11px] font-bold text-blue-300 bg-blue-500/15 border border-blue-500/30 px-2.5 py-0.5 rounded-full">
+                  {[cvInfo.uploaded, smtpCfg?.configured, totalApps > 0].filter(Boolean).length} of 3 Completed
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Step 1: Upload CV */}
+                <div className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 ${
+                  cvInfo.uploaded ? 'bg-emerald-950/25 border-emerald-500/35' : 'bg-slate-950/70 border-white/[0.08]'
+                }`}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                      <CheckCircle2 size={14} className={cvInfo.uploaded ? 'text-emerald-400' : 'text-slate-500'} />
+                      <span>1. Upload Your Resume</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                      {cvInfo.uploaded ? `Active: ${cvInfo.filename}` : 'PDF, DOCX or TXT supported'}
+                    </p>
+                  </div>
+                  {!cvInfo.uploaded && (
+                    <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold shrink-0 cursor-pointer transition">
+                      Upload
+                      <input type="file" accept=".pdf,.docx,.txt" onChange={handleCvUpload} className="hidden" />
+                    </label>
+                  )}
+                </div>
+
+                {/* Step 2: Configure Outreach Email */}
+                <div className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 ${
+                  smtpCfg?.configured ? 'bg-emerald-950/25 border-emerald-500/35' : 'bg-slate-950/70 border-white/[0.08]'
+                }`}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                      <CheckCircle2 size={14} className={smtpCfg?.configured ? 'text-emerald-400' : 'text-slate-500'} />
+                      <span>2. Connect Outreach Mailbox</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                      {smtpCfg?.configured ? `Connected: ${smtpCfg.smtp_user}` : 'Enable 1-click Auto-Apply & sync'}
+                    </p>
+                  </div>
+                  {!smtpCfg?.configured && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/settings')}
+                      className="px-3 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.14] border border-white/[0.1] text-white text-[11px] font-bold shrink-0 cursor-pointer transition flex items-center gap-1"
+                    >
+                      <Settings size={11} />
+                      <span>Setup</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Step 3: First Application / Tailored CV */}
+                <div className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 ${
+                  totalApps > 0 ? 'bg-emerald-950/25 border-emerald-500/35' : 'bg-slate-950/70 border-white/[0.08]'
+                }`}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                      <CheckCircle2 size={14} className={totalApps > 0 ? 'text-emerald-400' : 'text-slate-500'} />
+                      <span>3. Tailor CV &amp; Apply</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                      {totalApps > 0 ? `${totalApps} application(s) tracked` : 'Search jobs or paste a JD'}
+                    </p>
+                  </div>
+                  {totalApps === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/seeker')}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold shrink-0 cursor-pointer transition"
+                    >
+                      Start →
+                    </button>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Follow-up Alerts */}
           <AnimatePresence>
@@ -241,22 +360,22 @@ export default function Dashboard() {
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="bg-amber-950/40 border border-amber-500/30 rounded-2xl p-4 mb-6 flex items-center gap-3.5 backdrop-blur-xl"
+                className="glass-panel border border-blue-500/30 rounded-2xl p-4 mb-6 flex items-center gap-3.5"
               >
-                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
-                  <Bell size={16} className="text-amber-400 animate-bounce" />
+                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center shrink-0">
+                  <Bell size={16} className="text-blue-400" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-amber-200 font-bold text-xs sm:text-sm">
+                  <p className="text-white font-bold text-xs sm:text-sm">
                     {followUps.length} Recruiter Follow-Up{followUps.length > 1 ? 's' : ''} Due Today
                   </p>
-                  <p className="text-amber-300/70 text-xs truncate mt-0.5">
+                  <p className="text-slate-400 text-xs truncate mt-0.5">
                     {followUps.map(f => `${f.company} (${f.status})`).join(' · ')}
                   </p>
                 </div>
                 <button
                   onClick={() => navigate('/tracker')}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-xs font-bold text-amber-200 flex items-center gap-1 shrink-0 cursor-pointer transition"
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-bold text-white flex items-center gap-1 shrink-0 cursor-pointer transition shadow-sm"
                 >
                   <span>Review</span>
                   <ArrowRight size={12} />
@@ -414,7 +533,6 @@ export default function Dashboard() {
                 sub: 'Mine verified corporate emails & 1-click Auto-Apply',
                 Icon: Radar,
                 to: '/seeker',
-                gradient: 'from-blue-600/25 via-indigo-600/15 to-slate-900/80 border-blue-500/30 hover:border-blue-400/60',
                 iconColor: 'bg-blue-600 text-white shadow-blue-500/30',
                 delay: 0.1
               },
@@ -423,11 +541,10 @@ export default function Dashboard() {
                 sub: 'Track interviews, offers, and automated follow-ups',
                 Icon: Briefcase,
                 to: '/tracker',
-                gradient: 'from-emerald-600/20 via-teal-600/15 to-slate-900/80 border-emerald-500/30 hover:border-emerald-400/60',
-                iconColor: 'bg-emerald-600 text-white shadow-emerald-500/30',
+                iconColor: 'bg-indigo-600 text-white shadow-indigo-500/30',
                 delay: 0.16
               },
-            ].map(({ label, sub, Icon, to, gradient, iconColor, delay }) => (
+            ].map(({ label, sub, Icon, to, iconColor, delay }) => (
               <motion.button
                 key={to}
                 onClick={() => navigate(to)}
@@ -436,7 +553,7 @@ export default function Dashboard() {
                 transition={{ delay, duration: 0.3 }}
                 whileHover={{ y: -3, scale: 1.005 }}
                 whileTap={{ scale: 0.99 }}
-                className={`group flex items-center gap-4 bg-gradient-to-br ${gradient} border rounded-2xl p-5 transition-all text-left cursor-pointer backdrop-blur-xl`}
+                className="group flex items-center gap-4 glass-card border border-blue-500/25 hover:border-blue-500/50 rounded-2xl p-5 transition-all text-left cursor-pointer"
               >
                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg shrink-0 ${iconColor}`}>
                   <Icon size={22} />

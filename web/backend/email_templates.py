@@ -1,5 +1,4 @@
 from typing import Tuple, Optional
-import re
 
 FR_INDICATORS = [
     " de ", " le ", " la ", " les ", " des ", " un ", " une ", " du ", " et ", " pour ",

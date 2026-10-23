@@ -26,7 +26,7 @@ export default function JobSignalBadges({ job }) {
     <>
       {dlInfo?.is_urgent && dlInfo?.label && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-amber-950/85 text-amber-200 border-amber-600/80"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={`Application deadline: ${dlInfo.deadline} (${dlInfo.days_remaining} days left)`}
         >
           ⏰ {dlInfo.label}
@@ -34,7 +34,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {!dlInfo?.is_urgent && dlInfo?.deadline && !dlInfo?.is_expired && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-slate-900/80 text-slate-300 border-slate-700/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={`Application deadline: ${dlInfo.deadline}`}
         >
           📅 {dlInfo.label}
@@ -42,7 +42,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {atsProv?.is_first_party && atsProv?.vendor && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-teal-950/70 text-teal-300 border-teal-700/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-blue-500/10 text-blue-300 border-blue-500/25"
           title={`Verified first-party company ATS (${atsProv.vendor})`}
         >
           ✓ {atsProv.vendor}
@@ -50,7 +50,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {tier === 'Suspicious' && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-red-950/80 text-red-300 border-red-800/80"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={flags.join(' · ') || 'Multiple ghost / scam signals'}
         >
           ⚠ Suspicious
@@ -58,7 +58,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {tier === 'Proceed with Caution' && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-orange-950/70 text-orange-300 border-orange-800/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={flags.join(' · ')}
         >
           ⚠ Caution
@@ -66,15 +66,15 @@ export default function JobSignalBadges({ job }) {
       )}
       {reposts > 0 && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-800/70"
-          title={`Same role re-posted under ${reposts + 1} different URLs since ${job.sighting?.first_seen || 'earlier'} — possible ghost job`}
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
+          title={`Same role re-posted under ${reposts + 1} different URLs since ${job.sighting?.first_seen || 'earlier'}`}
         >
           ↻ Reposted ×{reposts + 1}
         </span>
       )}
       {companyOpenings >= 3 && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-indigo-950/70 text-indigo-300 border-indigo-800/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={`${companyOpenings} active openings from ${job.company} in this search`}
         >
           🏢 {companyOpenings} roles
@@ -82,7 +82,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {blockers.length > 0 && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-red-950/60 text-red-300 border-red-800/60"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={blockers.join(' · ')}
         >
           🛂 {blockers[0]}
@@ -90,7 +90,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {blockers.length === 0 && positives.length > 0 && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-800/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-blue-500/10 text-blue-300 border-blue-500/25"
           title={positives.join(' · ')}
         >
           ✈ {/sponsor/i.test(positives[0]) ? 'Visa sponsor' : /relocat/i.test(positives[0]) ? 'Relocation' : 'Global remote'}
@@ -98,7 +98,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {langMissing.length > 0 && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-amber-950/75 text-amber-300 border-amber-700/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
           title={job.language_gate?.note || `Requires ${langMissing.join(', ')} fluency`}
         >
           🗣 {langMissing.join('/')} req
@@ -106,7 +106,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {langMissing.length === 0 && langMatched.length > 0 && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-emerald-950/70 text-emerald-300 border-emerald-800/70"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-blue-500/10 text-blue-300 border-blue-500/25"
           title={job.language_gate?.note}
         >
           🗣 {langMatched.join('/')} ✓
@@ -114,7 +114,7 @@ export default function JobSignalBadges({ job }) {
       )}
       {hasAttentionCheck && (
         <span
-          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-purple-950/80 text-purple-200 border-purple-700/80"
+          className="px-1.5 py-0.2 rounded text-[10px] font-semibold border bg-blue-500/10 text-blue-300 border-blue-500/25"
           title={attentionSnippet}
         >
           🎯 Attention Check

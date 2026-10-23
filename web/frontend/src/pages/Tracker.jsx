@@ -10,16 +10,16 @@ import {
   Plus, Trash2, ExternalLink, StickyNote, Mail, CheckCircle, XCircle,
   Download, Loader2, Sparkles, Inbox, Clock, 
   Send, CheckSquare, Square, FileText, MessageSquare, Building2, MapPin, 
-  Check, Copy, Paperclip, Search, X, Video, KanbanSquare
+  Check, Copy, Paperclip, Search, X, Video, KanbanSquare, List
 } from 'lucide-react'
 
 const COLUMNS = [
-  { key: 'applied',   label: '📤 Sent / Applied', shortLabel: 'Applied',   color: 'border-blue-500/40',    topBar: 'from-blue-500 to-indigo-500',   dot: 'bg-blue-400',    text: 'text-blue-400'    },
-  { key: 'review',    label: '👀 Under Review',   shortLabel: 'Review',    color: 'border-amber-500/40',   topBar: 'from-amber-400 to-orange-500',  dot: 'bg-amber-400',   text: 'text-amber-300'   },
-  { key: 'interview', label: '📞 Interview',      shortLabel: 'Interview', color: 'border-purple-500/40',  topBar: 'from-purple-500 to-pink-500',   dot: 'bg-purple-400',  text: 'text-purple-300'  },
-  { key: 'offer',     label: '🤝 Offer',          shortLabel: 'Offer',     color: 'border-emerald-500/40', topBar: 'from-emerald-400 to-teal-500',  dot: 'bg-emerald-400', text: 'text-emerald-300' },
-  { key: 'rejected',  label: '❌ Rejected',       shortLabel: 'Rejected',  color: 'border-rose-500/40',    topBar: 'from-rose-500 to-red-600',      dot: 'bg-rose-400',    text: 'text-rose-400'    },
-  { key: 'accepted',  label: '🏆 Accepted',       shortLabel: 'Accepted',  color: 'border-yellow-500/40',  topBar: 'from-yellow-400 to-amber-500',  dot: 'bg-yellow-400',  text: 'text-yellow-300'  },
+  { key: 'applied',   label: '📤 Sent / Applied', shortLabel: 'Applied',   color: 'border-blue-500/35',    topBar: 'from-blue-500 to-indigo-500',   dot: 'bg-blue-400',    text: 'text-blue-400'    },
+  { key: 'review',    label: '👀 Under Review',   shortLabel: 'Review',    color: 'border-white/[0.08]',   topBar: 'from-blue-400 to-indigo-400',   dot: 'bg-blue-400',    text: 'text-slate-300'   },
+  { key: 'interview', label: '📞 Interview',      shortLabel: 'Interview', color: 'border-indigo-500/35',  topBar: 'from-indigo-500 to-blue-500',   dot: 'bg-indigo-400',  text: 'text-indigo-400'  },
+  { key: 'offer',     label: '🤝 Offer',          shortLabel: 'Offer',     color: 'border-blue-500/35',    topBar: 'from-blue-500 to-indigo-500',   dot: 'bg-blue-400',    text: 'text-blue-300'    },
+  { key: 'rejected',  label: '❌ Rejected',       shortLabel: 'Rejected',  color: 'border-white/[0.08]',   topBar: 'from-slate-500 to-slate-600',   dot: 'bg-slate-400',   text: 'text-slate-400'   },
+  { key: 'accepted',  label: '🏆 Accepted',       shortLabel: 'Accepted',  color: 'border-indigo-500/35',  topBar: 'from-indigo-500 to-blue-600',   dot: 'bg-indigo-400',  text: 'text-indigo-300'  },
 ]
 
 function getMeetLink(app) {
@@ -111,6 +111,12 @@ export default function Tracker() {
   const [syncingMailbox, setSyncingMailbox] = useState(false)
   const [searchQuery, setSearchQuery]       = useState('')
   const [emailOnly, setEmailOnly]           = useState(false)
+  const [viewMode, setViewMode]             = useState(() => localStorage.getItem('tracker_view_mode') || 'kanban')
+
+  const switchViewMode = (mode) => {
+    setViewMode(mode)
+    localStorage.setItem('tracker_view_mode', mode)
+  }
 
   // Interactive Conversation Thread Modal State
   const [threadModal, setThreadModal]     = useState(null)
@@ -431,24 +437,24 @@ export default function Tracker() {
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
-                className="mb-5 bg-gradient-to-r from-amber-950/60 via-slate-900/90 to-amber-950/60 border border-amber-500/35 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg backdrop-blur-xl"
+                className="mb-5 glass-panel border border-blue-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/35 flex items-center justify-center text-amber-400 shrink-0">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
                     <Clock size={16} />
                   </div>
                   <div>
-                    <p className="text-xs sm:text-sm font-extrabold text-amber-200">
+                    <p className="text-xs sm:text-sm font-extrabold text-white">
                       ⚡ Follow-Up Assistant: {followUpCandidates.length} application{followUpCandidates.length > 1 ? 's' : ''} awaiting recruiter response (&gt;3 days)
                     </p>
-                    <p className="text-xs text-amber-300/75 mt-0.5">
+                    <p className="text-xs text-slate-400 mt-0.5">
                       Following up increases recruiter response rates. Review candidates and dispatch follow-ups in 1 click.
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setBatchFollowUpOpen(true)}
-                  className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs px-4 py-2 rounded-xl transition shadow-md cursor-pointer shrink-0"
+                  className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs px-4 py-2 rounded-xl transition shadow-md cursor-pointer shrink-0"
                 >
                   <Send size={13} />
                   <span>Review &amp; Follow Up ({followUpCandidates.length})</span>
@@ -534,6 +540,34 @@ export default function Tracker() {
                 <span>Email Only</span>
               </button>
 
+              {/* Kanban vs CRM Table View Toggle */}
+              <div className="flex bg-[#050811]/90 border border-white/[0.08] rounded-xl p-1 text-xs font-bold shrink-0">
+                <button
+                  type="button"
+                  onClick={() => switchViewMode('kanban')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                    viewMode === 'kanban'
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <KanbanSquare size={13} />
+                  <span>Kanban</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchViewMode('table')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                    viewMode === 'table'
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <List size={13} />
+                  <span>CRM Table ({totalFiltered})</span>
+                </button>
+              </div>
+
               {/* Live Filter Indicator */}
               {searchQuery && (
                 <div className="flex items-center gap-2 text-xs text-slate-400 pl-1 shrink-0">
@@ -574,7 +608,109 @@ export default function Tracker() {
             </div>
           )}
 
-          {/* 7-Column Glass Kanban Board */}
+          {/* 7-Column Glass Kanban Board or Compact CRM Table */}
+          {viewMode === 'table' ? (
+            <div className="glass-panel rounded-3xl p-5 overflow-hidden relative">
+              <div className="glow-line-top" />
+              <div className="overflow-x-auto -mx-2 px-2">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400 text-left border-b border-white/[0.08]">
+                      <th className="pb-3 pr-4 font-extrabold uppercase tracking-wider">Role &amp; Company</th>
+                      <th className="pb-3 pr-4 font-extrabold uppercase tracking-wider">Stage</th>
+                      <th className="pb-3 pr-4 font-extrabold uppercase tracking-wider">Match</th>
+                      <th className="pb-3 pr-4 font-extrabold uppercase tracking-wider">Recruiter Contact</th>
+                      <th className="pb-3 pr-4 font-extrabold uppercase tracking-wider">Applied</th>
+                      <th className="pb-3 text-right font-extrabold uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredApps.map(a => {
+                      const primaryEmail = getPrimaryEmail(a)
+                      const normStatus = a.status === 'saved' ? 'applied' : a.status
+                      return (
+                        <tr
+                          key={a.id}
+                          onClick={() => openThreadModal(a)}
+                          className="border-b border-white/[0.05] hover:bg-white/[0.03] transition cursor-pointer"
+                        >
+                          <td className="py-3 pr-4 max-w-[260px]">
+                            <div className="font-extrabold text-white truncate">{a.title}</div>
+                            <div className="text-[11px] text-blue-300 font-semibold truncate">
+                              {a.company} {a.location ? `· ${a.location}` : ''}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4" onClick={e => e.stopPropagation()}>
+                            <select
+                              value={normStatus}
+                              onChange={e => moveStatus(a.id, e.target.value)}
+                              className="bg-slate-900 border border-white/[0.1] rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer"
+                            >
+                              {COLUMNS.map(c => (
+                                <option key={c.key} value={c.key}>{c.shortLabel}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="py-3 pr-4">
+                            {a.match_score > 0 ? <ScoreBadge score={a.match_score} /> : <span className="text-slate-500">—</span>}
+                          </td>
+                          <td className="py-3 pr-4" onClick={e => e.stopPropagation()}>
+                            {primaryEmail ? (
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(primaryEmail)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/90 border border-white/[0.08] hover:border-blue-500/40 text-blue-300 font-mono text-[11px] cursor-pointer"
+                              >
+                                <Mail size={11} />
+                                <span className="truncate max-w-[180px]">{primaryEmail}</span>
+                              </button>
+                            ) : (
+                              <span className="text-slate-500">Portal / Direct</span>
+                            )}
+                          </td>
+                          <td className="py-3 pr-4 text-slate-400 whitespace-nowrap">
+                            {a.applied_at ? String(a.applied_at).slice(0, 10) : '—'}
+                          </td>
+                          <td className="py-3 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                            <div className="inline-flex items-center gap-1.5">
+                              {(a.has_tailored_cv || a.tailored_cv_filename) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadCv(a.id, a.tailored_cv_filename)}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                                  title="Download Tailored CV PDF sent with this application"
+                                >
+                                  <Download size={11} />
+                                  <span>CV PDF</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setPrepApp(a)}
+                                className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/30 border border-purple-500/30 text-purple-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                                title="AI Interview Prep"
+                              >
+                                <Sparkles size={11} className="text-amber-400" />
+                                <span>Prep</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => del(a.id)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+                                title="Delete Application"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
           <div className="flex gap-4 overflow-x-auto pb-4 items-start">
             {COLUMNS.map((col, colIdx) => (
               <motion.div
@@ -835,6 +971,7 @@ export default function Tracker() {
               </motion.div>
             ))}
           </div>
+          )}
         </main>
 
         {/* Add Modal */}
@@ -1014,7 +1151,7 @@ export default function Tracker() {
                     <button
                       onClick={handleSendFollowUp}
                       disabled={sendingFollowUp}
-                      className="shimmer-btn flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="shimmer-btn flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-extrabold py-2.5 rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       {sendingFollowUp ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                       <span>{sendingFollowUp ? 'Sending Follow-up...' : 'Send Follow-up Email'}</span>
@@ -1117,7 +1254,7 @@ export default function Tracker() {
                   <button
                     onClick={handleSendBatchFollowUp}
                     disabled={sendingFollowUp || selectedBatchIds.length === 0}
-                    className="shimmer-btn flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-extrabold py-2.5 rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="shimmer-btn flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-extrabold py-2.5 rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     {sendingFollowUp ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                     <span>{sendingFollowUp ? 'Sending Follow-ups...' : `Send Follow-ups (${selectedBatchIds.length})`}</span>

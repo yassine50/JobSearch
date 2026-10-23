@@ -242,7 +242,56 @@ def _normalize(text: str) -> str:
     return _apply_aliases(_clean(text))
 
 def _tokenize(text: str) -> List[str]:
-    return [w for w in text.split() if w not in _STOPWORDS and len(w) > 2]
+    # Strip sentence punctuation glued to words ("pipelines." / "git," / "-skills") so the same word at the end
+    # of a JD sentence still matches the CV; internal dots/slashes are kept ("node.js", "ci/cd").
+    out = []
+    for w in text.split():
+        w = w.strip(".-/")
+        if w and w not in _STOPWORDS and len(w) > 2:
+            out.append(w)
+    return out
+
+
+_STEM_CACHE: Dict[str, str] = {}
+
+
+def _stem(w: str) -> str:
+    """Tiny dependency-free English stemmer so 'handled'/'handle'/'handling' and 'pipelines'/'pipeline'
+    count as the same term in the similarity model (tech tokens with digits/symbols are left untouched)."""
+    s = _STEM_CACHE.get(w)
+    if s is not None:
+        return s
+    s = w
+    if s.isalpha() and len(s) > 4:
+        if s.endswith("ies") and len(s) > 5:
+            s = s[:-3] + "y"
+        elif s.endswith("ing") and len(s) > 6:
+            s = s[:-3]
+            if len(s) > 3 and s[-1] == s[-2] and s[-1] not in "lsz":
+                s = s[:-1]
+        elif s.endswith("ed") and len(s) > 5:
+            s = s[:-2]
+            if len(s) > 3 and s[-1] == s[-2] and s[-1] not in "lsz":
+                s = s[:-1]
+        elif s.endswith("s") and not s.endswith(("ss", "us", "is")):
+            s = s[:-1]
+        if s.endswith("tion") and len(s) > 7:          # communication / communicate -> communicat
+            s = s[:-3]
+        if s.endswith("e") and len(s) > 4:
+            s = s[:-1]
+    _STEM_CACHE[w] = s
+    return s
+
+
+def _stem_tokens(tokens: List[str]) -> List[str]:
+    out: List[str] = []
+    for t in tokens:
+        # "problem-solving" (JD) must meet "problem solving" (CV): split purely alphabetic hyphen compounds
+        if "-" in t and all(p.isalpha() for p in t.split("-")):
+            out.extend(_stem(p) for p in t.split("-") if len(p) > 2)
+        else:
+            out.append(_stem(t))
+    return out
 
 # Pre-compile per-skill regexes and index skills by their first token for O(1) candidate filtering
 _SKILL_PATTERNS: Dict[str, re.Pattern] = {}
@@ -356,12 +405,12 @@ def _detect_domain(text: str) -> Optional[str]:
 # ─── CV Section Parser & Profile Cache ─────────────────────────────────────────
 
 _SECTION_HEADERS = {
-    "skills":      re.compile(r"^(technical\s+)?skills?\b", re.I),
-    "summary":     re.compile(r"^(professional\s+)?(summary|objective|profile|about)\b", re.I),
-    "experience":  re.compile(r"^(work\s+)?(experience|employment|history)\b", re.I),
-    "education":   re.compile(r"^education\b", re.I),
-    "projects":    re.compile(r"^(projects?|portfolio)\b", re.I),
-    "certif":      re.compile(r"^certif", re.I),
+    "skills":      re.compile(r"^(?:technical\s+|core\s+)?(?:skills?|competenc(?:ies|es)|compétences?(?:\s+techniques?|\s+clés?)?|technologies|outils)\b", re.I),
+    "summary":     re.compile(r"^(?:professional\s+|executive\s+)?(?:summary|objective|profile|profil(?:\s+professionnel)?|about|résumé)\b", re.I),
+    "experience":  re.compile(r"^(?:work\s+|professional\s+)?(?:experiences?|employment|history|expériences?(?:\s+professionnelles?)?|parcours(?:\s+professionnel)?)\b", re.I),
+    "education":   re.compile(r"^(?:education|formation|études|academic|diplômes?)\b", re.I),
+    "projects":    re.compile(r"^(?:selected\s+|personal\s+|academic\s+)?(?:projects?|portfolio|projets?(?:\s+sélectionnés?|\s+personnels?|\s+académiques?)?|réalisations?)\b", re.I),
+    "certif":      re.compile(r"^(?:certif|licen[cs]es?)", re.I),
 }
 
 def _parse_cv_sections(cv_text: str) -> Dict[str, str]:
@@ -384,14 +433,6 @@ _SEC_WEIGHTS = {
     "experience": 1.0, "certif": 1.1, "education": 0.9, "other": 0.8
 }
 
-def _section_weight(skill: str, sections: Dict[str, str]) -> float:
-    """Return boost multiplier based on which CV section a skill appears in."""
-    pat = _SKILL_PATTERNS.get(skill) or re.compile(r"\b" + re.escape(_clean(skill)) + r"\b")
-    for sec, text in sections.items():
-        if pat.search(_normalize(text)):
-            return _SEC_WEIGHTS.get(sec, 1.0)
-    return 0.0  # not found
-
 _CV_PROFILE_CACHE: Dict[int, Dict] = {}
 _CV_CACHE_LOCK = threading.Lock()
 
@@ -410,7 +451,7 @@ def _get_cv_profile(cv_text: str) -> Dict:
             return hit
     cv_n = _normalize(cv_text)
     cv_words = set(cv_n.split())
-    cv_tokens = _tokenize(cv_n)
+    cv_tokens = _stem_tokens(_tokenize(cv_n))   # stemmed: similarity is computed on word stems
     cv_tf = _build_ngram_tf(cv_tokens)
     raw_sections = _parse_cv_sections(cv_text)
     norm_sections = {sec: _normalize(txt) for sec, txt in raw_sections.items()}
@@ -470,7 +511,6 @@ def _required_skills_from_jd(job_text: str, skill_set: set) -> set:
 #  Retrieval Models (Zero-Overhead Sublinear TF-IDF + BM25)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_IDF_SHARED = 1.0                                  # log((1+2)/(1+2)) + 1
 _IDF_UNIQUE = 1.0 + math.log(3.0 / 2.0)            # 1.4054651081081644
 
 def _fast_tfidf_sim_from_tf(tf_a: Dict[str, float], tf_b: Dict[str, float]) -> float:
@@ -497,9 +537,6 @@ def _fast_tfidf_sim_from_tf(tf_a: Dict[str, float], tf_b: Dict[str, float]) -> f
     denom = math.sqrt(norm_a * norm_b)
     return (dot / denom) if denom > 0.0 else 0.0
 
-def _tfidf_sim(text_a: str, text_b: str) -> float:
-    return _fast_tfidf_sim_from_tf(_build_ngram_tf(_tokenize(text_a)), _build_ngram_tf(_tokenize(text_b)))
-
 def _bm25_sim(query_tokens: List[str], doc_tokens: List[str],
               k1: float = 1.5, b: float = 0.75,
               avg_dl: float = 150.0) -> float:
@@ -521,14 +558,6 @@ def _bm25_sim(query_tokens: List[str], doc_tokens: List[str],
         score += idf * tf_norm
     max_score = len(unique_q) * math.log(2) * (k1 + 1)
     return min(1.0, score / max_score) if max_score > 0 else 0.0
-
-def _ensemble_sim(cv_n: str, job_n: str) -> float:
-    """Weighted average of TF-IDF and BM25."""
-    cv_tok  = _tokenize(cv_n)
-    job_tok = _tokenize(job_n)
-    tfidf   = _fast_tfidf_sim_from_tf(_build_ngram_tf(cv_tok), _build_ngram_tf(job_tok))
-    bm25    = _bm25_sim(job_tok, cv_tok)
-    return tfidf * 0.6 + bm25 * 0.4
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Tips Generator
@@ -695,7 +724,7 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
         tech_score = 50
 
     # ── ② Ensemble retrieval (30%) ────────────────────────────────────────────
-    job_tok = _tokenize(job_n)
+    job_tok = _stem_tokens(_tokenize(job_n))
     raw_sim = _fast_tfidf_sim_from_tf(cv_tf, _build_ngram_tf(job_tok)) * 0.6 + _bm25_sim(job_tok, cv_tokens) * 0.4
     # Calibrate: raw cosine rarely > 0.4 for distinct docs → scale ×220 then cap
     semantic_score = min(100, int(raw_sim * 220))
@@ -755,14 +784,16 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
     edu_gap = (job_edu > 0 and cv_edu < job_edu)
 
     # ── Weighted total ────────────────────────────────────────────────────────
-    overall = int(
-        tech_score     * 0.40 +
-        semantic_score * 0.30 +
-        title_score    * 0.15 +
-        soft_score     * 0.08 +
-        domain_score   * 0.04 +
-        edu_score      * 0.03
-    )
+    # Criteria the JD does not express (no domain detected / no degree asked) are "not applicable":
+    # they are left out and the remaining weights re-normalised, instead of capping every CV with a
+    # fixed neutral 60/70.
+    parts = [(tech_score, 0.40), (semantic_score, 0.30), (title_score, 0.15), (soft_score, 0.08)]
+    if job_domain:
+        parts.append((domain_score, 0.04))
+    if job_edu:
+        parts.append((edu_score, 0.03))
+    w_sum = sum(w for _, w in parts)
+    overall = int(round(sum(s * w for s, w in parts) / w_sum))
 
     # ── Penalties ─────────────────────────────────────────────────────────────
     cv_exp  = prof["cv_exp"]
@@ -805,16 +836,6 @@ def compute_match(cv_text: str, job_text: str, job_title: str = "") -> Tuple[int
     }
     bd["tips"] = _generate_tips(bd, job_text)
     return overall, bd
-
-
-def batch_match(cv_text: str, rows: List[Dict],
-                max_workers: int = 6) -> List[Tuple[int, Dict]]:
-    """Parallel batch match of a CV against multiple job rows."""
-    def _match_one(row: Dict) -> Tuple[int, Dict]:
-        return compute_match(cv_text, row.get("description") or row.get("text") or "", row.get("title") or "")
-
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        return list(ex.map(_match_one, rows))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

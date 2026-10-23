@@ -7,7 +7,7 @@ Automated queue & follow-up dispatcher:
    validates DNS MX and blacklist, and dispatches them to recruiters,
    handling daily Gmail SMTP quota gracefully.
 """
-import re, time, smtplib
+import re, time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session

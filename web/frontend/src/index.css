@@ -248,3 +248,388 @@
 .spinner-slow {
   animation: spinSlow 1.4s linear infinite;
 }
+
+/* Collapsible Desktop Sidebar Rail Support */
+@media (min-width: 768px) {
+  main.md\:ml-64 {
+    transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  body.sidebar-collapsed main.md\:ml-64 {
+    margin-left: 5rem !important;
+  }
+}
+
+/* Accessibility: Respect OS Reduced Motion Preference */
+@media (prefers-reduced-motion: reduce) {
+  .aurora-orb-1,
+  .aurora-orb-2,
+  .aurora-orb-3,
+  .glow-line-top,
+  .text-gradient-blue,
+  .text-gradient-emerald,
+  .shimmer-btn::after,
+  .pulse-glow,
+  .animate-float {
+    animation: none !important;
+  }
+}
+
+/* ==========================================================================
+   LIGHT MODE THEME ENGINE (html.light-mode / body.light-mode)
+   Soft Slate-Pearl Daylight Palette — reduces white glare and creates clear
+   depth hierarchy between the canvas (#eaeff5), frosted cards, and recessed wells.
+   ========================================================================== */
+html.light-mode body,
+body.light-mode {
+  background-color: #eaeff5 !important;
+  color: #0f172a !important;
+}
+
+html.light-mode .bg-grid-pattern {
+  background-image:
+    linear-gradient(to right, rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.05) 1px, transparent 1px) !important;
+}
+
+/* Sticky Header, Sidebar & Footer in Light Mode */
+html.light-mode header {
+  background-color: rgba(241, 245, 249, 0.92) !important;
+  border-bottom-color: #cbd5e1 !important;
+  box-shadow: 0 4px 20px -6px rgba(15, 23, 42, 0.07) !important;
+}
+
+html.light-mode aside > div {
+  background-color: rgba(241, 245, 249, 0.95) !important;
+  border-right-color: #cbd5e1 !important;
+}
+
+html.light-mode footer,
+html.light-mode [class*="bg-[#04060E]"] {
+  background-color: #e2e8f0 !important;
+  border-top-color: #cbd5e1 !important;
+}
+
+/* Core Glassmorphism Surfaces — Soft Frosted Pearl instead of Glaring Pure White */
+html.light-mode .glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(243, 246, 251, 0.94) 100%) !important;
+  border-color: #cbd5e1 !important;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+    0 10px 28px -8px rgba(15, 23, 42, 0.09) !important;
+}
+
+html.light-mode .glass-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.90) 0%, rgba(241, 245, 249, 0.94) 100%) !important;
+  border-color: #cbd5e1 !important;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+    0 8px 22px -6px rgba(15, 23, 42, 0.08) !important;
+}
+
+html.light-mode .glass-dropdown {
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 20px 42px -10px rgba(15, 23, 42, 0.16) !important;
+}
+
+html.light-mode .glass-input {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: inset 0 1px 3px 0 rgba(15, 23, 42, 0.06) !important;
+}
+
+/* Map dark root/container backgrounds to soft Slate-Pearl canvas (#eaeff5) */
+html.light-mode [class*="bg-[#050811]"],
+html.light-mode [class*="bg-[#060A15]"],
+html.light-mode [class*="bg-[#070B18]"],
+html.light-mode [class*="bg-[#0A0F1F]"],
+html.light-mode [class*="bg-[#0B1120]"],
+html.light-mode [class*="bg-[#080D1A]"] {
+  background-color: #eaeff5 !important;
+}
+
+/* Outer Search Command Bar Wrapper inside Forms */
+html.light-mode form [class*="bg-[#050811]"] {
+  background-color: #f8fafc !important;
+  border-color: #94a3b8 !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04), 0 2px 8px -2px rgba(15, 23, 42, 0.06) !important;
+}
+
+html.light-mode .bg-slate-950,
+html.light-mode [class*="bg-slate-950/"] {
+  background-color: #e2e8f0 !important;
+}
+
+html.light-mode .bg-slate-900,
+html.light-mode [class*="bg-slate-900/"] {
+  background-color: #f1f5f9 !important;
+}
+
+/* Segmented Mode Switcher Track & Header Nav Pill Container */
+html.light-mode nav[class*="bg-slate-900/"],
+html.light-mode .grid[class*="bg-slate-900/"] {
+  background-color: #dce3ec !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Progress Bar Unfilled Track in Light Mode */
+html.light-mode .h-2.bg-slate-900,
+html.light-mode .h-1\.5.bg-slate-900 {
+  background-color: #cbd5e1 !important;
+}
+
+html.light-mode .bg-slate-800,
+html.light-mode [class*="bg-slate-800/"],
+html.light-mode .bg-slate-700,
+html.light-mode [class*="bg-slate-700/"] {
+  background-color: #dce3ec !important;
+}
+
+/* Subtle Translucent Pills (bg-white/[0.03], bg-white/[0.04], etc.) in Light Mode */
+html.light-mode [class*="bg-white/["],
+html.light-mode .bg-white\/5,
+html.light-mode .bg-white\/10 {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+}
+html.light-mode button[class*="bg-white/["]:hover,
+html.light-mode a[class*="bg-white/["]:hover {
+  background-color: #cbd5e1 !important;
+}
+
+/* Tinted Dark Surfaces (-950 / -900) Mapped to Soft Toned Daylight Tints */
+html.light-mode [class*="bg-emerald-950"],
+html.light-mode [class*="bg-emerald-900"] {
+  background-color: #d1fae5 !important;
+  border-color: #6ee7b7 !important;
+}
+html.light-mode [class*="bg-rose-950"],
+html.light-mode [class*="bg-rose-900"],
+html.light-mode [class*="bg-red-950"],
+html.light-mode [class*="bg-red-900"] {
+  background-color: #ffe4e6 !important;
+  border-color: #fda4af !important;
+}
+html.light-mode [class*="bg-indigo-950"],
+html.light-mode [class*="bg-indigo-900"] {
+  background-color: #e0e7ff !important;
+  border-color: #a5b4fc !important;
+}
+html.light-mode [class*="bg-blue-950"],
+html.light-mode [class*="bg-blue-900"] {
+  background-color: #dbeafe !important;
+  border-color: #93c5fd !important;
+}
+html.light-mode [class*="bg-purple-950"],
+html.light-mode [class*="bg-purple-900"] {
+  background-color: #f3e8ff !important;
+  border-color: #d8b4fe !important;
+}
+html.light-mode [class*="bg-amber-950"],
+html.light-mode [class*="bg-amber-900"] {
+  background-color: #fef3c7 !important;
+  border-color: #fcd34d !important;
+}
+html.light-mode [class*="bg-cyan-950"],
+html.light-mode [class*="bg-sky-950"],
+html.light-mode [class*="bg-teal-950"] {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Active Translucent Mode Switcher, Dark Gradient Banners & Selected Feed Cards in Light Mode */
+html.light-mode [class*="from-blue-600/25"],
+html.light-mode [class*="from-blue-600/20"],
+html.light-mode [class*="from-blue-950"],
+html.light-mode [class*="from-indigo-950"],
+html.light-mode [class*="from-slate-800"],
+html.light-mode [class*="from-slate-900"],
+html.light-mode [class*="from-slate-950"],
+html.light-mode [class*="via-slate-900"],
+html.light-mode [class*="via-slate-950"],
+html.light-mode [class*="from-emerald-950"],
+html.light-mode [class*="from-amber-950"] {
+  background: linear-gradient(135deg, #ffffff 0%, #dbeafe 100%) !important;
+  border-color: #93c5fd !important;
+  box-shadow: 0 6px 18px -4px rgba(37, 99, 235, 0.12) !important;
+}
+
+html.light-mode [class*="from-purple-600/25"],
+html.light-mode [class*="from-purple-600/20"],
+html.light-mode [class*="from-purple-950"] {
+  background: linear-gradient(135deg, #ffffff 0%, #e0e7ff 100%) !important;
+  border-color: #6366f1 !important;
+  box-shadow: 0 6px 18px -4px rgba(79, 70, 229, 0.14) !important;
+}
+
+/* Guest Blur Gate Frosted Daylight Overlay */
+html.light-mode .guest-blur-overlay {
+  background: linear-gradient(
+    180deg,
+    rgba(234, 239, 245, 0.45) 0%,
+    rgba(226, 232, 240, 0.85) 50%,
+    rgba(226, 232, 240, 0.97) 100%
+  ) !important;
+}
+
+/* Standalone Inputs, Selects, Textareas in Light Mode (recessed #f1f5f9 fill, #ffffff on focus) */
+html.light-mode input:not([type="checkbox"]):not([type="radio"]):not(.bg-transparent),
+html.light-mode select,
+html.light-mode textarea {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+html.light-mode input:not([type="checkbox"]):not([type="radio"]):not(.bg-transparent):focus,
+html.light-mode select:focus,
+html.light-mode textarea:focus {
+  background-color: #ffffff !important;
+  border-color: #3b82f6 !important;
+}
+
+/* Inner transparent search input must stay transparent so icons never get boxed in */
+html.light-mode input.bg-transparent {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+}
+
+html.light-mode input::placeholder,
+html.light-mode textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Borders & Dividers in Light Mode */
+html.light-mode [class*="border-white/"],
+html.light-mode .border-slate-800,
+html.light-mode [class*="border-slate-800/"],
+html.light-mode .border-slate-700,
+html.light-mode [class*="border-slate-700/"] {
+  border-color: #cbd5e1 !important;
+}
+html.light-mode [class*="divide-white/"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: #cbd5e1 !important;
+}
+
+/* Typography Contrast in Light Mode (including slash opacity modifiers like /70, /80, /90) */
+html.light-mode .text-white,
+html.light-mode [class*="text-white/"] {
+  color: #0f172a !important;
+}
+
+html.light-mode .text-slate-100,
+html.light-mode [class*="text-slate-100/"],
+html.light-mode .text-slate-200,
+html.light-mode [class*="text-slate-200/"] {
+  color: #1e293b !important;
+}
+
+html.light-mode .text-slate-300,
+html.light-mode [class*="text-slate-300/"] {
+  color: #334155 !important;
+}
+
+html.light-mode .text-slate-400,
+html.light-mode [class*="text-slate-400/"] {
+  color: #475569 !important;
+}
+
+html.light-mode .text-slate-500 {
+  color: #64748b !important;
+}
+
+html.light-mode .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+/* Pastel Badge & Accent Text Readability on Light Surfaces (including /70, /80, /90 opacity variants) */
+html.light-mode .text-blue-400,
+html.light-mode .text-blue-300,
+html.light-mode .text-blue-200,
+html.light-mode .text-blue-100,
+html.light-mode [class*="text-blue-300/"],
+html.light-mode [class*="text-blue-200/"] {
+  color: #1d4ed8 !important;
+}
+html.light-mode .text-emerald-400,
+html.light-mode .text-emerald-300,
+html.light-mode .text-emerald-200,
+html.light-mode [class*="text-emerald-300/"],
+html.light-mode [class*="text-emerald-200/"] {
+  color: #047857 !important;
+}
+html.light-mode .text-purple-400,
+html.light-mode .text-purple-300,
+html.light-mode .text-purple-200,
+html.light-mode [class*="text-purple-300/"],
+html.light-mode [class*="text-purple-200/"] {
+  color: #6d28d9 !important;
+}
+html.light-mode .text-amber-400,
+html.light-mode .text-amber-300,
+html.light-mode .text-amber-200,
+html.light-mode .text-amber-100,
+html.light-mode [class*="text-amber-300/"],
+html.light-mode [class*="text-amber-200/"],
+html.light-mode [class*="text-amber-100/"] {
+  color: #92400e !important;
+}
+html.light-mode .text-rose-400,
+html.light-mode .text-rose-300,
+html.light-mode .text-rose-200,
+html.light-mode [class*="text-rose-300/"],
+html.light-mode [class*="text-rose-200/"],
+html.light-mode .text-red-400,
+html.light-mode .text-red-300,
+html.light-mode .text-red-200,
+html.light-mode [class*="text-red-300/"],
+html.light-mode [class*="text-red-200/"] {
+  color: #be123c !important;
+}
+html.light-mode .text-indigo-400,
+html.light-mode .text-indigo-300,
+html.light-mode .text-indigo-200,
+html.light-mode [class*="text-indigo-300/"],
+html.light-mode [class*="text-indigo-200/"] {
+  color: #4338ca !important;
+}
+html.light-mode .text-cyan-400,
+html.light-mode .text-cyan-300 {
+  color: #0e7490 !important;
+}
+
+/* Keep text & icons white ONLY inside solid colored/gradient buttons and badges (placed after text rules for precedence) */
+html.light-mode .bg-blue-600,
+html.light-mode .bg-blue-600 *,
+html.light-mode .bg-indigo-600,
+html.light-mode .bg-indigo-600 *,
+html.light-mode .bg-emerald-600,
+html.light-mode .bg-emerald-600 *,
+html.light-mode .bg-purple-600,
+html.light-mode .bg-purple-600 *,
+html.light-mode .bg-rose-600,
+html.light-mode .bg-rose-600 *,
+html.light-mode [class*="from-blue-600"]:not([class*="from-blue-600/"]),
+html.light-mode [class*="from-blue-600"]:not([class*="from-blue-600/"]) *,
+html.light-mode [class*="from-emerald-600"]:not([class*="from-emerald-600/"]),
+html.light-mode [class*="from-emerald-600"]:not([class*="from-emerald-600/"]) *,
+html.light-mode [class*="from-purple-600"]:not([class*="from-purple-600/"]),
+html.light-mode [class*="from-purple-600"]:not([class*="from-purple-600/"]) *,
+html.light-mode .absolute.inset-0.bg-blue-600 ~ *,
+html.light-mode .absolute.inset-0.bg-blue-600 ~ * *,
+html.light-mode .absolute.inset-0[class*="from-blue-600"] ~ *,
+html.light-mode .absolute.inset-0[class*="from-blue-600"] ~ * * {
+  color: #ffffff !important;
+}
+
+html.light-mode .text-gradient-blue {
+  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 45%, #7c3aed 85%, #2563eb 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+

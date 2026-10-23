@@ -13,10 +13,10 @@ import re
 from typing import Dict, List, Tuple
 
 from .lexicon import (
-    ACTION_NOUNS_FR, AMBIGUOUS_TECH, BUZZWORDS, CATEGORY_ORDER, DOUBLE_WORD_RE, EN_OPENER_REWRITES, TECH,
+    AMBIGUOUS_TECH, CATEGORY_ORDER, DOUBLE_WORD_RE, EN_OPENER_REWRITES, TECH,
     TECH_ALIAS, TYPOS, canonical_tech, tech_category,
 )
-from .parse import CV, Entry, STRICT_ROLE, tech_tokens
+from .parse import CV, Entry, tech_tokens
 
 # Present → past for ended roles (first verb of a bullet only)
 _IRREGULAR_PAST = {

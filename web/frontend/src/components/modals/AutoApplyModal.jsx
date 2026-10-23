@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import confetti from 'canvas-confetti'
 import client, { getCached } from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -235,13 +235,13 @@ export default function AutoApplyModal({
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 text-slate-950 font-bold shadow-md shadow-amber-500/20">
-              <Zap size={18} className="fill-slate-950" />
+            <div className="p-2 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold shadow-md shadow-blue-500/20">
+              <Zap size={18} />
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <span>1-Click Auto-Apply</span>
-                <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <span className="text-[10px] font-semibold text-blue-300 bg-blue-500/15 border border-blue-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <ShieldCheck size={10} /> Verified Recruiter
                 </span>
               </h3>
@@ -386,9 +386,9 @@ export default function AutoApplyModal({
             type="button"
             onClick={handleSend}
             disabled={loading || !selectedEmail}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-500/20 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} className="fill-slate-950" />}
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
             <span>{loading ? 'Dispatching Application...' : 'Send Application'}</span>
           </button>
         </div>

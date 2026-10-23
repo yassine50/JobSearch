@@ -199,8 +199,9 @@ def _build_mime_message(settings, current_user, to_email: str, to_name: str,
             part.add_header('Content-Disposition', 'attachment', filename=custom_attachment_name)
             msg.attach(part)
         else:
+            from .cv import _get_active_cv
             cv = cached_cv if cached_cv is not None else (
-                db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first() if db else None
+                _get_active_cv(db, current_user.id) if db else None
             )
             if cv and cv.file_data:
                 fname = cv.filename or "Resume.pdf"
@@ -635,7 +636,8 @@ def auto_apply(req: AutoApplyRequest,
         raise HTTPException(400, "Please configure your Gmail SMTP settings first in Settings.")
 
     sender_name = settings.sender_name or current_user.name
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
 
     # User-clicked Auto-Apply: attach an honest per-job tailored COPY (re-ordered, nothing added).
     # Falls back to the original CV (cv.file_data) when tailoring is off, fails, or doesn't help.
@@ -773,7 +775,8 @@ def batch_auto_apply(req: BatchAutoApplyRequest,
 
     from ..bounce_cleaner import get_blacklisted_emails
     blacklisted = get_blacklisted_emails(db, current_user.id)
-    cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
     sender_name = settings.sender_name or current_user.name
     results = []
     applied_count = 0
@@ -1355,7 +1358,8 @@ def send_follow_up(req: FollowUpSendRequest,
             cv_bytes = app.tailored_cv_data
             cv_name = app.tailored_cv_filename or f"CV_{sender_name.replace(' ', '_')}.pdf"
         else:
-            cv = db.query(models.CvUpload).filter(models.CvUpload.user_id == current_user.id).first()
+            from .cv import _get_active_cv
+            cv = _get_active_cv(db, current_user.id)
             if cv and cv.file_data:
                 cv_bytes = cv.file_data
                 cv_name = cv.filename or f"CV_{sender_name.replace(' ', '_')}.pdf"

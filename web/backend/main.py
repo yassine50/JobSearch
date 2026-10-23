@@ -47,19 +47,6 @@ async def fix_double_api_prefix(request, call_next):
     return await call_next(request)
 
 
-ROUTERS = [
-    auth.router,
-    jobs.router,
-    cv.router,
-    recruiter,
-    gmail_oauth.router,
-    email.router,
-    tracker.router,
-    coverletter.router,
-    linkedin_posts.router,
-    power.router,
-]
-
 for router in [
     auth.router,
     jobs.router,
@@ -73,10 +60,6 @@ for router in [
     power.router,
 ]:
     app.include_router(router)
-
-static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
 dist_dir = os.path.join(frontend_dir, "dist")

@@ -1,5 +1,3 @@
-import { motion } from 'framer-motion'
-
 export default function PageWrapper({ children }) {
   return (
     <div className="relative min-h-screen bg-[#050811] bg-grid-pattern overflow-x-hidden">

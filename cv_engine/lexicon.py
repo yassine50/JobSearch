@@ -28,58 +28,75 @@ SECTION_HEADINGS: Dict[str, List[str]] = {
     "summary": [
         "SUMMARY", "PROFESSIONAL SUMMARY", "EXECUTIVE SUMMARY", "PROFILE", "PROFESSIONAL PROFILE",
         "ABOUT", "ABOUT ME", "CAREER SUMMARY", "OBJECTIVE", "CAREER OBJECTIVE", "PERSONAL STATEMENT",
-        "PROFIL", "PROFIL PROFESSIONNEL", "RESUME", "A PROPOS", "A PROPOS DE MOI", "OBJECTIF",
-        "PRESENTATION", "QUI SUIS JE",
+        "PROFESSIONAL OVERVIEW", "OVERVIEW", "CAREER PROFILE", "SUMMARY OF QUALIFICATIONS", "PERSONAL PROFILE",
+        "BIO", "PROFIL", "PROFIL PROFESSIONNEL", "RESUME", "A PROPOS", "A PROPOS DE MOI", "OBJECTIF",
+        "OBJECTIF PROFESSIONNEL", "PRESENTATION", "SYNTHESE", "SYNTHESE PROFESSIONNELLE", "QUI SUIS JE",
     ],
     "experience": [
         "EXPERIENCE", "EXPERIENCES", "PROFESSIONAL EXPERIENCE", "WORK EXPERIENCE", "EMPLOYMENT",
         "EMPLOYMENT HISTORY", "WORK HISTORY", "CAREER HISTORY", "RELEVANT EXPERIENCE", "INTERNSHIPS",
-        "EXPERIENCE PROFESSIONNELLE", "EXPERIENCES PROFESSIONNELLES", "PARCOURS PROFESSIONNEL",
+        "PROFESSIONAL BACKGROUND", "CAREER EXPERIENCE", "WORK & LEADERSHIP EXPERIENCE", "INDUSTRY EXPERIENCE",
+        "EXPERIENCE PROFESSIONNELLE", "EXPERIENCES PROFESSIONNELLES", "PARCOURS PROFESSIONNEL", "PARCOURS",
         "STAGES", "STAGES ET EXPERIENCES", "EXPERIENCE & PROJETS PERSONNELS", "EXPERIENCE & PROJECTS",
-        "EXPERIENCE AND PROJECTS", "EXPERIENCES & PROJETS",
+        "EXPERIENCE AND PROJECTS", "EXPERIENCES & PROJETS", "EXPERIENCE PROFESSIONNELLE ET STAGES",
     ],
     "projects": [
         "PROJECTS", "PERSONAL PROJECTS", "ACADEMIC PROJECTS", "SELECTED PROJECTS", "KEY PROJECTS",
-        "FEATURED PROJECTS", "SIDE PROJECTS", "PORTFOLIO", "PROJETS", "PROJETS PERSONNELS",
+        "FEATURED PROJECTS", "SIDE PROJECTS", "PORTFOLIO", "NOTABLE PROJECTS", "ENGINEERING PROJECTS",
+        "TECHNICAL PROJECTS", "PROJECTS & ACHIEVEMENTS", "PROJETS", "PROJETS PERSONNELS",
         "PROJETS REALISES", "PROJETS ACADEMIQUES", "PROJETS UNIVERSITAIRES", "REALISATIONS",
-        "PROJETS ACADEMIQUES ET PERSONNELS",
+        "PROJETS TECHNIQUES", "PROJETS ET REALISATIONS", "PROJETS ACADEMIQUES ET PERSONNELS",
     ],
     "education": [
         "EDUCATION", "ACADEMIC BACKGROUND", "EDUCATION & QUALIFICATIONS", "ACADEMIC QUALIFICATIONS",
-        "QUALIFICATIONS", "FORMATION", "FORMATIONS", "EDUCATION ET FORMATION", "ETUDES", "DIPLOMES",
-        "CURSUS", "CURSUS ACADEMIQUE", "PARCOURS ACADEMIQUE", "FORMATION ACADEMIQUE", "SCOLARITE",
+        "QUALIFICATIONS", "EDUCATION & TRAINING", "ACADEMIC HISTORY", "STUDIES",
+        "FORMATION", "FORMATIONS", "EDUCATION ET FORMATION", "ETUDES", "DIPLOMES", "ETUDES ET DIPLOMES",
+        "FORMATION ET DIPLOMES", "PARCOURS SCOLAIRE", "CURSUS", "CURSUS ACADEMIQUE", "PARCOURS ACADEMIQUE",
+        "FORMATION ACADEMIQUE", "SCOLARITE",
     ],
     "skills": [
-        "SKILLS", "TECHNICAL SKILLS", "CORE COMPETENCIES", "SKILLS & TECHNOLOGIES", "TECHNOLOGIES",
-        "TECH STACK", "KEY SKILLS", "AREAS OF EXPERTISE", "PROGRAMMING SKILLS", "HARD SKILLS",
-        "PROGRAMMING LANGUAGE SKILLS", "PROGRAMMING LANGUE SKILLS", "TECHNOLOGY SKILLS", "COMPETENCES",
-        "COMPETENCES TECHNIQUES", "CONNAISSANCES", "CONNAISSANCES TECHNIQUES", "EXPERTISE TECHNIQUE",
-        "COMPETENCES INFORMATIQUES", "OUTILS", "SAVOIR FAIRE", "TOOLS", "TECHNICAL PROFICIENCIES",
+        "SKILLS", "TECHNICAL SKILLS", "CORE SKILLS", "CORE COMPETENCIES", "SKILLS & TECHNOLOGIES",
+        "TECHNOLOGIES", "TECH STACK", "KEY SKILLS", "PROFESSIONAL SKILLS", "COMPETENCIES",
+        "SKILLS SUMMARY", "AREAS OF SKILL", "TECHNICAL COMPETENCIES", "SKILLS & EXPERTISE",
+        "SKILLS AND EXPERTISE", "EXPERTISE", "AREAS OF EXPERTISE", "DOMAINS OF EXPERTISE",
+        "PROGRAMMING SKILLS", "HARD SKILLS", "PROGRAMMING LANGUAGE SKILLS", "PROGRAMMING LANGUE SKILLS",
+        "TECHNOLOGY SKILLS", "TOOLS & TECHNOLOGIES", "TECHNOLOGIES & TOOLS", "IT SKILLS", "COMPUTER SKILLS",
+        "COMPETENCES", "COMPETENCES TECHNIQUES", "COMPETENCES CLES", "COMPETENCES PRINCIPALES",
+        "COMPETENCES PROFESSIONNELLES", "DOMAINES DE COMPETENCES", "CONNAISSANCES", "CONNAISSANCES TECHNIQUES",
+        "EXPERTISE TECHNIQUE", "COMPETENCES INFORMATIQUES", "OUTILS", "OUTILS ET TECHNOLOGIES",
+        "SAVOIR FAIRE", "TOOLS", "TECHNICAL PROFICIENCIES",
     ],
     "soft_skills": [
         "SOFT SKILLS", "SOFTSKILLS", "QUALITES", "QUALITES PERSONNELLES", "SAVOIR ETRE",
         "PERSONAL SKILLS", "INTERPERSONAL SKILLS", "COMPETENCES PERSONNELLES", "ATOUTS",
     ],
     "languages": [
-        "LANGUAGES", "LANGUAGE", "LANGUAGE PROFICIENCY", "SPOKEN LANGUAGES", "LANGUES",
-        "COMPETENCES LINGUISTIQUES", "LANGUES PARLEES",
+        "LANGUAGES", "LANGUAGE", "LANGUAGE PROFICIENCY", "SPOKEN LANGUAGES", "FOREIGN LANGUAGES",
+        "LANGUES", "COMPETENCES LINGUISTIQUES", "LANGUES PARLEES", "LANGUES ETRANGERES",
     ],
     "certifications": [
         "CERTIFICATIONS", "CERTIFICATION", "CERTIFICATES", "LICENSES & CERTIFICATIONS",
-        "TRAINING & CERTIFICATIONS", "CERTIFICATIONS & AWARDS", "COURSES", "TRAINING", "CERTIFICATS",
-        "FORMATIONS COMPLEMENTAIRES",
+        "CERTIFICATIONS & LICENSES", "TRAINING & CERTIFICATIONS", "CERTIFICATIONS & TRAINING",
+        "PROFESSIONAL CERTIFICATIONS", "ACCREDITATIONS", "CERTIFICATIONS & AWARDS", "COURSES",
+        "TRAINING", "CERTIFICATS", "CERTIFICATIONS ET FORMATIONS", "FORMATIONS COMPLEMENTAIRES",
     ],
     "awards": ["AWARDS", "HONORS", "HONOURS", "ACHIEVEMENTS", "PRIX", "DISTINCTIONS", "PRIX ET DISTINCTIONS"],
     "activities": [
-        "ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING", "VOLUNTEER EXPERIENCE", "LEADERSHIP",
-        "CLUBS", "ASSOCIATIONS", "VIE ASSOCIATIVE", "ACTIVITES", "ACTIVITES PARASCOLAIRES",
-        "ACTIVITES EXTRA PROFESSIONNELLES", "BENEVOLAT", "ENGAGEMENTS", "VIE ASSOCIATIVE ET CLUBS",
+        "ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULARS", "VOLUNTEERING",
+        "VOLUNTEER EXPERIENCE", "COMMUNITY INVOLVEMENT", "LEADERSHIP", "LEADERSHIP & ACTIVITIES",
+        "ORGANIZATIONS", "AFFILIATIONS", "CLUBS", "CLUBS & ASSOCIATIONS", "ASSOCIATIONS",
+        "VIE ASSOCIATIVE", "ACTIVITES", "ACTIVITES PARASCOLAIRES", "ACTIVITES EXTRA PROFESSIONNELLES",
+        "BENEVOLAT", "ENGAGEMENTS", "VIE ASSOCIATIVE ET CLUBS", "CLUBS ET ASSOCIATIONS",
     ],
     "interests": [
         "INTERESTS", "HOBBIES", "HOBBIES & INTERESTS", "CENTRES D'INTERET", "CENTRES D INTERET",
         "CENTRE D'INTERET", "LOISIRS", "PASSIONS", "CENTRES D'INTERETS",
     ],
-    "contact": ["CONTACT", "CONTACTS", "CONTACT INFO", "CONTACT INFORMATION", "COORDONNEES", "INFORMATIONS PERSONNELLES", "PERSONAL INFORMATION", "PERSONAL DETAILS", "DETAILS"],
+    "contact": [
+        "CONTACT", "CONTACTS", "CONTACT INFO", "CONTACT INFORMATION", "CONTACT DETAILS",
+        "COORDONNEES", "INFORMATIONS PERSONNELLES", "PERSONAL INFORMATION", "PERSONAL DETAILS", "DETAILS",
+        "OTHER SECTIONS",
+    ],
     "references": ["REFERENCES", "REFERENCE", "RECOMMANDATIONS"],
     "publications": ["PUBLICATIONS", "RESEARCH", "RECHERCHE", "PUBLICATIONS SCIENTIFIQUES"],
 }
@@ -362,7 +379,10 @@ ROLE_WORDS = re.compile(
     r"spécialiste|trainee|assistant|teacher|enseignant|formateur|tutor|researcher|chercheur|"
     r"full[ -]?stack|front[ -]?end|back[ -]?end|devops|data|mobile|web|software|qa|tester|testeur|"
     r"product owner|scrum master|chef de projet|project manager|summer|été|graduation|"
-    r"pfe|projet de fin d'études?|fin d'études?|fin d'etude)\b",
+    r"pfe|projet de fin d'études?|fin d'études?|fin d'etude|support|coordinator|coordinateur|"
+    r"officer|executive|representative|associate|director|directeur|supervisor|superviseur|"
+    r"accountant|comptable|marketing|sales|commercial|operations|recruiter|recruteur|professional|"
+    r"trainer|instructor|moderator|mod[ée]rateur|agent|advisor|conseiller|operator|op[ée]rateur|clerk)\b",
     re.I,
 )
 
@@ -396,7 +416,7 @@ CITIES = {
     "tunis", "sousse", "monastir", "sfax", "mahdia", "bizerte", "nabeul", "ariana", "ben arous", "gabes",
     "kairouan", "ksar hellal", "ksibet el mediouni", "akouda", "hammamet", "manouba", "la marsa",
     "paris", "lyon", "marseille", "toulouse", "lille", "nantes", "bordeaux", "nice", "montpellier",
-    "strasbourg", "rennes", "grenoble", "bucharest", "bucarest", "casablanca", "rabat", "algiers", "alger",
+    "strasbourg", "rennes", "grenoble", "bucharest", "bucarest", "bucuresti", "bucurești", "casablanca", "rabat", "algiers", "alger",
     "riyadh", "jeddah", "dubai", "doha", "cairo", "berlin", "munich", "london", "madrid", "barcelona",
     "brussels", "bruxelles", "montreal", "montréal", "toronto", "geneva", "genève", "zurich",
     "amsterdam", "lisbon", "lisbonne", "milan", "rome",
@@ -428,7 +448,7 @@ LANG_LEVELS: List[Tuple[str, str, str]] = [
     (r"\b(native|mother tongue|maternel+e?|natale?|langue maternelle|langage maternelle|natif|native speaker)\b", "Native", "Langue maternelle"),
     (r"\b(c2|bilingual|bilingue)\b", "Bilingual (C2)", "Bilingue (C2)"),
     (r"\b(c1|fluent|courant|excellent|excellente|bonne ma[iî]trise|full professional|ma[iî]trise)\b", "Fluent (C1)", "Courant (C1)"),
-    (r"\b(b2|advanced|avanc[ée]|professional working|upper[- ]intermediate)\b", "Advanced (B2)", "Avancé (B2)"),
+    (r"\b(b2|advanced|avanc[ée]|professional working|upper[- ]intermediate|very good|tr[eè]s bien|tr[eè]s bon(?:ne)?)\b", "Advanced (B2)", "Avancé (B2)"),
     (r"\b(b1|intermediate|interm[ée]diaire|good|bon|bonne|conversational)\b", "Intermediate (B1)", "Intermédiaire (B1)"),
     (r"\b(a1|a2|beginner|d[ée]butant|basic|notions|elementary|scolaire)\b", "Basic (A2)", "Notions (A2)"),
 ]
@@ -438,7 +458,8 @@ LANG_LEVELS: List[Tuple[str, str, str]] = [
 
 TYPOS: Dict[str, str] = {
     # English
-    "presnt": "present", "pressent": "present", "desing": "design", "managment": "management",
+    "presnt": "present", "pressent": "present", "desing": "design", "managment": "management", "mangment": "management",
+    "ntroduce": "introduce", "polytechnica": "Politehnica", "ordonnaces": "ordonnances",
     "developement": "development", "devlopment": "development", "enviroment": "environment",
     "experiance": "experience", "experince": "experience", "responsabilities": "responsibilities",
     "acheived": "achieved", "succesfully": "successfully", "sucessfully": "successfully",

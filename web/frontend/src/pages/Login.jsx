@@ -2,13 +2,18 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/AuthContext.jsx'
+import { useToast } from '../context/ToastContext.jsx'
+import { ThemeToggle } from '../context/ThemeContext.jsx'
 import { SEO_ROUTE_CONFIG } from '../components/SEOHead.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
+import JobBoardScraper from '../components/jobs/JobBoardScraper.jsx'
+import LinkedInPostHunter from '../components/LinkedInPostHunter.jsx'
+import AuthGateModal from '../components/modals/AuthGateModal.jsx'
 import client from '../api/client.js'
 import {
   Sparkles, ShieldCheck, Zap, Mail, Radar, ArrowRight,
   Lock, User, Briefcase, CheckCircle2, FileText, KanbanSquare,
-  Search, ChevronDown, Check, X, Globe, Cpu, Award, Layers
+  Search, ChevronDown, Check, X, Globe, Cpu, Award, Layers, Users
 } from 'lucide-react'
 
 const DEMO_PRESETS = [
@@ -193,6 +198,7 @@ const TOPIC_CLUSTER_LINKS = [
 
 export default function Login() {
   const { login, isAuth } = useAuth()
+  const toast = useToast()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -213,12 +219,67 @@ export default function Login() {
   }))
   const [rf, setRf] = useState({ name: '', email: '', password: '', role: 'seeker' })
 
+  // Live Guest App Test Workbench state
+  const [testTab, setTestTab] = useState('job_boards') // 'job_boards' | 'linkedin_posts'
+  const [guestJobs, setGuestJobs] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('guest_board_jobs') || '[]') } catch { return [] }
+  })
+  const [guestLoading, setGuestLoading] = useState(false)
+  const [guestMeta, setGuestMeta] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('guest_board_meta') || 'null') } catch { return null }
+  })
+  const [authGateReason, setAuthGateReason] = useState(null)
+
+  const getPostAuthDestination = () => {
+    try {
+      const hasBoard = JSON.parse(sessionStorage.getItem('guest_board_jobs') || '[]')?.length > 0
+      const hasPosts = JSON.parse(sessionStorage.getItem('guest_linkedin_posts') || '[]')?.length > 0
+      if (hasBoard || hasPosts) return '/seeker'
+    } catch {}
+    return '/dashboard'
+  }
+
   useEffect(() => {
     client.get('/health').catch(() => {})
     client.get('/auth/google-config').then(res => {
       if (res.data?.client_id) setGoogleClientId(res.data.client_id)
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    const onOpenAuthGate = (ev) => {
+      setAuthGateReason(ev.detail?.reason || 'Create a Free Account to Unlock Your Search Results')
+    }
+    window.addEventListener('open-auth-gate', onOpenAuthGate)
+    return () => window.removeEventListener('open-auth-gate', onOpenAuthGate)
+  }, [])
+
+  const handleGuestBoardSearch = async (params) => {
+    setGuestLoading(true)
+    setGuestMeta(null)
+    try {
+      const r = await client.post('/jobs/search', params)
+      const jobs = r.data.jobs || []
+      const meta = {
+        total: r.data.total,
+        cv_matched: r.data.cv_matched,
+        cached: r.data.cached,
+        proxy_used: r.data.proxy_used,
+      }
+      setGuestJobs(jobs)
+      setGuestMeta(meta)
+      try {
+        sessionStorage.setItem('guest_board_jobs', JSON.stringify(jobs))
+        sessionStorage.setItem('guest_board_meta', JSON.stringify(meta))
+        sessionStorage.setItem('guest_active_tab', 'job_boards')
+      } catch {}
+      toast(`Found ${r.data.total} jobs! Create a free account to unlock all results.`, 'info')
+    } catch (err) {
+      toast(err.response?.data?.detail || 'Job search failed', 'error')
+    } finally {
+      setGuestLoading(false)
+    }
+  }
 
   // Interactive ATS Match Preview state
   const [selectedPreset, setSelectedPreset] = useState(DEMO_PRESETS[0].id)
@@ -283,7 +344,7 @@ export default function Login() {
   }, [selectedPreset, customCvSkills, customJdSkills])
 
   if (isAuth) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to={getPostAuthDestination()} replace />
   }
 
   const scrollToAuth = (targetTab = 'register') => {
@@ -292,6 +353,14 @@ export default function Login() {
     const el = document.getElementById('auth-workbench')
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }
+
+  const scrollToLiveTest = (targetMode = 'job_boards') => {
+    setTestTab(targetMode)
+    const el = document.getElementById('live-app-test')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }
 
@@ -359,7 +428,7 @@ export default function Login() {
             })
             try { localStorage.setItem('saved_login_email', data.user?.email || '') } catch {}
             login(data.access_token, data.user)
-            navigate('/dashboard', { replace: true })
+            navigate(getPostAuthDestination(), { replace: true })
           } catch (apiErr) {
             const st = apiErr?.response?.status
             if (st === 404 || st === 405 || st === 501) {
@@ -383,7 +452,7 @@ export default function Login() {
                   const { data } = await client.post('/auth/login', { email, password: googlePwd })
                   try { localStorage.setItem('saved_login_email', email) } catch {}
                   login(data.access_token, data.user)
-                  navigate('/dashboard', { replace: true })
+                  navigate(getPostAuthDestination(), { replace: true })
                   return
                 } catch {
                   try {
@@ -395,7 +464,7 @@ export default function Login() {
                     })
                     try { localStorage.setItem('saved_login_email', email) } catch {}
                     login(data.access_token, data.user)
-                    navigate('/dashboard', { replace: true })
+                    navigate(getPostAuthDestination(), { replace: true })
                     return
                   } catch (regErr) {
                     // Existing user who originally registered with a manual password
@@ -435,7 +504,7 @@ export default function Login() {
                         if (meRes?.data?.email) {
                           try { localStorage.setItem('saved_login_email', email) } catch {}
                           login(tok, meRes.data)
-                          navigate('/dashboard', { replace: true })
+                          navigate(getPostAuthDestination(), { replace: true })
                           return
                         }
                       } catch {}
@@ -485,7 +554,7 @@ export default function Login() {
       const { data } = await client.post('/auth/login', { email, password })
       try { localStorage.setItem('saved_login_email', email) } catch {}
       login(data.access_token, data.user)
-      navigate('/dashboard', { replace: true })
+      navigate(getPostAuthDestination(), { replace: true })
     } catch (loginErr) {
       // If a brand-new user typed their email + password on the Sign In tab instead of Create Account,
       // automatically try registering them if the password is >= 6 characters
@@ -500,7 +569,7 @@ export default function Login() {
           })
           try { localStorage.setItem('saved_login_email', email) } catch {}
           login(data.access_token, data.user)
-          navigate('/dashboard', { replace: true })
+          navigate(getPostAuthDestination(), { replace: true })
           return
         } catch {
           // If email already exists with a different password, show the original login error
@@ -534,7 +603,7 @@ export default function Login() {
       const { data } = await client.post('/auth/register', { ...rf, name, email })
       try { localStorage.setItem('saved_login_email', email) } catch {}
       login(data.access_token, data.user)
-      navigate('/dashboard', { replace: true })
+      navigate(getPostAuthDestination(), { replace: true })
     } catch (e) {
       setErr(e.response?.data?.detail || 'Registration failed')
     }
@@ -582,40 +651,44 @@ export default function Login() {
             <BrandLogo size="md" />
           </Link>
 
-          {/* Crawl-Friendly Topic Cluster & Section Navigation */}
-          <nav aria-label="Primary Navigation" className="hidden xl:flex items-center gap-6 text-xs font-semibold text-slate-300">
-            <a href="#interactive-matcher" className="hover:text-blue-400 transition">
-              Live CV Matcher Demo
+          {/* Clean Centered Pill Navigation — Never Wraps */}
+          <nav
+            aria-label="Primary Navigation"
+            className="hidden lg:flex items-center gap-1 p-1 rounded-2xl bg-slate-900/60 border border-white/[0.08] text-xs font-bold text-slate-300 whitespace-nowrap"
+          >
+            <a
+              href="#live-app-test"
+              className="px-3.5 py-1.5 rounded-xl hover:bg-white/[0.06] hover:text-blue-400 transition flex items-center gap-1.5"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Live Search</span>
             </a>
-            <a href="#ats-engine" className="hover:text-blue-400 transition">
-              6-Factor ATS Engine
+            <a
+              href="#interactive-matcher"
+              className="px-3.5 py-1.5 rounded-xl hover:bg-white/[0.06] hover:text-blue-400 transition"
+            >
+              CV Matcher
             </a>
-            <Link to="/linkedin-recruiter-posts" className="hover:text-blue-400 transition">
-              LinkedIn Post Radar
-            </Link>
-            <Link to="/ai-cover-letter-generator" className="hover:text-blue-400 transition">
-              AI Cover Letters
-            </Link>
-            <Link to="/job-application-tracker" className="hover:text-blue-400 transition">
-              Auto Job Tracker
-            </Link>
-            <a href="#faq" className="hover:text-blue-400 transition">
+            <a
+              href="#ats-engine"
+              className="px-3.5 py-1.5 rounded-xl hover:bg-white/[0.06] hover:text-blue-400 transition"
+            >
+              ATS Engine
+            </a>
+            <a
+              href="#faq"
+              className="px-3.5 py-1.5 rounded-xl hover:bg-white/[0.06] hover:text-blue-400 transition"
+            >
               FAQ
-            </a>
-            <a href="/privacy.html" className="hover:text-blue-400 transition">
-              Privacy Policy
             </a>
           </nav>
 
-          <div className="flex items-center gap-2.5 shrink-0">
-            <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              8-Layer AI Engine Live
-            </span>
+          <div className="flex items-center gap-2.5 shrink-0 whitespace-nowrap">
+            <ThemeToggle />
             <button
               type="button"
               onClick={() => scrollToAuth('login')}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-white/[0.06] border border-white/[0.08] transition cursor-pointer"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-white/[0.06] border border-white/[0.08] transition cursor-pointer"
             >
               Sign In
             </button>
@@ -631,6 +704,124 @@ export default function Login() {
       </header>
 
       <main className="flex-1 relative z-10">
+        {/* LIVE INTERACTIVE APP TEST WORKBENCH — AT THE VERY TOP (Try Formal Job Boards & LinkedIn Post Hunter Before Signing Up) */}
+        <section id="live-app-test" className="max-w-7xl mx-auto px-4 sm:px-8 pt-8 pb-12 border-b border-white/[0.06]">
+          <div className="text-center max-w-3xl mx-auto mb-6">
+            <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 mb-3">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              Try the Real App Live — No Account Required to Search
+            </span>
+            <h1 className="text-2xl sm:text-4xl xl:text-5xl font-black tracking-tight text-white">
+              Search <span className="text-gradient-blue">Live Job Boards &amp; Recruiter Posts</span> Right Now
+            </h1>
+            <p className="text-slate-300 text-xs sm:text-sm mt-2.5 leading-relaxed">
+              Test our live scraper across LinkedIn, Indeed, Glassdoor &amp; ZipRecruiter—or mine hidden LinkedIn hiring posts. Once your results are found, create a free account in 1 click to unlock full details, verified recruiter emails, and 100% ATS CV tailoring.
+            </p>
+          </div>
+
+          {/* Segmented Mode Switcher: Formal Job Boards vs LinkedIn Recruiter Posts */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-900/60 border border-slate-800/90 p-2 rounded-2xl max-w-4xl mx-auto mb-6">
+            <button
+              type="button"
+              onClick={() => {
+                setTestTab('job_boards')
+                try { sessionStorage.setItem('guest_active_tab', 'job_boards') } catch {}
+              }}
+              className={`flex items-center gap-3.5 p-3.5 rounded-xl text-left transition cursor-pointer ${
+                testTab === 'job_boards'
+                  ? 'bg-gradient-to-r from-blue-600/25 to-indigo-600/20 border border-blue-500/40 shadow-lg shadow-blue-950/50'
+                  : 'hover:bg-slate-800/50 border border-transparent opacity-75 hover:opacity-100'
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                testTab === 'job_boards'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                  : 'bg-slate-800 text-slate-400'
+              }`}>
+                <Layers size={19} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-white text-sm">Formal Job Boards</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold">
+                    LinkedIn · Indeed · Glassdoor
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                  Scrape live job listings &amp; preview real matches
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setTestTab('linkedin_posts')
+                try { sessionStorage.setItem('guest_active_tab', 'linkedin_posts') } catch {}
+              }}
+              className={`flex items-center gap-3.5 p-3.5 rounded-xl text-left transition cursor-pointer ${
+                testTab === 'linkedin_posts'
+                  ? 'bg-gradient-to-r from-purple-600/25 to-blue-600/20 border border-purple-500/40 shadow-lg shadow-purple-950/50'
+                  : 'hover:bg-slate-800/50 border border-transparent opacity-75 hover:opacity-100'
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                testTab === 'linkedin_posts'
+                  ? 'bg-gradient-to-br from-purple-600 to-blue-600 text-white shadow-md shadow-purple-600/30'
+                  : 'bg-slate-800 text-slate-400'
+              }`}>
+                <Users size={19} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-white text-sm">LinkedIn Recruiter Posts</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold">
+                    Direct Emails · Hidden Market
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                  Mine hiring managers posting open roles with direct emails
+                </p>
+              </div>
+            </button>
+          </div>
+
+          {/* Live App Component Container */}
+          <div className="max-w-6xl mx-auto">
+            {testTab === 'job_boards' ? (
+              <JobBoardScraper
+                jobs={guestJobs}
+                loading={guestLoading}
+                searchMeta={guestMeta}
+                onSearch={handleGuestBoardSearch}
+                onSaveJob={() => setAuthGateReason('Create a Free Account to Save Jobs to Your Kanban Board')}
+                onTailorJob={() => setAuthGateReason('Create a Free Account to Tailor Your CV to 100% ATS Match')}
+                onOpenDetail={() => setAuthGateReason('Create a Free Account to View Detailed 6-Factor Breakdown')}
+                isJobApplied={() => false}
+                isJobSaved={() => false}
+                onJobApplied={() => {}}
+                onSwitchToPosts={(roleStr) => {
+                  if (roleStr) {
+                    try { sessionStorage.setItem('guest_hunter_role', roleStr) } catch {}
+                  }
+                  setTestTab('linkedin_posts')
+                }}
+              />
+            ) : (
+              <LinkedInPostHunter
+                cvUploaded={false}
+                onTailor={() => setAuthGateReason('Create a Free Account to Tailor Your CV to 100% ATS Match')}
+              />
+            )}
+          </div>
+        </section>
+
+        <AuthGateModal
+          open={Boolean(authGateReason)}
+          title={authGateReason || 'Create a Free Account to Unlock Your Search Results'}
+          onClose={() => setAuthGateReason(null)}
+        />
+
         {/* ABOVE-THE-FOLD HERO + AUTHENTICATION WORKBENCH (Visible on Mobile & Desktop for Google Mobile-First Indexing) */}
         <section
           aria-labelledby="hero-heading"
@@ -665,10 +856,31 @@ export default function Login() {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
-              className="text-slate-300 text-sm sm:text-base leading-relaxed mb-7 max-w-2xl"
+              className="text-slate-300 text-sm sm:text-base leading-relaxed mb-5 max-w-2xl"
             >
               {seoCfg.heroSub || SEO_ROUTE_CONFIG['/'].heroSub}
             </motion.p>
+
+            {/* Quick Live App Test Call-to-Action Strip */}
+            <div className="flex flex-wrap items-center gap-3 mb-7">
+              <button
+                type="button"
+                onClick={() => scrollToLiveTest('job_boards')}
+                className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/25 flex items-center gap-2 transition cursor-pointer"
+              >
+                <Search size={15} />
+                <span>Test Live Job Board Scraper</span>
+                <ArrowRight size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToLiveTest('linkedin_posts')}
+                className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold bg-purple-600/20 hover:bg-purple-600/30 text-purple-200 border border-purple-500/40 flex items-center gap-2 transition cursor-pointer"
+              >
+                <Radar size={15} className="text-purple-400" />
+                <span>Test LinkedIn Recruiter Post Hunter</span>
+              </button>
+            </div>
 
             {/* Feature Stack */}
             <div className="space-y-3 mb-7">
@@ -805,7 +1017,7 @@ export default function Login() {
                       whileTap={{ scale: 0.98 }}
                       onClick={doGoogleAuth}
                       disabled={googleBusy || busy}
-                      className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md cursor-pointer disabled:opacity-50"
+                      className="w-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-900 font-bold py-3 px-4 rounded-xl transition text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-sm cursor-pointer disabled:opacity-50"
                     >
                       {googleBusy ? (
                         <>
@@ -921,7 +1133,7 @@ export default function Login() {
                       whileTap={{ scale: 0.98 }}
                       onClick={doGoogleAuth}
                       disabled={googleBusy || busy}
-                      className="w-full bg-white hover:bg-slate-100 text-slate-900 font-bold py-3 px-4 rounded-xl transition text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md cursor-pointer disabled:opacity-50"
+                      className="w-full bg-white hover:bg-slate-100 border border-slate-200 text-slate-900 font-bold py-3 px-4 rounded-xl transition text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-sm cursor-pointer disabled:opacity-50"
                     >
                       {googleBusy ? (
                         <>

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { RotateCcw, Search, Sparkles, Link2, Radar, ShieldCheck, Globe, Cpu } from 'lucide-react'
 import client, { getCached } from '../api/client.js'
+import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { DEFAULT_POST_FILTERS } from '../constants/searchConstants.js'
 import {
@@ -26,6 +27,7 @@ import TailorCvModal from './modals/TailorCvModal.jsx'
 import SmtpPromptModal from './modals/SmtpPromptModal.jsx'
 import BatchApplyModal from './modals/BatchApplyModal.jsx'
 import LinkedInConnectModal from './modals/LinkedInConnectModal.jsx'
+import { GuestBlurGate } from './modals/AuthGateModal.jsx'
 
 export default function LinkedInPostHunter({
   initialRole = 'Flutter Developer',
@@ -34,22 +36,42 @@ export default function LinkedInPostHunter({
   onTailor
 }) {
   const toast = useToast()
+  const { isAuth } = useAuth()
 
   // Search Query State
-  const [role, setRole] = useState(initialRole || '')
+  const [role, setRole] = useState(() => sessionStorage.getItem('guest_hunter_role') || initialRole || '')
   const [selectedLocations, setSelectedLocations] = useState(['Worldwide'])
   const [showLocationPicker, setShowLocationPicker] = useState(false)
 
   // Layout & Filter State
   const [viewMode, setViewMode] = useState('split') // 'split' | 'cards'
   const [postFilters, setPostFilters] = useState(DEFAULT_POST_FILTERS)
-  const [selectedPostId, setSelectedPostId] = useState(null)
+  const [selectedPostId, setSelectedPostId] = useState(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('guest_linkedin_posts') || '[]')
+      return saved[0]?.id || null
+    } catch {
+      return null
+    }
+  })
 
   // Search Lifecycle & Pagination
   const [loading, setLoading] = useState(false)
   const [cvAnalyzing, setCvAnalyzing] = useState(false)
-  const [posts, setPosts] = useState([])
-  const [searched, setSearched] = useState(false)
+  const [posts, setPosts] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('guest_linkedin_posts') || '[]')
+    } catch {
+      return []
+    }
+  })
+  const [searched, setSearched] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('guest_linkedin_posts') || '[]').length > 0
+    } catch {
+      return false
+    }
+  })
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -76,8 +98,12 @@ export default function LinkedInPostHunter({
   const observerTargetRef = useRef(null)
   const cardsObserverTargetRef = useRef(null)
 
-  // Sync LinkedIn Session Status
+  // Sync LinkedIn Session Status (only for authenticated users)
   useEffect(() => {
+    if (!isAuth) {
+      setIsLinkedInConnected(false)
+      return
+    }
     const localCookie = (localStorage.getItem('linkedin_li_at') || '').trim()
     if (localCookie) {
       setIsLinkedInConnected(true)
@@ -87,16 +113,17 @@ export default function LinkedInPostHunter({
         setIsLinkedInConnected(true)
       }
     }).catch(() => {})
-  }, [])
+  }, [isAuth])
 
   // Load Tracker Applications to match applied/saved status
   useEffect(() => {
+    if (!isAuth) return
     client.get('/tracker').then(r => {
       const { applied, saved } = buildTrackerLookupSets(r.data || [])
       setTrackerAppliedKeys(applied)
       setTrackerSavedKeys(saved)
     }).catch(() => {})
-  }, [])
+  }, [isAuth])
 
   // Listen for CommandPalette / Watchlist quick-hunt events
   useEffect(() => {
@@ -168,6 +195,11 @@ export default function LinkedInPostHunter({
       if (foundPosts.length > 0) {
         setSelectedPostId(foundPosts[0].id)
       }
+      try {
+        sessionStorage.setItem('guest_linkedin_posts', JSON.stringify(foundPosts))
+        sessionStorage.setItem('guest_hunter_role', targetRole)
+        sessionStorage.setItem('guest_active_tab', 'linkedin_posts')
+      } catch {}
 
       // Sync applied/saved tags
       const newApplied = new Set()
@@ -369,7 +401,7 @@ export default function LinkedInPostHunter({
         onSearch={handleSearch}
         loading={loading}
         isLinkedInConnected={isLinkedInConnected}
-        onOpenLinkedInConnect={() => setShowLinkedInConnect(true)}
+        onOpenLinkedInConnect={isAuth ? () => setShowLinkedInConnect(true) : undefined}
       />
 
       {/* 2. Filter & View Controls */}
@@ -578,55 +610,57 @@ export default function LinkedInPostHunter({
 
       {/* 4. Results: Split Workbench vs Cards Grid */}
       {!loading && filteredPosts.length > 0 && (
-        viewMode === 'split' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-            {/* Left Master Feed (5 cols) */}
-            <div className="lg:col-span-5">
-              <PostSplitFeed
-                posts={filteredPosts}
-                selectedPostId={activePost?.id}
-                onSelectPost={id => setSelectedPostId(id)}
-                isPostApplied={isPostApplied}
-                loadingMore={loadingMore}
-                hasMore={hasMore}
-                page={page}
-                onLoadMore={handleLoadMore}
-                observerTargetRef={observerTargetRef}
-              />
-            </div>
+        <GuestBlurGate count={filteredPosts.length} itemLabel="Live Recruiter Posts & Verified Emails">
+          {viewMode === 'split' ? (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              {/* Left Master Feed (5 cols) */}
+              <div className="lg:col-span-5">
+                <PostSplitFeed
+                  posts={filteredPosts}
+                  selectedPostId={activePost?.id}
+                  onSelectPost={id => setSelectedPostId(id)}
+                  isPostApplied={isPostApplied}
+                  loadingMore={loadingMore}
+                  hasMore={hasMore}
+                  page={page}
+                  onLoadMore={handleLoadMore}
+                  observerTargetRef={observerTargetRef}
+                />
+              </div>
 
-            {/* Right Active Detail Workbench (7 cols) */}
-            <div className="lg:col-span-7">
-              <PostDetailWorkbench
-                post={activePost}
-                isApplied={isPostApplied(activePost)}
-                isSaved={isPostSaved(activePost)}
-                applying={applyingPostId === activePost?.id}
-                onAutoApply={p => setAutoApplyTarget(p)}
-                onTailor={p => (onTailor ? onTailor(p) : setTailorTarget(p))}
-                onOpenInMail={p => setInmailTarget(p)}
-                onOpenReader={p => setReaderTarget(p)}
-                onSave={handleSave}
-              />
+              {/* Right Active Detail Workbench (7 cols) */}
+              <div className="lg:col-span-7">
+                <PostDetailWorkbench
+                  post={activePost}
+                  isApplied={isPostApplied(activePost)}
+                  isSaved={isPostSaved(activePost)}
+                  applying={applyingPostId === activePost?.id}
+                  onAutoApply={p => setAutoApplyTarget(p)}
+                  onTailor={p => (onTailor ? onTailor(p) : setTailorTarget(p))}
+                  onOpenInMail={p => setInmailTarget(p)}
+                  onOpenReader={p => setReaderTarget(p)}
+                  onSave={handleSave}
+                />
+              </div>
             </div>
-          </div>
-        ) : (
-          <PostCardGrid
-            posts={filteredPosts}
-            isPostApplied={isPostApplied}
-            isPostSaved={isPostSaved}
-            applyingPostId={applyingPostId}
-            onAutoApply={p => setAutoApplyTarget(p)}
-            onTailor={p => (onTailor ? onTailor(p) : setTailorTarget(p))}
-            onOpenInMail={p => setInmailTarget(p)}
-            onSave={handleSave}
-            loadingMore={loadingMore}
-            hasMore={hasMore}
-            page={page}
-            onLoadMore={handleLoadMore}
-            cardsObserverTargetRef={cardsObserverTargetRef}
-          />
-        )
+          ) : (
+            <PostCardGrid
+              posts={filteredPosts}
+              isPostApplied={isPostApplied}
+              isPostSaved={isPostSaved}
+              applyingPostId={applyingPostId}
+              onAutoApply={p => setAutoApplyTarget(p)}
+              onTailor={p => (onTailor ? onTailor(p) : setTailorTarget(p))}
+              onOpenInMail={p => setInmailTarget(p)}
+              onSave={handleSave}
+              loadingMore={loadingMore}
+              hasMore={hasMore}
+              page={page}
+              onLoadMore={handleLoadMore}
+              cardsObserverTargetRef={cardsObserverTargetRef}
+            />
+          )}
+        </GuestBlurGate>
       )}
 
       {/* 5. Modals */}

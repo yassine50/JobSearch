@@ -33,7 +33,6 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
-from urllib.parse import quote_plus, urlparse
 
 import requests
 

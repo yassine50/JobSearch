@@ -9,19 +9,16 @@ End-to-end Senior CV Pipeline:
 """
 from __future__ import annotations
 
-import copy
 import re
 from typing import Dict, List, Optional, Tuple
 
 from cv_matcher import compute_match
 
-from .analyze import career_stage, classify_type, diagnose
+from .analyze import diagnose
 from .enhance import enhance, group_skills
 from .extract import extract_document
 from .lexicon import (
     BUZZWORDS,
-    CATEGORY_FR,
-    CATEGORY_ORDER,
     OBJECTIVE_RE,
     TECH,
     canonical_tech,
@@ -113,6 +110,58 @@ def _default_headline_from_cv(cv: CV, diag_profile: Dict) -> str:
     return (mapping_fr if fr else mapping_en).get(cv_type, "Software Engineer")
 
 
+_SOFTWARE_ROLE_RE = re.compile(
+    r"\b(developer|engineer|programmer|architect|devops|sre|data\s+scientist|machine\s+learning|full[- ]?stack|"
+    r"front[- ]?end|back[- ]?end|mobile|software|web|qa|tester|développeur|ingénieur)\b",
+    re.I,
+)
+
+
+def _is_target_role_compatible(cv: CV, clean_target: str) -> bool:
+    """
+    Returns True if `clean_target` is a believable role headline for `cv`.
+    Prevents turning a Flutter Engineer into 'Data Entry Clerk' or an Admin/IT Support CV
+    with zero mobile skills into 'Dart/Flutter Developer'.
+    """
+    if not clean_target:
+        return False
+    cv_blob = (cv.raw_text + " " + " ".join(cv.skills) + " " + (cv.headline or "")).lower()
+    target_low = clean_target.lower()
+
+    # Check if the target title names specific canonical technologies (e.g. "Dart/Flutter Developer", "Python Developer")
+    ignore_tech_tokens = {"it", "web", "ui", "ux", "qa", "ai", "ml", "rest", "api", "cloud", "data"}
+    target_techs = [
+        canonical_tech(w)
+        for w in re.split(r"[\s/|,&()+-]+", clean_target)
+        if w and w.lower() not in ignore_tech_tokens and canonical_tech(w)
+    ]
+    if target_techs:
+        # Candidate must have at least one of the named technologies OR a closely related technology in the same category
+        if any(t.lower() in cv_blob for t in target_techs if t):
+            return True
+        target_cats = {tech_category(t) for t in target_techs if t and t in TECH}
+        cv_cats = {tech_category(s) for s in cv.skills if s in TECH}
+        if "Mobile" in target_cats and "Mobile" not in cv_cats:
+            return False
+        if not (target_cats & cv_cats):
+            return False
+
+    # If target is a software/engineering role, check if candidate has software/coding background
+    if _SOFTWARE_ROLE_RE.search(clean_target):
+        canon_count = sum(1 for s in cv.skills if s in TECH)
+        return canon_count >= 2 or bool(_SOFTWARE_ROLE_RE.search(cv.headline or ""))
+
+    # Non-software role (e.g. "Data Entry Clerk", "IT Support Specialist", "Content Moderator", "Customer Support")
+    stop = {
+        "senior", "junior", "lead", "specialist", "associate", "representative", "officer",
+        "coordinator", "assistant", "manager", "intern", "professional", "general", "data",
+    }
+    core_words = [w for w in re.findall(r"[a-zA-ZÀ-ÿ]{3,}", target_low) if w not in stop]
+    if core_words and all(w in cv_blob for w in core_words):
+        return True
+    return False
+
+
 def _select_headline(cv: CV, diag_profile: Dict, job_title: str, mode: str) -> str:
     clean_target = _clean_role_title(job_title, cv.lang)
     fallback = _default_headline_from_cv(cv, diag_profile)
@@ -120,7 +169,7 @@ def _select_headline(cv: CV, diag_profile: Dict, job_title: str, mode: str) -> s
         return fallback
 
     if mode == "full_match":
-        if len(clean_target) <= 56:
+        if len(clean_target) <= 56 and _is_target_role_compatible(cv, clean_target):
             return clean_target
         return fallback
 
@@ -135,7 +184,7 @@ def _select_headline(cv: CV, diag_profile: Dict, job_title: str, mode: str) -> s
         "specialist", "développeur", "ingénieur", "logiciel", "web", "full", "stack", "fullstack",
     }
     core = [w for w in re.findall(r"[a-zA-ZÀ-ÿ+#.]+", filtered.lower()) if w not in generic and len(w) > 1]
-    if filtered and all(w in cv_blob for w in core):
+    if filtered and all(w in cv_blob for w in core) and _is_target_role_compatible(cv, filtered):
         return filtered
     return fallback
 
@@ -147,22 +196,32 @@ def _craft_summary(
     job_skills: List[str],
     matched_skills: List[str],
     mode: str,
+    bridged: Optional[List[str]] = None,
+    focus_phrases: Optional[List[str]] = None,
+    soft_evidence: Optional[List[str]] = None,
 ) -> Tuple[str, List[str]]:
     """
     Produces a clean, factual 2–3 sentence executive summary in the CV's language.
     Replaces weak/objective/first-person summaries or missing summaries while preserving
-    already strong factual summaries (such as Yassine's).
+    already strong factual summaries (such as Yassine's or Amel's).
+    The summary only ever claims skills that genuinely appear in the candidate's CV
+    (bridged JD keywords live in the skills section, never in "Strong command of ...").
     """
     fr = cv.lang == "fr"
     own = (cv.summary or "").strip()
     notes: List[str] = []
 
+    bridged_low = {b.lower() for b in (bridged or [])}
+    matched_low = {m.lower() for m in matched_skills}
     priority_display: List[str] = []
-    pool = (job_skills if mode == "full_match" else matched_skills) + cv.skills
+    jd_order = [s for s in job_skills if s.lower() in matched_low] or list(matched_skills)
+    pool = jd_order + [s for s in cv.skills if s.lower() not in bridged_low]
     for s in pool:
         if not s or s.lower() in _IGNORE_SUMMARY_SKILLS:
             continue
-        c = canonical_tech(s) or s
+        c = _display_skill(s)
+        if c.lower() in bridged_low:
+            continue
         if c not in priority_display:
             priority_display.append(c)
         if len(priority_display) >= 6:
@@ -173,8 +232,8 @@ def _craft_summary(
         not own
         or len(own.split()) < 14
         or bool(OBJECTIVE_RE.search(own))
-        or bool(BUZZWORDS.search(own))
         or has_first_person
+        or (bool(BUZZWORDS.search(own)) and len(own.split()) < 22)
     )
 
     if not is_weak_summary:
@@ -187,11 +246,11 @@ def _craft_summary(
         ]
         if sents:
             m_lead = re.match(
-                r"^(?:Experienced\s+|Senior\s+)?(?:Mobile|Flutter|Full[- ]?Stack|Software|Frontend|Backend|Web|Application)\s+(?:engineer|developer|specialist|architect)(\s+with\s+.+)$",
+                r"^(?:Experienced\s+|Senior\s+)?(?:Mobile|Flutter|Full[- ]?Stack|Software|Frontend|Backend|Web|Application)\s+(?:engineer|developer|specialist|architect)(\s+(?:with|who)\s+.+)$",
                 sents[0],
                 re.I,
             )
-            if m_lead and headline and not fr:
+            if m_lead and headline and not fr and _SOFTWARE_ROLE_RE.search(headline) and len(headline.split()) <= 5:
                 sents[0] = f"{headline}{m_lead.group(1)}"
                 notes.append(f"Aligned summary opening title with target role ({headline}).")
             for idx_s, s in enumerate(sents):
@@ -208,47 +267,90 @@ def _craft_summary(
                 clause = f"Core technical focus includes {', '.join(unmentioned[:-1])} and {unmentioned[-1]}."
             sents.append(clause)
             notes.append(f"Integrated target role keywords ({', '.join(unmentioned)}) into the Executive Summary.")
-        return " ".join(sents).strip(), notes
+        return _append_focus(" ".join(sents).strip(), focus_phrases, fr, notes), notes
 
     # Build a factual summary grounded in the candidate's real history
-    job_m = diag_profile.get("job_months", 0)
-    intern_m = diag_profile.get("internship_months", 0)
     years = diag_profile.get("years_experience", 0)
     n_roles = len(cv.experience)
     n_projs = len(cv.projects)
     top_stack = ", ".join(priority_display[:5]) if priority_display else ("Java, Python, JavaScript" if not fr else "Java, Python, JavaScript")
+    is_sw = bool(_SOFTWARE_ROLE_RE.search(headline))
+    soft_lead = False
+    if not is_sw:
+        # Non-software target (support, admin, operations...): never lead with unrelated programming languages;
+        # cite JD-relevant skills, then soft skills the CV itself evidences.
+        job_low = {j.lower() for j in list(job_skills) + list(matched_skills)}
+        rel_items = [s for s in priority_display if s.lower() in job_low][:3]
+        soft_items = [_phrase_inline(s) for s in (soft_evidence or []) if s not in rel_items]
+        strengths = rel_items + soft_items[:max(0, 4 - len(rel_items))]
+        if strengths:
+            soft_lead = not rel_items
+            top_stack = strengths[0] if len(strengths) == 1 else f"{', '.join(strengths[:-1])} and {strengths[-1]}"
+    proj_fr = "1 projet réalisé" if n_projs == 1 else f"{n_projs} projets réalisés"
+    proj_en = "1 end-to-end technical project" if n_projs == 1 else f"{n_projs} end-to-end technical projects"
 
     if fr:
         if years >= 1.5:
-            exp_phrase = f"fort de {int(round(years))}+ ans d'expérience dans la conception et le développement d'applications"
+            exp_phrase = f"fort de {int(round(years))}+ ans d'expérience dans la conception et le développement d'applications" if is_sw else f"fort de {int(round(years))}+ ans d'expérience professionnelle opérationnelle"
         elif n_roles >= 2:
-            exp_phrase = f"fort de {n_roles} expériences professionnelles et stages significatifs en développement logiciel"
+            exp_phrase = f"fort de {n_roles} expériences professionnelles et stages significatifs"
         elif n_roles == 1 and n_projs >= 1:
-            exp_phrase = f"avec une expérience pratique acquise en stage et à travers {n_projs} projets techniques"
+            exp_phrase = f"avec une expérience pratique acquise en entreprise et à travers {proj_fr}"
         else:
             exp_phrase = "spécialisé dans la conception et le développement d'applications modernes"
         summary = (
             f"{headline} {exp_phrase}. "
-            f"Maîtrise technique de {top_stack}, avec une approche orientée qualité du code, "
-            f"architecture modulaire et livraison de solutions fiables en production."
+            f"Maîtrise technique de {top_stack}, avec une approche orientée qualité, "
+            f"rigueur d'exécution et livraison de solutions fiables."
         )
         notes.append("Rédaction d'un profil professionnel factuel et aligné ATS (remplaçant l'objectif générique).")
     else:
         if years >= 1.5:
-            exp_phrase = f"with {int(round(years))}+ years of hands-on experience designing, building, and shipping production software"
+            exp_phrase = (
+                f"with {int(round(years))}+ years of hands-on experience designing, building, and shipping production software"
+                if is_sw
+                else f"with {int(round(years))}+ years of hands-on professional experience delivering reliable technical and operational solutions"
+            )
         elif n_roles >= 2:
-            exp_phrase = f"with hands-on experience across {n_roles} software engineering roles and internships"
+            exp_phrase = (
+                f"with hands-on experience across {n_roles} software engineering roles and internships"
+                if is_sw
+                else f"with hands-on experience across {n_roles} professional roles"
+            )
         elif n_roles == 1 and n_projs >= 1:
-            exp_phrase = f"with practical experience across industry internship work and {n_projs} end-to-end engineering projects"
+            exp_phrase = f"with practical experience across industry internship work and {proj_en}"
         else:
             exp_phrase = "specializing in full-lifecycle application development and clean software architecture"
         summary = (
             f"{headline} {exp_phrase}. "
-            f"Strong technical command of {top_stack}, focused on scalable architecture, "
-            f"clean maintainable code, and reliable end-to-end delivery."
+            + (f"Known for strong {top_stack}, with a focus on high-quality execution, "
+               f"problem solving, and reliable end-to-end delivery."
+               if soft_lead else
+               f"Strong command of {top_stack}, focused on high-quality execution, "
+               f"problem solving, and reliable end-to-end delivery.")
         )
         notes.append(f"Generated factual executive summary tailored to {headline}.")
-    return summary, notes
+    return _append_focus(summary, focus_phrases, fr, notes), notes
+
+
+def _phrase_inline(p: str) -> str:
+    """'Scalable ETL Pipelines' -> 'scalable ETL pipelines' for use inside a sentence."""
+    return " ".join(w if (w.isupper() or any(c.isupper() for c in w[1:])) else w.lower() for w in p.split())
+
+
+def _append_focus(summary: str, phrases: Optional[List[str]], fr: bool, notes: List[str]) -> str:
+    """Mirror the JD's own responsibility wording in one closing sentence (biggest lever on ATS similarity)."""
+    if not phrases:
+        return summary
+    low = summary.lower()
+    fresh = [p for p in phrases if p.lower() not in low][:4]
+    if not fresh:
+        return summary
+    items = [_phrase_inline(p) for p in fresh]
+    joined = items[0] if len(items) == 1 else f"{', '.join(items[:-1])} {'et' if fr else 'and'} {items[-1]}"
+    sent = (f"Orienté vers : {joined}." if fr else f"Focused on {joined}.")
+    notes.append(f"Mirrored job-description wording in the summary ({', '.join(fresh)}).")
+    return f"{summary.rstrip()} {sent}"
 
 
 def _build_tailored_skill_groups(
@@ -258,66 +360,72 @@ def _build_tailored_skill_groups(
     mode: str,
 ) -> Tuple[List[Tuple[str, List[str]]], List[str]]:
     """
-    Organizes the candidate's skills into clean recruiter categories, expanding compound
-    testing phrases and (in full_match mode) bridging missing JD tech skills into the
-    appropriate category.
+    Organizes the candidate's skills into clean recruiter categories, preserving explicit
+    source categories (including non-developer/domain categories in 1- or 2-column CVs)
+    and deduplicating case-insensitively.
     """
-    fr = cv.lang == "fr"
     has_clean_source_groups = (
-        len(cv.skill_groups) >= 3
-        and all(bool(cat and cat.strip()) for cat, _ in cv.skill_groups)
-        and cv.meta.get("layout") != "two-column"
+        len(cv.skill_groups) >= 2
+        and all(bool(cat and cat.strip() and items) for cat, items in cv.skill_groups)
     )
 
     added: List[str] = []
+    bridge_budget = 28 if mode == "full_match" else 6   # full-match: every JD skill gets a home
 
     if has_clean_source_groups:
         groups: Dict[str, List[str]] = {}
+        seen_global: set[str] = set()
         for cat, items in cv.skill_groups:
             expanded: List[str] = []
             for it in items:
-                m = re.fullmatch(r"(\w+)\s+and\s+(\w+)\s+(testing|development|design)", it.strip(), re.I)
-                if m:
-                    expanded.extend([
-                        f"{m.group(1).title()} {m.group(3).title()}",
-                        f"{m.group(2).title()} {m.group(3).title()}",
-                    ])
-                else:
-                    expanded.append(canonical_tech(it) or it)
+                it_clean = it.strip()
+                if not it_clean:
+                    continue
+                disp = it_clean if it_clean.lower() == "material 3" else (canonical_tech(it_clean) or it_clean)
+                key = disp.lower().lstrip(".")
+                if key not in seen_global:
+                    seen_global.add(key)
+                    expanded.append(disp)
             rel = [x for x in expanded if _relevance(x, keywords) > 0]
             rest = [x for x in expanded if x not in rel]
             groups[cat] = sorted(rel, key=lambda x: -_relevance(x, keywords)) + rest
 
         if mode == "full_match":
             for s in missing_tech:
-                disp = canonical_tech(s) or s.title()
-                if any(disp.lower() == x.lower() or disp.lower() in x.lower() for items in groups.values() for x in items):
+                if len(added) >= bridge_budget:
+                    break
+                disp = _display_skill(s)
+                key = disp.lower().lstrip(".")
+                if key in seen_global or any(re.search(r"(?<![\w.])" + re.escape(key) + r"(?![\w])", x) for x in seen_global):
                     continue
                 target_cat = _match_existing_category(disp, list(groups.keys()))
                 groups.setdefault(target_cat, [])
                 n_rel = sum(1 for x in groups[target_cat] if _relevance(x, keywords) > 0)
                 groups[target_cat].insert(n_rel, disp)
+                seen_global.add(key)
                 added.append(disp)
 
         sorted_groups = sorted(
-            groups.items(),
+            [(c, itms) for c, itms in groups.items() if itms],
             key=lambda kv: (
-                "also familiar" in kv[0].lower() or "additional" in kv[0].lower() or "autres" in kv[0].lower(),
+                "also familiar" in kv[0].lower() or "additional" in kv[0].lower() or "autres" in kv[0].lower() or "other" in kv[0].lower(),
                 -sum(_relevance(i, keywords) for i in kv[1]),
             ),
         )
         return sorted_groups, added
 
-    # Otherwise, build clean recruiter categories from canonical cv.skills
+    # Otherwise, build clean recruiter categories from cv.skills
     all_skills: List[str] = []
     for s in cv.skills:
-        c = canonical_tech(s) or s
+        c = s if s.lower() == "material 3" else (canonical_tech(s) or s)
         if c and not any(c.lower().lstrip(".") == x.lower().lstrip(".") for x in all_skills):
             all_skills.append(c)
 
     if mode == "full_match":
         for s in missing_tech:
-            disp = canonical_tech(s) or s.title()
+            if len(added) >= bridge_budget:
+                break
+            disp = _display_skill(s)
             if disp and not any(disp.lower().lstrip(".") == x.lower().lstrip(".") for x in all_skills):
                 all_skills.append(disp)
                 added.append(disp)
@@ -361,7 +469,34 @@ def _match_existing_category(skill: str, cats: List[str]) -> str:
     for c in cats:
         if any(w in c.lower() for w in ("also familiar", "other", "additional", "autres")):
             return c
-    return cats[0] if cats else "Core Technologies"
+    # Never drop a framework/tool into a narrow source category like "Programming languages"
+    # or "Databases" just because it is first: use a dedicated, honest-sounding group instead.
+    if cat_std and cat_std != "Other":
+        for c in cats:
+            if c.strip().lower() == cat_std.lower():
+                return c
+    if cat_std == "Languages":
+        for c in cats:
+            if "language" in c.lower() or "langage" in c.lower():
+                return c
+    return "Additional Technologies"
+
+
+_ACRONYM_SKILLS = {"etl", "elt", "aws", "gcp", "sql", "api", "apis", "ci", "cd", "ci/cd", "bi", "ml", "ai", "nlp",
+                   "erp", "crm", "seo", "ux", "ui", "qa", "olap", "oltp", "hr", "it", "kpi", "sla", "dbt", "llm"}
+
+
+def _display_skill(s: str) -> str:
+    """Recruiter-grade casing for any skill token (canonical tech names first, then acronyms)."""
+    c = canonical_tech(s)
+    if c:
+        return c
+    s = (s or "").strip()
+    if s.lower() in _ACRONYM_SKILLS:
+        return s.upper()
+    if s.islower():
+        return " ".join(w.upper() if w in _ACRONYM_SKILLS else w.capitalize() for w in s.split())
+    return s
 
 
 def cv_to_ats_text(cv: CV, extra_competencies: Optional[List[str]] = None) -> str:
@@ -383,6 +518,9 @@ def cv_to_ats_text(cv: CV, extra_competencies: Optional[List[str]] = None) -> st
 
     if cv.summary:
         lines.extend(["", "PROFESSIONAL SUMMARY", cv.summary])
+    comps = (cv.meta or {}).get("core_competencies") or []
+    if comps:
+        lines.extend(["", "CORE COMPETENCIES", " • ".join(comps)])
 
     if cv.skill_groups:
         lines.extend(["", "TECHNICAL SKILLS"])
@@ -460,13 +598,28 @@ def analyze_and_enhance_cv(
     Returns `(raw_cv, enhanced_cv, pre_diag, changes)`.
     """
     if cv_pdf_bytes:
-        doc = extract_document(cv_pdf_bytes, filename=filename)
+        doc = extract_document(cv_pdf_bytes, filename=filename, text=cv_text or "")
     else:
-        doc = extract_document((cv_text or "").encode("utf-8"), filename="cv.txt")
+        doc = extract_document((cv_text or "").encode("utf-8"), filename="cv.txt", text=cv_text or "")
     raw_cv = parse_document(doc)
     pre_diag = diagnose(raw_cv)
     enhanced_cv, changes = enhance(raw_cv)
     return raw_cv, enhanced_cv, pre_diag, changes
+
+
+def extract_structured_cv(
+    cv_text: str = "",
+    cv_pdf_bytes: Optional[bytes] = None,
+    filename: str = "cv.pdf",
+) -> Tuple[CV, Dict]:
+    """Extract + parse a CV file and assess how trustworthy the result is: `(cv, quality)`."""
+    from .quality import assess_extraction
+    if cv_pdf_bytes:
+        doc = extract_document(cv_pdf_bytes, filename=filename, text=cv_text or "")
+    else:
+        doc = extract_document((cv_text or "").encode("utf-8"), filename="cv.txt", text=cv_text or "")
+    cv = parse_document(doc)
+    return cv, assess_extraction(doc, cv)
 
 
 def tailor_cv_pipeline(
@@ -477,23 +630,40 @@ def tailor_cv_pipeline(
     cv_pdf_bytes: Optional[bytes] = None,
     mode: str = "full_match",
     filename: str = "cv.pdf",
+    cv_override: Optional[Dict] = None,
 ) -> Dict:
     """
     Complete pre-tailoring analysis → enhancement → job tailoring → executive PDF pipeline.
     Compatible with both `tailor_cv_full_match` and `tailor_cv_honest` return schemas,
     while adding rich pre-tailoring diagnostics (`diagnosis`, `enhancements`, `quality_scores`).
+
+    `cv_override`: a user-reviewed `CV.to_dict()` payload. When given, the file is not re-parsed;
+    tailoring runs on the human-verified structure (extraction confidence = reviewed).
     """
+    from .quality import assess_extraction, cv_from_dict, output_thinness
+
     clean_role = (job_title or "").strip() or "Software Engineer"
     clean_co = (company or "").strip() or "Company"
 
-    raw_cv, cv, pre_diag, changes = analyze_and_enhance_cv(
-        cv_text=cv_text,
-        cv_pdf_bytes=cv_pdf_bytes,
-        filename=filename,
-    )
+    if cv_override:
+        raw_cv = cv_from_dict(cv_override)
+        pre_diag = diagnose(raw_cv)
+        cv, changes = enhance(raw_cv)
+        extraction_quality = assess_extraction(None, raw_cv)
+        extraction_quality.update({"reviewed": True, "level": "high", "score": max(extraction_quality["score"], 90)})
+        source_text_for_match = raw_cv.raw_text
+    else:
+        if cv_pdf_bytes:
+            doc = extract_document(cv_pdf_bytes, filename=filename, text=cv_text or "")
+        else:
+            doc = extract_document((cv_text or "").encode("utf-8"), filename="cv.txt", text=cv_text or "")
+        raw_cv = parse_document(doc)
+        extraction_quality = assess_extraction(doc, raw_cv)
+        pre_diag = diagnose(raw_cv)
+        cv, changes = enhance(raw_cv)
+        # Use layout-aware extracted text if raw_cv has richer text than legacy cv_text
+        source_text_for_match = raw_cv.raw_text if (cv_pdf_bytes and raw_cv.raw_text) else (cv_text or raw_cv.raw_text)
 
-    # Use layout-aware extracted text if raw_cv has richer text than legacy cv_text
-    source_text_for_match = raw_cv.raw_text if (cv_pdf_bytes and raw_cv.raw_text) else (cv_text or raw_cv.raw_text)
     base_score, bd = compute_match(source_text_for_match, job_description, clean_role)
 
     jd_low = (job_description or "").lower()
@@ -507,6 +677,10 @@ def tailor_cv_pipeline(
 
     job_skills.sort(key=lambda s: (s not in required, -min(jd_low.count(s.lower()), 3), _first_pos(s)))
     missing_tech = [s for s in job_skills if s in set(bd.get("missing_tech") or [])]
+    # Drop bare vendor prefixes ("apache" when "apache spark"/"apache kafka" are also required)
+    _all_named = [x.lower() for x in job_skills]
+    missing_tech = [s for s in missing_tech
+                    if not any(o != s.lower() and o.startswith(s.lower() + " ") for o in _all_named)]
     missing_soft = list(bd.get("missing_soft") or []) + list(bd.get("matched_soft") or [])
     keywords = (job_skills if mode == "full_match" else matched_tech) + [
         w for w in re.findall(r"[a-zA-ZÀ-ÿ+#.]{3,}", clean_role.lower())
@@ -548,6 +722,45 @@ def tailor_cv_pipeline(
     if len(cv.projects) > 6:
         cv.projects = cv.projects[:6]
 
+    # 4b. JD alignment: key responsibility phrases + soft skills → Core Competencies, prune off-topic noise
+    from .jdmatch import (build_core_competencies, jd_key_phrases, jd_named_tools, jd_soft_skills, pdf_text,
+                          prune_for_relevance)
+    jd_phrases = jd_key_phrases(job_description, clean_role, limit=10)
+    jd_soft = jd_soft_skills(bd, job_description)
+    competencies = build_core_competencies(jd_phrases, jd_soft, raw_cv.raw_text, mode, limit=12)
+    if competencies:
+        cv.meta = {**(cv.meta or {}), "core_competencies": competencies}
+    prune_notes = prune_for_relevance(cv, keywords + [p.lower() for p in jd_phrases], mode)
+    focus = [p for p in jd_phrases if p in competencies][:3] if mode == "full_match" else []
+
+    # 4c. Full-match: tools/platforms named in the JD that the ATS dictionary does not know (Zendesk, ITIL...)
+    if mode == "full_match":
+        have = {s.lower() for s in cv.skills} | {c.lower() for c in competencies}
+        extra_tools = [t for t in jd_named_tools(job_description, raw_cv.raw_text, clean_role, clean_co)
+                       if t.lower() not in have
+                       and not any(t.lower() in c.lower() for c in competencies)
+                       and not any(re.search(r"(?<![\w])" + re.escape(t.lower()) + r"(?![\w])", s.lower()) for s in cv.skills)]
+        if extra_tools:
+            groups = list(cv.skill_groups)
+            idx = next((i for i, (c, _) in enumerate(groups) if c.lower() == "additional technologies"), None)
+            if idx is None:
+                groups.append(("Additional Technologies", extra_tools))
+            else:
+                groups[idx] = (groups[idx][0], list(groups[idx][1]) + extra_tools)
+            cv.skill_groups = groups
+            cv.skills = cv.skills + extra_tools
+            added_skills = added_skills + extra_tools
+
+    # 4d. Most job-relevant skill category first (bridged JD tools count as relevant)
+    rel_kw = keywords + [s.lower() for s in added_skills] + [p.lower() for p in jd_phrases]
+    is_sw_role = bool(_SOFTWARE_ROLE_RE.search(cv.headline or clean_role))
+    renamed = []
+    for cat, items in cv.skill_groups:
+        if cat == "Additional Technologies" and not is_sw_role:
+            cat = "Tools & Platforms"
+        renamed.append((cat, items))
+    cv.skill_groups = sorted(renamed, key=lambda kv: -sum(1 for i in kv[1] if _relevance(i, rel_kw) > 0))
+
     # 5. Executive Summary
     cv.summary, summary_notes = _craft_summary(
         cv=cv,
@@ -556,22 +769,32 @@ def tailor_cv_pipeline(
         job_skills=job_skills,
         matched_skills=matched_tech,
         mode=mode,
+        bridged=added_skills,
+        focus_phrases=focus,
+        soft_evidence=build_core_competencies([], jd_soft, raw_cv.raw_text, "honest", limit=4),
     )
+    summary_notes = summary_notes + prune_notes
+    if competencies:
+        summary_notes.append(f"Added a Core Competencies line mirroring the job description ({len(competencies)} items).")
 
     # 6. Compute post-enhancement CV quality diagnosis
     post_diag = diagnose(cv)
     post_diag["scores"]["overall"] = max(post_diag["scores"]["overall"], pre_diag["scores"]["overall"])
 
-    # 7. Serialize to ATS text & compute new match score
-    extra_soft = [s.title() for s in missing_soft[:6]] if mode == "full_match" and missing_soft else None
-    tailored_text = cv_to_ats_text(cv, extra_competencies=extra_soft)
-    new_score, _ = compute_match(tailored_text, job_description, clean_role)
-    final_score = max(base_score, new_score)
+    # 7. Serialize to ATS text
+    tailored_text = cv_to_ats_text(cv)
 
     # 8. Render executive single-column A4 PDF
-    sec_order = diag_profile.get("section_order")
+    sec_order = list(diag_profile.get("section_order") or [
+        "summary", "skills", "experience", "projects", "education", "certifications", "awards", "activities", "languages"])
+    if competencies and "competencies" not in sec_order:
+        sec_order.insert(sec_order.index("summary") + 1 if "summary" in sec_order else 0, "competencies")
     max_pages = diag_profile.get("max_pages", 1)
     pdf_bytes = render_cv_pdf(cv, section_order=sec_order, max_pages=max_pages)
+
+    # 9. Score what the recruiter's ATS will actually read: the rendered PDF's text layer
+    scored_text = pdf_text(pdf_bytes) or tailored_text
+    final_score, final_bd = compute_match(scored_text, job_description, clean_role)
 
     safe_name = re.sub(r"[^a-zA-Z0-9]", "_", _format_name(cv.name)).strip("_") or "Candidate"
     safe_co = re.sub(r"[^a-zA-Z0-9]", "_", clean_co).strip("_") or "Company"
@@ -609,13 +832,32 @@ def tailor_cv_pipeline(
         "ats_verification": ats_verification,
     }
 
+    has_cv_content = bool(raw_cv.experience or raw_cv.projects or raw_cv.education or raw_cv.skills)
+    if not has_cv_content:
+        tips.append("Warning: Source document contained no recognizable CV sections; keeping original file.")
+
+    thin = output_thinness(raw_cv, tailored_text)
+    if thin:
+        extraction_quality["warnings"].append(thin)
+        if extraction_quality["level"] == "high" and not extraction_quality.get("reviewed"):
+            extraction_quality["level"] = "medium"
+    if extraction_quality["level"] != "high" and not extraction_quality.get("reviewed"):
+        tips.insert(0, f"Extraction confidence {extraction_quality['level'].upper()} "
+                       f"({extraction_quality['score']}/100): review the extracted CV before sending.")
+
     return {
+        "extraction_quality": extraction_quality,
+        "parsed_cv": raw_cv.to_dict(),
         "tailored_text": tailored_text,
         "pdf_bytes": pdf_bytes,
         "filename": f"CV_{safe_name}_{safe_co}.pdf",
         "original_score": base_score,
         "tailored_score": final_score,
-        "use_tailored": True,
+        "score_breakdown": {k: final_bd.get(k) for k in (
+            "tech_score", "semantic_score", "title_score", "soft_score", "domain_score", "edu_score",
+            "exp_penalty", "missing_tech", "missing_soft")},
+        "core_competencies": competencies,
+        "use_tailored": has_cv_content,
         "bridged_skills": added_skills,
         "emphasized_skills": highlighted,
         "matched_skills": highlighted,

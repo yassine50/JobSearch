@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import client from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
-import { MessageSquare, Copy, Check, ExternalLink, X, Sparkles, Loader2 } from 'lucide-react'
+import { MessageSquare, Copy, Check, ExternalLink, X, Loader2 } from 'lucide-react'
 
 export default function InMailPitchModal({ isOpen, onClose, post }) {
   const toast = useToast()

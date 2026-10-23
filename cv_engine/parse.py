@@ -28,10 +28,11 @@ PHONE_RE = re.compile(r"(?:(?:\+|00)\d{1,3}[\s.\-]?)?(?:\(\d{1,4}\)[\s.\-]?)?\d{
 URL_RE = re.compile(r"(?:https?://|www\.)[^\s,;|]+|(?:linkedin\.com|github\.com|gitlab\.com|behance\.net|dribbble\.com)/[^\s,;|]+|\b[\w-]+\.(?:herokuapp\.com|vercel\.app|netlify\.app|github\.io|com|tn|fr|dev|io|me|app|net|org)(?:/[^\s,;|]*)?", re.I)
 BULLET_RE = re.compile(rf"^\s*[{re.escape(BULLET_GLYPHS)}\-\*–]+\s*")
 LABEL_RE = re.compile(
-    r"^\s*(technologies?(?: used| utilisées?)?|tech(?:nical)? stack|stack|environnement(?: technique)?|environment|"
+    r"^\s*(technologies?(?: used| utilisées?| utilisés?)?|tech(?:nical)? stack|stack|environnement(?: technique)?|environment|"
+    r"acquired skills(?: and competencies)?|comp[ée]tences acquises|skills used|"
     r"outils|tools|avec|with|web app|mobile app|working solution|technos?|langages?|frameworks?|"
     r"main tasks|tâches(?: principales)?|missions?|réalisations|responsabilités|responsibilities|sujet|subject|"
-    r"hosted application|lien|link|live)\s*:\s*",
+    r"hosted application|lien|link|live|keywords?|mots[- ]cl[ée]s|tools used|outils utilis[ée]s)\s*:\s*",
     re.I,
 )
 COMPANY_HINT = re.compile(
@@ -120,26 +121,47 @@ class CV:
 _FUZZY_KEYS = list(HEADING_INDEX.keys())
 
 
+_SECTION_HEADER_PHRASE_RE: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"^(?:core|key|technical|professional|it|digital|hard)\s+(?:&\s+\w+\s+)?(?:skills|competencies|proficiencies)$", re.I), "skills"),
+    (re.compile(r"^(?:relevant|professional|work|career|industry)\s+(?:work\s+)?(?:experience|history|background)$", re.I), "experience"),
+    (re.compile(r"^(?:selected|key|notable|academic|personal|technical)\s+projects$", re.I), "projects"),
+    (re.compile(r"^(?:academic|educational)\s+(?:background|qualifications|history)$", re.I), "education"),
+    (re.compile(r"^(?:executive|professional|career)\s+(?:summary|profile|overview)$", re.I), "summary"),
+]
+
+
 def heading_section(line: Line, body_size: float, plain: bool) -> Optional[str]:
     raw = line.text.strip()
+    if not raw or raw.endswith(".") or LABEL_RE.match(raw):
+        return None
     parts = [p for p in raw.split("\t") if p.strip()]
-    cand = norm_key(raw.replace("\t", " ").rstrip(":").strip())
+    cand = norm_key(raw.replace("\t", " ").rstrip(":—–-").strip())
     words = cand.split()
     if not words or len(words) > 6 or len(cand) > 48:
         return None
-    styled = plain or line.caps or line.bold or line.size >= body_size * 1.12
-    if cand in HEADING_INDEX and (styled or len(words) <= 3):
+    styled = plain or line.caps or line.bold or line.size >= body_size * 1.10
+    if not styled:
+        return None
+    # Prevent wrapped lowercase sentence tails ("experiences") or job/school titles ("Stage de fin d'étude", "Horizen education") from matching
+    if not plain and raw[:1].islower():
+        return None
+    if cand in HEADING_INDEX:
         return HEADING_INDEX[cand]
     # two headings side by side ("PROGRAMMING SKILLS\tTECHNOLOGY SKILLS")
     if len(parts) > 1:
         secs = [HEADING_INDEX.get(norm_key(p.rstrip(":"))) for p in parts]
         if all(secs):
             return secs[0]
-    if not styled or re.search(r"\d", cand):
+    if re.search(r"\d", cand) or "|" in raw:
         return None
-    close = difflib.get_close_matches(cand, _FUZZY_KEYS, n=1, cutoff=0.86)
+    close = difflib.get_close_matches(cand, _FUZZY_KEYS, n=1, cutoff=0.84)
     if close:
         return HEADING_INDEX[close[0]]
+    # Fallback only for genuine major section headers (ALL CAPS or >= 1.18x body size)
+    if (plain or line.caps or line.size >= body_size * 1.18) and ":" not in raw.rstrip(":"):
+        for pat, sec_name in _SECTION_HEADER_PHRASE_RE:
+            if pat.match(cand):
+                return sec_name
     return None
 
 
@@ -254,8 +276,8 @@ def is_location(text: str) -> bool:
     t = strip_accents(raw.lower()).strip(" ,.")
     t = REMOTE_WORDS.sub(" ", t)
     t = re.sub(r"[()]", " ", t)
-    t = re.sub(r"\b\d{4}\b", "", t)
-    toks = [w for w in re.split(r"[\s,>/]+", t) if w]
+    t = re.sub(r"\b\d{4,5}\b", "", t)          # years and postal codes ("Monastir, Tunisia - 5000")
+    toks = [w for w in re.split(r"[\s,>/|–—-]+", t) if w]
     if not toks or len(toks) > 5:
         return False
     names = set(CITIES) | set(COUNTRIES)
@@ -294,6 +316,10 @@ def parse_document(doc: Document) -> CV:
                 cv.sections_found.append(sec)
             # inline content after "Skills: Python, Java" style headings
             parts = ln.text.split(":", 1)
+            if len(parts) == 2 and parts[1].strip() and norm_key(parts[0]) in HEADING_INDEX:
+                sections[sec].append(
+                    Line(text=parts[1].strip(), size=ln.size, bold=False, col=ln.col, page=ln.page, links=ln.links)
+                )
             prev = ln
             continue
         # inline heading with content: "Languages : Arabic, English" / "LANGUES : ..." in plain docs
@@ -389,8 +415,21 @@ def _parse_header(cv: CV, header: List[Line], doc: Document, body: float) -> Non
     elif pool:
         cv.name = _title_case_name(pool.pop(0).text)
 
+    # Header rows that merge a headline with a right-aligned contact ("Software Engineer\tMonastir, Tunisia")
+    # are split into independent lines so neither the headline nor the contact is lost.
+    split_pool: List[Line] = []
+    for l in pool:
+        parts = [p.strip() for p in l.text.split("\t") if p.strip()]
+        if len(parts) > 1:
+            for p in parts:
+                split_pool.append(Line(text=p, size=l.size, bold=l.bold, x0=l.x0, x1=l.x1, top=l.top,
+                                       page=l.page, col=l.col, links=list(l.links), caps=p.isupper()))
+        else:
+            split_pool.append(l)
+    pool[:] = split_pool
+
     # Headline: first short role-like line in header (bigger than body, or containing role words)
-    for l in list(pool):
+    for idx_l, l in enumerate(list(pool)):
         t = l.text.replace("\t", " ").strip()
         if OBJECTIVE_RE.search(t) and len(t.split()) <= 14:
             cv.objective = cv.objective or t.strip(" .")
@@ -400,8 +439,22 @@ def _parse_header(cv: CV, header: List[Line], doc: Document, body: float) -> Non
                 and sum(ch.isdigit() for ch in t) < 4 \
                 and (ROLE_WORDS.search(t) or (l.size > body * 1.15 and not is_location(t))) and not URL_RE.search(t) \
                 and not t.startswith('"'):
-            cv.headline = _clean_headline(t)
             pool.remove(l)
+            # Check if the immediately following header line is a wrapped continuation of an all-caps/bold headline
+            # e.g. "DIPLÔMÉ EN LICENCE FONDAMENTALE" + "EN SCIENCES DE L'INFORMATIQUE"
+            if pool and pool[0].col == l.col and (pool[0].bold or pool[0].caps):
+                t_next = pool[0].text.replace("\t", " ").strip()
+                if (
+                    len(t_next.split()) <= 6
+                    and not EMAIL_RE.search(t_next)
+                    and not URL_RE.search(t_next)
+                    and not is_location(t_next)
+                    and not heading_section(pool[0], body, False)
+                    and re.match(r"^(?:en|in|of|de|d['’]|&|and|et|sp[ée]cialit[ée]|option)\b", t_next, re.I)
+                ):
+                    t = f"{t} {t_next}"
+                    pool.pop(0)
+            cv.headline = _clean_headline(t)
     _parse_contact_lines(cv, pool, header_mode=True)
 
 
@@ -503,8 +556,9 @@ def _parse_contact_lines(cv: CV, lines: List[Line], header_mode: bool = False) -
 
 
 def _clean_location(t: str) -> str:
-    t = re.sub(r"\b\d{4}\b", "", t).strip(" .")
-    parts = [p.strip() for p in re.split(r"[,]", t) if p.strip()]
+    t = re.sub(r"\b\d{4,5}\b", "", t).strip(" .")
+    t = re.sub(r"\s*[–—-]\s*$", "", t).strip(" .,")
+    parts = [p.strip(" -–—") for p in re.split(r"[,]", t) if p.strip(" -–—")]
     parts = [p.title() if p.islower() else p for p in parts]
     # "Tunisia, 5000 Monastir" -> "Monastir, Tunisia"
     if len(parts) == 2 and strip_accents(parts[0].lower()) in COUNTRIES:
@@ -512,8 +566,24 @@ def _clean_location(t: str) -> str:
     return ", ".join(parts)
 
 
+_COMPOUND_HYPHEN_PREFIXES = {
+    "cross", "full", "real", "high", "multi", "self", "user", "client", "server", "object", "event",
+    "data", "cloud", "web", "open", "end", "to", "post", "pre", "co", "non", "well", "solution",
+    "rule", "role", "time", "cost", "hands", "state", "feature", "peer", "third", "first", "second",
+    "back", "front", "low", "long", "short",
+}
+
+
 def _join_hyphenated(t: str) -> str:
-    t = re.sub(r"(\w)-\s+(\w)", lambda m: m.group(1) + m.group(2) if m.group(2).islower() else m.group(0), t)
+    def _repl(m):
+        w1, w2 = m.group(1), m.group(2)
+        if not w2.islower():
+            return m.group(0)
+        if len(w1) <= 2 or w1.lower() in _COMPOUND_HYPHEN_PREFIXES:
+            return f"{w1}-{w2}"
+        return w1 + w2
+
+    t = re.sub(r"(\w+)-\s+(\w+)", _repl, t)
     return re.sub(r"\s+", " ", t).strip()
 
 
@@ -548,18 +618,31 @@ _PROJECT_DASH_HEADER_RE = re.compile(
 
 
 def _headerish(l: Line, body: float) -> bool:
-    t = l.text.strip()
+    t = re.sub(r"\s+\.$", ".", l.text.strip())
     if is_bullet(t):
         return False
     words = t.replace("\t", " ").split()
     if len(words) > 16:
         return False
-    if re.match(r"^(?:c['’][ée]tai[st]|d[ée]velopper\b|il s['’]agit|it is\b|this is\b)", t, re.I) or _SENTENCE_START.match(t):
-        return False
     has_date = bool(find_date_span(t)) and len(words) <= 14
     styled = l.bold or l.size > body + 1.4 or l.caps
     is_proj_hdr = bool(_PROJECT_PIPE_HEADER_RE.match(t) or _PROJECT_DASH_HEADER_RE.match(t))
-    return has_date or is_proj_hdr or (styled and not t.endswith((".", ";")) and len(words) <= 14) or ("\t" in t and len(words) <= 12)
+    if is_proj_hdr or (has_date and (styled or "\t" in t or re.search(r"\([^)]*\d{4}[^)]*\)\s*$", t))):
+        return True
+    if re.match(r"^(?:c['’][ée]tai[st]|d[ée]velopper\b|il s['’]agit|it is\b|this is\b)", t, re.I) or _SENTENCE_START.match(t):
+        return False
+    tab_hdr = "\t" in t and len(words) <= 12 and (
+        has_date
+        or styled
+        or any(is_location(p.strip()) or ROLE_WORDS.search(p) or DEGREE_WORDS.search(p) for p in t.split("\t"))
+    )
+    role_dash_hdr = (
+        not t.endswith((".", ";"))
+        and len(words) <= 8
+        and bool(STRICT_ROLE.search(t))
+        and (" - " in t or is_location(t.split(",")[-1].strip()))
+    )
+    return has_date or (styled and not t.endswith((".", ";")) and len(words) <= 14) or tab_hdr or role_dash_hdr
 
 
 def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> List[Entry]:
@@ -568,6 +651,7 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
     date_frags: List[str] = []
     in_body = False          # we've seen bullets/description for the current entry
     stack_mode = False       # previous line was a "Technologies used:" label
+    saw_body_stack = False   # we've already parsed a body stack line for this entry
     last_glyph = False       # last bullet came from a real bullet glyph
     title_sig: Optional[Tuple[float, bool]] = None
     kind = section[:-1] if section != "education" else "education"
@@ -591,6 +675,22 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
         raw = l.text.strip()
         if not raw:
             continue
+        # Skip job-board auto-summary headers ("Experience by\tTelecommunications : 1 year", "departments", "IT Software : 1 year")
+        if section == "experience" and cur is None and re.match(
+            r"^(?:experience\s+by\b|departments\s*$|[\w\s/&+-]{2,28}\s*:\s*\d+\s*(?:years?|months?|ans?|mois)\b)",
+            raw.replace("\t", " "),
+            re.I,
+        ):
+            continue
+        # Strip leading duration sub-column ("1 year\tBucurești | Telecommunications")
+        raw = re.sub(
+            r"^\d+\s*(?:years?|months?|ans?|mois)(?:\s+(?:and|et)\s+\d+\s*(?:years?|months?|ans?|mois))?\t+",
+            "",
+            raw,
+            flags=re.I,
+        ).strip()
+        if not raw:
+            continue
         parts = [p.strip() for p in raw.split("\t") if p.strip()]
         # Peel a date fragment from a date sub-column ("From March 2022 to\tPython Developer")
         frag = None
@@ -606,7 +706,11 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
         clean = text.replace("\t", " ").strip()
         bullet = is_bullet(text)
         label_only = bool(LABEL_RE.match(strip_bullet(clean))) and not LABEL_RE.sub("", strip_bullet(clean)).strip()
-        stack_label = label_only and re.match(r"^\s*(technolog|tech|stack|environ|outils|tools|avec|with|web app|mobile app|working solution|technos?|langages?|frameworks?)", strip_bullet(clean), re.I)
+        stack_label = label_only and re.match(
+            r"^\s*(technolog|tech|stack|environ|acquired skills|comp[ée]tences acquises|skills used|outils|tools|avec|with|web app|mobile app|working solution|technos?|langages?|frameworks?)",
+            strip_bullet(clean),
+            re.I,
+        )
 
         if cur is not None and label_only:
             stack_mode = bool(stack_label)
@@ -614,6 +718,8 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
             continue
         if cur is not None and stack_mode and not bullet and not _headerish_strict(l, text, body):
             cur.stack.extend(s for s in stack_items(clean) if s not in cur.stack)
+            saw_body_stack = True
+            stack_mode = False
             continue
         stack_mode = False
 
@@ -642,6 +748,21 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
                 starts_new = True
             elif section == "education" and _edu_field_full(cur, text):
                 starts_new = True
+        elif (
+            cur is not None
+            and in_body
+            and saw_body_stack
+            and len(clean.split()) >= 3
+            and not _STACK_NOISE.fullmatch(clean)
+            and not is_stack_line
+            and not bullet
+            and not label_only
+            and not is_date_subitem
+            and not re.match(r"^(?:avec|with|lien|link|hosted|live)\b", clean, re.I)
+        ):
+            # When an entry already concluded with a "Technologies used:" stack line, the next prose/title line starts a new entry
+            starts_new = True
+
         if frag is not None and cur is not None and not is_date_subitem:
             if not in_body and date_frags and _completes_range(date_frags, frag):
                 starts_new = False
@@ -652,6 +773,7 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
             finish()
             cur = Entry(kind=kind)
             in_body = False
+            saw_body_stack = False
             last_glyph = False
             title_sig = sig
         if cur is None:
@@ -678,8 +800,10 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
                 continue
             if LABEL_RE.match(body_txt) and looks_like_stack(body_txt):
                 cur.stack.extend(s for s in stack_items(body_txt) if s not in cur.stack)
+                saw_body_stack = True
             elif is_stack_line and len(body_txt.split()) <= 10:
                 cur.stack.extend(s for s in stack_items(body_txt) if s not in cur.stack)
+                saw_body_stack = True
             elif label_only:
                 pass
             else:
@@ -714,8 +838,21 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
             continue
 
         # Non-bullet body text
+        # If the previous bullet is an unfinished sentence and current line is a short wrapped sentence tail ending with '.', join it first
+        if (
+            cur.bullets
+            and not LABEL_RE.match(clean)
+            and len(clean.split()) <= 4
+            and clean.endswith(".")
+            and not cur.bullets[-1].rstrip().endswith((".", "!", "?", ":"))
+        ):
+            cur.bullets[-1] = _join_hyphenated(cur.bullets[-1] + " " + clean)
+            in_body = True
+            continue
         if is_stack_line or re.match(r"^(?:avec|with)\s*:\s*", clean, re.I):
             cur.stack.extend(s for s in stack_items(clean) if s not in cur.stack)
+            if in_body:
+                saw_body_stack = True
             continue
         if re.match(r"^(sujet|subject|lien|link|hosted application|main tasks|tâches|missions?)\s*:", clean, re.I):
             clean = LABEL_RE.sub("", clean).strip()
@@ -762,9 +899,22 @@ def stack_items(text: str) -> List[str]:
         flags=re.I,
     )
     out: List[str] = []
-    for p in re.split(r"\s*(?:,|;|\||•|·|\s\+\s|\t|\s{2,}|\s/\s|\s[-–]\s)\s*", t):
-        p = p.strip(" .:-–()")
+    for p in re.split(r"\s*(?:,|;|\||•|·|\s\+\s|\t|\s{2,}|\s/\s|\s[-–—]\s)\s*", t):
+        p = re.sub(
+            r"^(?:front[- ]?end|back[- ]?end|web\s+app|mobile\s+app|desktop\s+app|database|base\s+de\s+donn[ée]es|api|ui|ux|design|serveur|server|client)\s*:\s*",
+            "",
+            p.strip(),
+            flags=re.I,
+        )
+        p = p.strip(" .:-–—")
+        # keep balanced parentheses ("Python (Web Scraping)"), drop only stray ones
+        if p.count("(") != p.count(")"):
+            p = p.strip("()").strip()
+            if p.count("(") > p.count(")"):
+                p += ")"
         if not p or re.fullmatch(r"(?:etc|and|et|\W+)", p, re.I):
+            continue
+        if _DATE_WORD.fullmatch(p) or _is_date_fragment(p):
             continue
         c = canonical_tech(p) or canonical_tech(_STACK_NOISE.sub("", p).strip())
         if c:
@@ -775,7 +925,9 @@ def stack_items(text: str) -> List[str]:
         if found and not meaningful:
             out.extend(found)
         elif len(p.split()) <= 4 and re.search(r"[A-Za-z]", p):
-            out.append(_STACK_NOISE.sub("", p).strip() or p)
+            cleaned_p = _STACK_NOISE.sub("", p).strip() or p
+            if not COMPANY_HINT.search(cleaned_p) and not _DATE_WORD.fullmatch(cleaned_p) and not find_date_span(cleaned_p):
+                out.append(cleaned_p)
     return list(dict.fromkeys(x for x in out if x))
 
 def _completes_range(frags: List[str], frag: str) -> bool:
@@ -805,7 +957,8 @@ def _prejoin(lines: List[Line]) -> List[Line]:
         m = re.search(r"(\w+)-$", out[-1].text) if out else None
         if m and l.text[:1].islower() and out[-1].col == l.col:
             prev = out[-1]
-            prev.text = (prev.text if len(m.group(1)) <= 2 else prev.text[:-1]) + l.text
+            keep_hyphen = len(m.group(1)) <= 2 or m.group(1).lower() in _COMPOUND_HYPHEN_PREFIXES
+            prev.text = (prev.text if keep_hyphen else prev.text[:-1]) + l.text
             prev.links = prev.links + [u for u in l.links if u not in prev.links]
             continue
         out.append(Line(text=l.text, size=l.size, bold=l.bold, x0=l.x0, x1=l.x1, top=l.top, page=l.page, col=l.col, links=list(l.links), caps=l.caps))
@@ -958,9 +1111,18 @@ def parse_education(lines: List[Line], lang: str) -> List[Entry]:
             if not seg_text:
                 continue
             segs = [s.strip() for s in re.split(r"\s+\|\s+|\s*\|\s*(?=[A-Z])", seg_text) if s.strip()]
+            if len(segs) == 1 and re.search(r"\s+[-–—]\s+", segs[0]):
+                sub = [s.strip() for s in re.split(r"\s+[-–—]\s+", segs[0], maxsplit=1) if s.strip()]
+                if len(sub) == 2 and (
+                    (DEGREE_WORDS.search(sub[0]) and SCHOOL_WORDS.search(sub[1]))
+                    or (SCHOOL_WORDS.search(sub[0]) and DEGREE_WORDS.search(sub[1]))
+                ):
+                    segs = sub
             if len(segs) == 2 and DEGREE_WORDS.search(segs[0]) and not SCHOOL_WORDS.search(segs[1]):
                 segs = [f"{segs[0]} – {segs[1]}"]
             for seg in segs:
+                if seg.lower() in ("străinătate", "strainatate"):
+                    continue
                 is_deg = bool(DEGREE_WORDS.search(seg))
                 starts_school = bool(re.match(r"^(?:faculty|facult[ée]|universit|[ée]cole|institut|lyc[ée]e|school|high school|college|secondary school)", seg, re.I))
                 is_school = (bool(SCHOOL_WORDS.search(seg)) and not is_deg) or starts_school
@@ -981,6 +1143,8 @@ def parse_education(lines: List[Line], lang: str) -> List[Entry]:
                     last_field = "title"
                 elif last_field == "title" and len(seg.split()) <= 3 and not cur.org and seg[:1].isupper() and not is_location(seg):
                     cur.title = f"{cur.title} {seg}"          # wrapped title ("...in Computer" / "Science")
+                elif cur.title and len(cur.title.split()) <= 3 and DEGREE_WORDS.search(cur.title) and len(seg.split()) <= 8 and not is_location(seg):
+                    cur.title = f"{cur.title} — {seg}"
                 elif is_location(seg):
                     cur.location = cur.location or seg
                 elif not cur.title and len(seg.split()) <= 12:
@@ -1011,11 +1175,37 @@ def _format_bullet_end(b: str) -> str:
     return s
 
 
+_INDUSTRY_NOISE_ORGS = {
+    "telecommunications",
+    "it software",
+    "call-center / bpo",
+    "it / telecom",
+    "education / training",
+    "training, formare profesională",
+    "training, formare profesionala",
+    "formare profesională",
+    "formare profesionala",
+    "străinătate",
+    "strainatate",
+}
+
+
 def _finalize_entry(e: Entry, section: str) -> None:
+    if e.org and e.org.strip().lower() in _INDUSTRY_NOISE_ORGS:
+        e.org = ""
+    e.extra = [x for x in e.extra if x.strip().lower() not in _INDUSTRY_NOISE_ORGS]
+    e.bullets = [b for b in e.bullets if b.strip(" .").lower() not in _INDUSTRY_NOISE_ORGS]
+    e.stack = [s for s in e.stack if s.strip(" .").lower() not in _INDUSTRY_NOISE_ORGS]
     # Title like "Python Developer at Hippo" / "Développeur chez X"
     m = re.match(r"^(.+?)\s+(?:at|chez|@)\s+(.+)$", e.title)
     if m and not e.org and section != "education":
         e.title, e.org = m.group(1).strip(), m.group(2).strip()
+    # Title like "Content Moderator - Genpact" or "Stagiaire - OPTANS" when e.org is empty
+    m_dash = re.match(r"^(.+?)\s+[-–—]\s+(.+)$", e.title)
+    if m_dash and not e.org and section == "experience":
+        left_p, right_p = m_dash.group(1).strip(), m_dash.group(2).strip()
+        if ROLE_WORDS.search(left_p) and len(right_p.split()) <= 5 and not ROLE_WORDS.search(right_p):
+            e.title, e.org = left_p, right_p
     if e.org:
         e.org = re.sub(
             r"^(?:r[ée]alis[ée]r?|effectu[ée]r?)\s+au\s+sein\s+de\s+(?:l['’]entreprise|la\s+soci[ée]t[ée])\s+",
@@ -1035,6 +1225,21 @@ def _finalize_entry(e: Entry, section: str) -> None:
             m_app = re.search(r"(application\s+d['’][\w\sÀ-ÿ]{3,35}?)(?:\s+pour\b|$)", e.bullets[0], re.I)
             if m_app:
                 e.title = m_app.group(1).strip().capitalize()
+    # Untitled project/experience entries whose first bullet describes the project ("Conception et développement d'une application...")
+    if not e.title and e.bullets:
+        b0 = e.bullets[0].strip()
+        m_proj_fr = re.match(
+            r"^(?:conception\s+et\s+d[ée]veloppement|d[ée]veloppement(?:\s+front[- ]?end|\s+back[- ]?end)?|r[ée]alisation|cr[ée]ation)\s+d['’](?:une?|du)\s+(.+?)(?:\s+pour\s+(?:la\s+soci[ée]t[ée]\s+|l['’]entreprise\s+)?(.+?))?\s*\.?$",
+            b0,
+            re.I,
+        )
+        if m_proj_fr:
+            app_title = m_proj_fr.group(1).strip(" .")
+            e.title = app_title[:1].upper() + app_title[1:]
+            if m_proj_fr.group(2) and not e.org and len(m_proj_fr.group(2).split()) <= 5:
+                e.org = m_proj_fr.group(2).strip(" .")
+        elif len(b0.split()) <= 10:
+            e.title = e.bullets.pop(0).strip(" .")
     if e.org and not e.location:
         org, loc = split_location(e.org)
         if loc:
@@ -1061,7 +1266,7 @@ def _finalize_entry(e: Entry, section: str) -> None:
                 re.I,
             )
         )
-        if (looks_like_stack(b) and len(b.split()) <= 14) or is_comma_tech_list:
+        if (looks_like_stack(b) and len(b.split()) <= 14 and "—" not in b and not find_date_span(b)) or is_comma_tech_list:
             e.stack.extend(t for t in stack_items(b) if t not in e.stack)
         else:
             keep.append(b)
@@ -1108,55 +1313,146 @@ _EXTRA_ENGINEERING_SKILLS = {
     "unit and widget testing": "Unit & Widget Testing",
     "unit & widget testing": "Unit & Widget Testing",
     "material 3": "Material 3",
+    "cupertino": "Cupertino",
     "realtime database": "Realtime Database",
     "firebase analytics": "Firebase Analytics",
     "solid": "SOLID",
     "jwt authentication": "JWT Authentication",
     "rest/json apis": "REST/JSON APIs",
+    "windows 10/11": "Windows 10/11",
+    "tcp/ip": "TCP/IP",
+    "wi-fi": "Wi-Fi",
+    "vpn": "VPN",
+    "dns/dhcp": "DNS/DHCP",
 }
 
 
-def _parse_skills(cv: CV, lines: List[Line]) -> None:
+def _split_skill_chunks(items: str) -> List[str]:
+    """Split a skill line on commas/pipes/tabs/bullets while keeping parenthetical groups intact."""
+    chunks: List[str] = []
+    buf: List[str] = []
+    depth = 0
+    for ch in items:
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif depth == 0 and ch in (",", ";", "|", "•", "\t"):
+            s = "".join(buf).strip(" .-")
+            if s:
+                chunks.append(s)
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip(" .-")
+    if tail:
+        chunks.append(tail)
+    return chunks
+
+
+def _prejoin_skill_lines(lines: List[Line]) -> List[Line]:
+    """Join wrapped skill continuation lines (e.g. 'Time and Priority' + 'Management, Quick Learner', or 'Jupyter' + 'Notebook')."""
+    out: List[Line] = []
     for l in lines:
+        raw = strip_bullet(l.text)
+        if not raw:
+            continue
+        if out:
+            prev = out[-1]
+            prev_raw = strip_bullet(prev.text)
+            has_colon_cur = bool(re.match(r"^\s*[^:]{2,45}\s*:", raw))
+            is_bold_hdr = l.bold and not re.search(r"[,|\t:]", raw) and len(raw.split()) <= 4 and not canonical_tech(raw)
+            if not is_bullet(l.text) and not has_colon_cur and not is_bold_hdr and prev.col == l.col:
+                # Continuation if previous line has unclosed parens, ends with a connector, or current starts with continuation word
+                unclosed_paren = prev_raw.count("(") > prev_raw.count(")")
+                ends_conn = bool(re.search(r"(?:,|&|\band|\bet|/|-|\bStaff|\bPriority|\bJupyter|\bIntelliJ|\bVisual\s+Studio)\s*$", prev_raw, re.I))
+                starts_cont = bool(re.match(r"^(?:management|coordination|notebook|idea|code|studio|learner|support|design|content|troubleshooting)\b", raw, re.I))
+                if unclosed_paren or ends_conn or starts_cont:
+                    sep = "" if prev_raw.endswith("-") else " "
+                    prev.text = prev.text.rstrip() + sep + raw.lstrip()
+                    continue
+        out.append(Line(text=l.text, size=l.size, bold=l.bold, x0=l.x0, x1=l.x1, top=l.top, page=l.page, col=l.col, links=list(l.links), caps=l.caps))
+    return out
+
+
+def _parse_skills(cv: CV, lines: List[Line]) -> None:
+    joined_lines = _prejoin_skill_lines(lines)
+    for l in joined_lines:
         raw = strip_bullet(l.text)
         if not raw:
             continue
         label, items = None, raw
         m = re.match(r"^\s*([^:]{2,45}?)\s*:\s*(.*)$", raw.replace("\t", " , ", 1) if ":" not in raw.split("\t")[0] else raw)
         if m and not canonical_tech(m.group(1)):
-            label, items = m.group(1).strip(), m.group(2)
+            label, items = m.group(1).strip(), m.group(2).strip()
         if label and re.search(r"\b(lang(?:ue|uage)s?(?! de programmation| informatiques)|spoken)\b", label, re.I) and not re.search(r"program|informati|markup|coding", label, re.I):
             cv.languages.extend(parse_languages([items]))
             continue
         if label and re.search(r"^(?:soft|savoir[- ]?[êe]tre|qualit[ée]s?(?: personnelles)?$|personal skills|interpersonal)", label.strip(), re.I):
             cv.soft_skills.extend(_split_items(items))
             continue
-        if label is None and l.bold and not re.search(r"[,|\t]", raw) and len(raw.split()) <= 4 and not canonical_tech(raw):
-            # bold sub-heading like "Programming languages" with items on following lines
-            cv.skill_groups.append((raw.rstrip(":"), []))
+        if (label is not None and not items) or (label is None and l.bold and not re.search(r"[,|\t]", raw) and len(raw.split()) <= 4 and not canonical_tech(raw)):
+            # Sub-heading like "Programming languages" or "Softwares :" with items on following lines
+            hdr_name = (label or raw).rstrip(":").strip()
+            if hdr_name.lower() not in ("general skills", "skills", "compétences"):
+                cv.skill_groups.append((hdr_name, []))
             continue
+
+        group_label = label or (cv.skill_groups[-1][0] if cv.skill_groups and cv.skill_groups[-1][0] else None)
+        has_explicit_category = bool(group_label)
+
         found, left = tech_tokens(items)
-        # Preserve well-known engineering skills in categorized skill lines (e.g. Gradle, CI/CD, Code Signing, Unit & Widget Testing)
-        if label or (cv.skill_groups and cv.skill_groups[-1][0]):
-            for chunk in re.split(r"\s*,\s*", items):
-                c_clean = re.sub(r"\s*\(primary\)\s*", "", chunk, flags=re.I).strip(" .")
-                c_low = c_clean.lower()
-                if c_low in _EXTRA_ENGINEERING_SKILLS:
-                    mapped = _EXTRA_ENGINEERING_SKILLS[c_low]
-                    if mapped not in found:
-                        found.append(mapped)
-                elif "ci/cd" in c_low and "CI/CD" not in found:
-                    found.insert(0, "CI/CD")
+        chunks = _split_skill_chunks(items)
+        # Preserve well-known engineering skills and domain/non-developer skills in categorized or comma-separated skill lines
+        for chunk in chunks:
+            c_clean = re.sub(r"\s*\(primary\)\s*", "", chunk, flags=re.I).strip(" .")
+            if not c_clean or re.fullmatch(r"(?:etc|and|et|ide|os|softwares?|logiciels?)", c_clean, re.I):
+                continue
+            c_low = c_clean.lower()
+            if c_low in _EXTRA_ENGINEERING_SKILLS:
+                mapped = _EXTRA_ENGINEERING_SKILLS[c_low]
+                if mapped not in found:
+                    found.append(mapped)
+                continue
+            if "ci/cd" in c_low and "CI/CD" not in found:
+                found.insert(0, "CI/CD")
+            # Check parenthetical sub-items (e.g. "Firebase (Auth, Firestore, Realtime DB, FCM, Crashlytics, Analytics)")
+            m_paren = re.search(r"\(([^)]+)\)", c_clean)
+            if m_paren:
+                for sub_p in re.split(r"\s*,\s*", m_paren.group(1)):
+                    sp_low = sub_p.strip().lower()
+                    if sp_low in _EXTRA_ENGINEERING_SKILLS and _EXTRA_ENGINEERING_SKILLS[sp_low] not in found:
+                        found.append(_EXTRA_ENGINEERING_SKILLS[sp_low])
+            # If this chunk yielded zero canonical tech tokens, preserve it if it's a valid domain/professional skill
+            c_techs, _ = tech_tokens(c_clean)
+            if not c_techs and (has_explicit_category or len(chunks) >= 2):
+                words_c = c_clean.split()
+                if (
+                    1 <= len(words_c) <= 6
+                    and 2 <= len(c_clean) <= 48
+                    and re.search(r"[A-Za-zÀ-ÿ]", c_clean)
+                    and not find_date_span(c_clean)
+                    and not EMAIL_RE.search(c_clean)
+                    and not URL_RE.search(c_clean)
+                ):
+                    if c_clean not in found:
+                        found.append(c_clean)
+
         # Remove redundant bare "AWS" if "AWS S3" is already in the same line
         if "AWS S3" in found and "AWS" in found and not re.search(r"\baws\b(?!\s*s3)", items, re.I):
             found = [x for x in found if x != "AWS"]
+        # Remove redundant "Material Design" if "Material 3" is already in the same line and "Material Design" was not written
+        if "Material 3" in found and "Material Design" in found and not re.search(r"\bmaterial\s+design\b", items, re.I):
+            found = [x for x in found if x != "Material Design"]
         found = [_EXTRA_ENGINEERING_SKILLS.get(x.lower(), x) for x in found]
-        group_label = label or (cv.skill_groups[-1][0] if cv.skill_groups and cv.skill_groups[-1][0] else None)
+
         if group_label and cv.skill_groups and cv.skill_groups[-1][0] == group_label:
             for f in found:
                 if f not in cv.skill_groups[-1][1]:
                     cv.skill_groups[-1][1].append(f)
-        else:
+        elif found or group_label:
             cv.skill_groups.append((group_label or "", list(found)))
         for f in found:
             if f not in cv.skills:
@@ -1164,8 +1460,11 @@ def _parse_skills(cv: CV, lines: List[Line]) -> None:
         for w in left:
             w = w.strip(" .")
             if 1 < len(w) <= 30 and len(w.split()) <= 3 and not re.fullmatch(r"(?:ide|etc|and|et|softwares?|logiciels?|os)", w, re.I):
-                if re.search(r"[A-Z0-9.#+]", w) and w not in cv.unknown_skills:
+                if re.search(r"[A-Z0-9.#+]", w) and w not in cv.unknown_skills and w not in cv.skills:
                     cv.unknown_skills.append(w)
+
+    # Remove empty placeholder skill groups
+    cv.skill_groups = [(cat, grp) for cat, grp in cv.skill_groups if grp]
 
 
 def _split_items(t: str) -> List[str]:
@@ -1185,6 +1484,24 @@ def _list_items(lines: List[Line]) -> List[str]:
 
 def _paragraph_items(lines: List[Line]) -> List[str]:
     items: List[str] = []
+    # Side-by-side items laid out as a grid (Canva): "CCNA 1\tCCNA 2" over
+    # "Introduction to Networks\tRouting and switching principles" -> pair them column-wise.
+    paired: List[Line] = []
+    i = 0
+    while i < len(lines):
+        a = lines[i]
+        b = lines[i + 1] if i + 1 < len(lines) else None
+        pa = [p.strip() for p in a.text.split("\t") if p.strip()]
+        pb = [p.strip() for p in b.text.split("\t") if p.strip()] if b is not None else []
+        if b is not None and len(pa) >= 2 and len(pa) == len(pb) and not is_bullet(a.text) and not is_bullet(b.text):
+            for x, y in zip(pa, pb):
+                paired.append(Line(text=f"• {x} — {y}", size=a.size, bold=True, x0=a.x0, x1=a.x1, top=a.top,
+                                   page=a.page, col=a.col, links=list(a.links)))
+            i += 2
+            continue
+        paired.append(a)
+        i += 1
+    lines = paired
     all_bold = all(l.bold for l in lines if l.text.strip())
     for l in lines:
         t = l.text.replace("\t", " ").strip()

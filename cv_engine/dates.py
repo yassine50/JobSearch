@@ -47,9 +47,6 @@ RANGE_RE = re.compile(
     rf"(?:(?:from|de|du|depuis|since)\s+)?(?P<start>{_POINT})(?:{_SEP}(?P<end>{_POINT}|{PRESENT_RE}))?",
     re.I,
 )
-DANGLING_FROM_RE = re.compile(rf"(?:from|de|du)\s+(?P<start>{_POINT}|(?:{_MONTH_ALT}))\s*(?:to|au|à|-|–)?\s*$", re.I)
-LEADING_END_RE = re.compile(rf"^\s*(?:(?:to|au|à|-|–)\s+)?(?P<end>{_POINT}|{PRESENT_RE})\b", re.I)
-SINCE_RE = re.compile(rf"(?:since|depuis)\s+(?P<start>{_POINT})", re.I)
 
 
 @dataclass
@@ -173,21 +170,6 @@ def strip_dates(text: str) -> str:
     out = re.sub(r"^\s*(?:\||–|—|-|:|,)\s*", "", out)
     out = re.sub(r"\b(?:from|de|du|depuis|since|en)\s*$", "", out, flags=re.I).strip()
     return re.sub(r"\s{2,}", " ", out).strip(" |–—-,:")
-
-
-def dangling_start(text: str) -> Optional[DatePoint]:
-    m = DANGLING_FROM_RE.search(text or "")
-    if not m:
-        return None
-    return _parse_point(m.group("start"))
-
-
-def leading_end(text: str) -> Optional[Tuple[DatePoint, int]]:
-    m = LEADING_END_RE.match(text or "")
-    if not m:
-        return None
-    p = _parse_point(m.group("end"))
-    return (p, m.end()) if p else None
 
 
 def total_months(spans: List[DateSpan]) -> int:

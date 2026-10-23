@@ -58,34 +58,36 @@ export default function PostSearchHeader({
             </motion.button>
 
             {/* LinkedIn Live Connect Indicator / Button */}
-            <motion.button
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.98 }}
-              type="button"
-              onClick={onOpenLinkedInConnect}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition cursor-pointer shrink-0 ${
-                isLinkedInConnected
-                  ? 'bg-emerald-950/60 hover:bg-emerald-900/60 border-emerald-500/40 text-emerald-300 shadow-xs'
-                  : 'bg-indigo-950/50 hover:bg-indigo-900/50 border-indigo-500/35 text-indigo-300 shadow-xs'
-              }`}
-              title={
-                isLinkedInConnected
-                  ? 'LinkedIn Live Feed Connected. Click to manage session.'
-                  : 'Connect your LinkedIn session (li_at) to search live recruiter posts directly with infinite scroll.'
-              }
-            >
-              {isLinkedInConnected ? (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="truncate">Live LinkedIn</span>
-                </>
-              ) : (
-                <>
-                  <Link2 size={13} className="text-indigo-400 shrink-0" />
-                  <span className="truncate">Connect LinkedIn</span>
-                </>
-              )}
-            </motion.button>
+            {onOpenLinkedInConnect && (
+              <motion.button
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
+                type="button"
+                onClick={onOpenLinkedInConnect}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition cursor-pointer shrink-0 ${
+                  isLinkedInConnected
+                    ? 'bg-blue-500/10 hover:bg-blue-500/20 border-blue-500/35 text-blue-300 shadow-xs'
+                    : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] text-slate-200 shadow-xs'
+                }`}
+                title={
+                  isLinkedInConnected
+                    ? 'LinkedIn Live Feed Connected. Click to manage session.'
+                    : 'Connect your LinkedIn session (li_at) to search live recruiter posts directly with infinite scroll.'
+                }
+              >
+                {isLinkedInConnected ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                    <span className="truncate">Live LinkedIn</span>
+                  </>
+                ) : (
+                  <>
+                    <Link2 size={13} className="text-blue-400 shrink-0" />
+                    <span className="truncate">Connect LinkedIn</span>
+                  </>
+                )}
+              </motion.button>
+            )}
 
             {/* Submit Search Button */}
             <motion.button

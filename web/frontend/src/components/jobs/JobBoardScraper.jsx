@@ -19,7 +19,9 @@ import JobFilterDrawer from './JobFilterDrawer.jsx'
 import LocationPickerModal from '../hunter/LocationPickerModal.jsx'
 import JobDetailWorkbench from './JobDetailWorkbench.jsx'
 import JobSignalBadges from './JobSignalBadges.jsx'
+import { GuestBlurGate } from '../modals/AuthGateModal.jsx'
 import client from '../../api/client.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
 import { DEFAULT_FILTERS, POPULAR_COUNTRIES, QUICK_ROLES } from '../../constants/searchConstants.js'
 import { getCleanJobUrl } from '../../utils/jobUtils.js'
@@ -45,15 +47,16 @@ export default function JobBoardScraper({
   loading,
   searchMeta,
   onSearch,
-  onSaveJob,
-  onOpenDetail,
-  onTailorJob,
-  isJobApplied,
-  isJobSaved,
-  onJobApplied,
-  onSwitchToPosts
+  onSaveJob = () => {},
+  onOpenDetail = () => {},
+  onTailorJob = () => {},
+  isJobApplied = () => false,
+  isJobSaved = () => false,
+  onJobApplied = () => {},
+  onSwitchToPosts = () => {}
 }) {
   const toast = useToast()
+  const { isAuth } = useAuth()
   const [title, setTitle] = useState('')
   const [selectedCountries, setSelectedCountries] = useState(['Worldwide'])
   const [showLocationPicker, setShowLocationPicker] = useState(false)
@@ -787,19 +790,19 @@ export default function JobBoardScraper({
       </form>
 
       {/* Bulk Action Banner when jobs have emails */}
-      {jobsWithEmails.length > 0 && !loading && (
+      {isAuth && jobsWithEmails.length > 0 && !loading && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-4 rounded-2xl bg-gradient-to-r from-blue-950/70 via-indigo-950/50 to-purple-950/70 border border-blue-500/35 flex items-center justify-between gap-3 shadow-lg flex-wrap backdrop-blur-xl"
+          className="p-4 rounded-2xl glass-panel border border-blue-500/30 flex items-center justify-between gap-3 shadow-sm flex-wrap"
         >
           <div className="flex items-center gap-3 text-xs">
-            <div className="w-9 h-9 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
               <Zap size={16} />
             </div>
             <div>
               <span className="font-extrabold text-white">Discovered {jobsWithEmails.length} Job(s) with Verified Recruiter Emails!</span>
-              <p className="text-[11px] text-slate-300/80">Dispatch tailored applications and customized resumes to all recruiters in 1 click.</p>
+              <p className="text-[11px] text-slate-400">Dispatch tailored applications and customized resumes to all recruiters in 1 click.</p>
             </div>
           </div>
 
@@ -815,33 +818,33 @@ export default function JobBoardScraper({
       )}
 
       {/* Bulk Action Banner when jobs have Candidature Simplifiée without emails */}
-      {easyApplyJobsWithoutEmail.length > 0 && !loading && (
+      {isAuth && easyApplyJobsWithoutEmail.length > 0 && !loading && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/60 via-slate-900/80 to-indigo-950/60 border border-amber-500/35 flex items-center justify-between gap-3 shadow-lg flex-wrap backdrop-blur-xl"
+          className="p-4 rounded-2xl glass-panel border border-blue-500/30 flex items-center justify-between gap-3 shadow-sm flex-wrap"
         >
           <div className="flex items-center gap-3 text-xs">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
               <Zap size={16} />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-white">Discovered {easyApplyJobsWithoutEmail.length} Job(s) with Candidature Simplifiée!</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-300 border border-blue-500/30">
                   Easy Apply
                 </span>
               </div>
-              <p className="text-[11px] text-slate-300/80">Auto-apply to all simplified listings in 1 click with AI-tailored resumes and instant Tracker sync.</p>
+              <p className="text-[11px] text-slate-400">Auto-apply to all simplified listings in 1 click with AI-tailored resumes and instant Tracker sync.</p>
             </div>
           </div>
 
           <button
             type="button"
             onClick={() => setBatchEasyApplyOpen(true)}
-            className="shimmer-btn px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-amber-500/25 transition flex items-center gap-1.5 cursor-pointer shrink-0"
+            className="shimmer-btn px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-blue-500/25 transition flex items-center gap-1.5 cursor-pointer shrink-0"
           >
-            <Zap size={13} className="fill-slate-950 text-slate-950" />
+            <Zap size={13} />
             <span>Auto-Apply to All Candidatures Simplifiées ({easyApplyJobsWithoutEmail.length})</span>
           </button>
         </motion.div>
@@ -870,7 +873,8 @@ export default function JobBoardScraper({
           </div>
         </div>
       ) : filteredJobs.length > 0 ? (
-        viewMode === 'split' ? (
+        <GuestBlurGate count={filteredJobs.length} itemLabel="Matching Jobs & Recruiter Emails">
+        {viewMode === 'split' ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
             {/* Left Master Feed (5 cols) */}
             <div className="lg:col-span-5 space-y-2.5 max-h-[calc(100vh-140px)] overflow-y-auto pr-1 select-none">
@@ -951,13 +955,7 @@ export default function JobBoardScraper({
                         {job.title}
                       </h4>
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg border ${
-                          score >= 75
-                            ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                            : score >= 55
-                            ? 'bg-blue-500/15 border-blue-500/35 text-blue-300'
-                            : 'bg-amber-500/15 border-amber-500/35 text-amber-300'
-                        }`}>
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg border bg-blue-500/15 border-blue-500/35 text-blue-300">
                           {score}% CV
                         </span>
                       </div>
@@ -975,23 +973,17 @@ export default function JobBoardScraper({
                         {job.location || 'Remote'}
                       </span>
                       <span className="text-slate-600">·</span>
-                      <span className={`px-1.5 py-0.2 rounded-md text-[10px] uppercase font-bold border ${
-                        (job.site || '').toLowerCase().includes('job_bank') || (job.site || '').toLowerCase().includes('jobbank')
-                          ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                          : isLinkedIn
-                          ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-                          : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-                      }`}>
+                      <span className="px-1.5 py-0.2 rounded-md text-[10px] uppercase font-bold border bg-blue-500/10 text-blue-300 border-blue-500/25">
                         {(job.site || '').toLowerCase().includes('job_bank') || (job.site || '').toLowerCase().includes('jobbank') ? '🇨🇦 Job Bank' : job.site}
                       </span>
                       {job.is_international_eligible && (
-                        <span className="px-1.5 py-0.2 rounded-md text-[10px] font-bold border bg-amber-500/15 text-amber-300 border-amber-500/30 flex items-center gap-0.5">
+                        <span className="px-1.5 py-0.2 rounded-md text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08] flex items-center gap-0.5">
                           <span>🌐</span> LMIA / Global
                         </span>
                       )}
                       {(job.also_on?.length || 0) > 1 && (
                         <span
-                          className="px-1.5 py-0.2 rounded-md text-[10px] font-bold border bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                          className="px-1.5 py-0.2 rounded-md text-[10px] font-semibold border bg-white/[0.04] text-slate-300 border-white/[0.08]"
                           title={`Also listed on: ${job.also_on.join(', ')}`}
                         >
                           ✓ {job.also_on.length} boards
@@ -1001,12 +993,7 @@ export default function JobBoardScraper({
                       {job.age_str && (
                         <>
                           <span className="text-slate-600">·</span>
-                          <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-bold border ${
-                            job.is_under_24h || (job.age_hours != null && job.age_hours <= 24)
-                              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 flex items-center gap-0.5'
-                              : 'bg-white/[0.04] text-slate-400 border-white/[0.08]'
-                          }`}>
-                            {(job.is_under_24h || (job.age_hours != null && job.age_hours <= 24)) && <span>⚡</span>}
+                          <span className="px-1.5 py-0.2 rounded-md text-[10px] font-semibold border bg-white/[0.04] text-slate-400 border-white/[0.08]">
                             {job.age_str}
                           </span>
                         </>
@@ -1016,8 +1003,8 @@ export default function JobBoardScraper({
                     {/* Recruiter Email Badge with 1-Click Action */}
                     {primaryEmail && (
                       <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                        <div className="flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-lg w-fit">
-                          <ShieldCheck size={11} className="text-emerald-400 shrink-0" />
+                        <div className="flex items-center gap-1 text-[10px] text-blue-300 bg-blue-500/10 border border-blue-500/25 px-2 py-0.5 rounded-lg w-fit">
+                          <ShieldCheck size={11} className="text-blue-400 shrink-0" />
                           <span className="font-mono truncate max-w-[190px]">{primaryEmail}</span>
                         </div>
                         {!applied && (
@@ -1032,7 +1019,7 @@ export default function JobBoardScraper({
                                 recruiter_emails: [{ email: primaryEmail, name: 'Hiring Team' }]
                               })
                             }}
-                            className="px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs shrink-0"
+                            className="px-2.5 py-0.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs shrink-0"
                             title="1-Click Auto Apply directly to recruiter"
                           >
                             <Send size={10} />
@@ -1045,8 +1032,8 @@ export default function JobBoardScraper({
                     {/* Candidature Simplifiée Badge for jobs without email */}
                     {!primaryEmail && checkIsEasyApply(job) && (
                       <div className="flex items-center justify-between pt-0.5">
-                        <div className="flex items-center gap-1 text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-lg w-fit">
-                          <Zap size={10} className="fill-amber-400 text-amber-400 shrink-0" />
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/25 px-2 py-0.5 rounded-lg w-fit">
+                          <Zap size={10} className="text-blue-400 shrink-0" />
                           <span>Candidature Simplifiée</span>
                         </div>
                         {!applied && (
@@ -1056,10 +1043,10 @@ export default function JobBoardScraper({
                               e.stopPropagation()
                               setEasyApplyJob(job)
                             }}
-                            className="px-2.5 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/45 text-amber-300 hover:text-amber-200 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                            className="px-2.5 py-0.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
                             title="1-click Auto Apply via Candidature Simplifiée"
                           >
-                            <Zap size={10} className="fill-amber-300" />
+                            <Zap size={10} />
                             <span>Auto-Apply</span>
                           </button>
                         )}
@@ -1358,7 +1345,8 @@ export default function JobBoardScraper({
               })}
             </div>
           </div>
-        )
+        )}
+        </GuestBlurGate>
       ) : unappliedJobs.length > 0 ? (
         <div className="p-10 text-center text-slate-400 space-y-2.5 glass-panel rounded-3xl relative overflow-hidden">
           <div className="glow-line-top" />

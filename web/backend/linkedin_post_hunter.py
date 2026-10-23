@@ -13,7 +13,6 @@ import time
 import json
 import logging
 import urllib.parse
-import base64
 import hashlib
 import threading
 import copy
@@ -42,7 +41,6 @@ try:
 except ImportError:
     HAS_DNS = False
 
-from .bounce_cleaner import get_blacklisted_emails
 from .auto_dispatcher import has_valid_mx
 
 EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,10}", re.I)
@@ -299,22 +297,6 @@ def extract_clean_emails_from_text(text: str, blacklisted_set: Set[str]) -> List
         
     return final_clean
 
-HASHTAG_REGEX = re.compile(r"#([a-zA-Z0-9_\u0600-\u06FF]{2,35})\b", re.UNICODE)
-
-def extract_hashtags_from_text(text: str) -> List[str]:
-    """Extracts organic hashtags and tags from LinkedIn post content."""
-    if not text:
-        return []
-    tags = []
-    seen = set()
-    skip_tags = {"linkedin", "post", "like", "share", "comment", "repost", "viral", "explore"}
-    for m in HASHTAG_REGEX.finditer(text):
-        tag = m.group(1).strip().lower()
-        if tag and tag not in seen and tag not in skip_tags and not tag.isdigit():
-            seen.add(tag)
-            tags.append(tag)
-    return tags[:10]
-
 def extract_linkedin_activity_id(url: str) -> Optional[str]:
     """Extracts unique numeric activity, share, or ugcPost Snowflake ID from LinkedIn post URLs."""
     if not url:
@@ -482,63 +464,6 @@ def extract_yahoo_redirect_url(href: str) -> Optional[str]:
         return href.split("?")[0].rstrip("/")
     return None
 
-def extract_bing_redirect_url(href: str) -> Optional[str]:
-    """Extracts destination LinkedIn URL from Bing search results or /ck/a? redirect wrappers."""
-    if not href:
-        return None
-    # Filter out internal Bing navigation links (search, copilot, etc.)
-    if any(p in href for p in ("bing.com/search", "copilotsearch", "/search?", "bing.com/images", "bing.com/news")):
-        return None
-    # Case 1: Direct LinkedIn URL in href
-    if ("linkedin.com/posts" in href or "linkedin.com/feed/update" in href) and href.startswith("http"):
-        return href.split("?")[0].rstrip("/")
-    # Case 2: Bing's /ck/a?! redirect wrapper — real URL is base64-encoded in the p= parameter
-    if "/ck/a?" in href and "p=" in href:
-        try:
-            # Format: /ck/a?!&&p=<base64>JmltdH...
-            m = re.search(r"[?&]p=([a-zA-Z0-9_\-]+)", href)
-            if m:
-                b64_str = m.group(1)
-                # Bing base64 uses URL-safe alphabet
-                b64_str += "=" * ((4 - len(b64_str) % 4) % 4)
-                decoded = base64.urlsafe_b64decode(b64_str).decode("utf-8", errors="ignore")
-                # The decoded string often starts with the URL
-                url_m = re.search(r"https?://[^\s\"'>]+linkedin\.com/(?:posts|feed/update)[^\s\"'>]*", decoded)
-                if url_m:
-                    return url_m.group(0).split("?")[0].rstrip("/")
-        except Exception:
-            pass
-    # Case 3: Legacy Bing u=a1<base64> format
-    if "/ck/a?" in href and "u=" in href:
-        try:
-            m = re.search(r"[?&]u=a1([a-zA-Z0-9_\-]+)", href)
-            if m:
-                b64_str = m.group(1)
-                b64_str += "=" * ((4 - len(b64_str) % 4) % 4)
-                decoded = base64.urlsafe_b64decode(b64_str).decode("utf-8", errors="ignore")
-                if ("linkedin.com/posts" in decoded or "linkedin.com/feed/update" in decoded) and decoded.startswith("http"):
-                    return decoded.split("?")[0].rstrip("/")
-        except Exception:
-            pass
-    return None
-
-def extract_ddg_redirect_url(href: str) -> Optional[str]:
-    """Extracts destination LinkedIn URL from DuckDuckGo /l/?uddg= redirect wrapper."""
-    if not href or any(eng in href for eng in ("duckduckgo.com/html/?q=", "duckduckgo.com/?q=")):
-        return None
-    if "uddg=" in href:
-        try:
-            m = re.search(r"uddg=([^&]+)", href)
-            if m:
-                decoded = urllib.parse.unquote(m.group(1))
-                if ("linkedin.com/posts" in decoded or "linkedin.com/feed/update" in decoded) and decoded.startswith("http"):
-                    return decoded.split("?")[0].rstrip("/")
-        except Exception:
-            pass
-    if ("linkedin.com/posts" in href or "linkedin.com/feed/update" in href) and href.startswith("http"):
-        return href.split("?")[0].rstrip("/")
-    return None
-
 def parse_author_info_from_url(post_url: str, title_hint: str = "") -> Dict[str, str]:
     """Derives author name and slug from linkedin.com/posts/john-doe-123_... URL or search title."""
     if title_hint:
@@ -563,68 +488,6 @@ def parse_author_info_from_url(post_url: str, title_hint: str = "") -> Dict[str,
     except Exception:
         pass
     return {"slug": "", "name": "LinkedIn Recruiter"}
-
-LOCATION_MAPPINGS = {
-    "remote": '("remote" OR "work from home" OR "anywhere" OR "WFH" OR "telecommute")',
-    "remote us": '("remote" AND ("USA" OR "United States" OR "US"))',
-    "remote europe": '("remote" AND ("Europe" OR "EMEA" OR "UK" OR "Germany"))',
-    "remote mena": '("remote" AND ("MENA" OR "UAE" OR "Saudi" OR "Morocco"))',
-    "united states": '("United States" OR "USA" OR "US")',
-    "usa": '("United States" OR "USA" OR "US")',
-    "us": '("United States" OR "USA" OR "US")',
-    "new york": '("New York" OR "NYC")',
-    "san francisco": '("San Francisco" OR "Bay Area" OR "Silicon Valley")',
-    "united kingdom": '("United Kingdom" OR "UK" OR "London")',
-    "uk": '("United Kingdom" OR "UK" OR "London")',
-    "london": '("London" OR "UK")',
-    "canada": '("Canada" OR "Toronto" OR "Vancouver" OR "Montreal")',
-    "uae": '("UAE" OR "Dubai" OR "United Arab Emirates" OR "Abu Dhabi")',
-    "dubai": '("Dubai" OR "UAE" OR "United Arab Emirates")',
-    "united arab emirates": '("United Arab Emirates" OR "UAE" OR "Dubai")',
-    "saudi arabia": '("Saudi Arabia" OR "KSA" OR "Riyadh" OR "Jeddah")',
-    "ksa": '("Saudi Arabia" OR "KSA" OR "Riyadh")',
-    "riyadh": '("Riyadh" OR "Saudi Arabia")',
-    "morocco": '("Morocco" OR "Casablanca" OR "Rabat" OR "Maroc")',
-    "maroc": '("Morocco" OR "Casablanca" OR "Rabat" OR "Maroc")',
-    "casablanca": '("Casablanca" OR "Morocco")',
-    "germany": '("Germany" OR "Berlin" OR "Munich" OR "Frankfurt" OR "Deutschland")',
-    "berlin": '("Berlin" OR "Germany")',
-    "france": '("France" OR "Paris" OR "Lyon")',
-    "paris": '("Paris" OR "France")',
-    "netherlands": '("Netherlands" OR "Amsterdam" OR "Holland")',
-    "amsterdam": '("Amsterdam" OR "Netherlands")',
-    "switzerland": '("Switzerland" OR "Zurich" OR "Geneva")',
-    "spain": '("Spain" OR "Madrid" OR "Barcelona")',
-    "italy": '("Italy" OR "Rome" OR "Milan")',
-    "ireland": '("Ireland" OR "Dublin")',
-    "poland": '("Poland" OR "Warsaw")',
-    "sweden": '("Sweden" OR "Stockholm")',
-    "belgium": '("Belgium" OR "Brussels")',
-    "singapore": '("Singapore")',
-    "australia": '("Australia" OR "Sydney" OR "Melbourne")',
-    "india": '("India" OR "Bangalore" OR "Hyderabad" OR "Pune" OR "Mumbai")',
-    "egypt": '("Egypt" OR "Cairo")',
-    "qatar": '("Qatar" OR "Doha")',
-    "kuwait": '("Kuwait")',
-    "bahrain": '("Bahrain" OR "Manama")',
-    "oman": '("Oman" OR "Muscat")',
-    "jordan": '("Jordan" OR "Amman")',
-    "austria": '("Austria" OR "Vienna" OR "Wien")',
-    "denmark": '("Denmark" OR "Copenhagen")',
-    "norway": '("Norway" OR "Oslo")',
-    "portugal": '("Portugal" OR "Lisbon" OR "Porto")',
-    "mexico": '("Mexico" OR "Mexico City" OR "CDMX")',
-    "brazil": '("Brazil" OR "Brasil" OR "São Paulo" OR "Rio de Janeiro")',
-    "argentina": '("Argentina" OR "Buenos Aires")',
-    "colombia": '("Colombia" OR "Bogotá" OR "Medellin")',
-    "chile": '("Chile" OR "Santiago")',
-    "japan": '("Japan" OR "Tokyo")',
-    "south korea": '("South Korea" OR "Korea" OR "Seoul")',
-    "new zealand": '("New Zealand" OR "Auckland")',
-    "malaysia": '("Malaysia" OR "Kuala Lumpur")',
-    "philippines": '("Philippines" OR "Manila")',
-    "indonesia": '("Indonesia" OR "Jakarta")',
-}
 
 LOCATION_KEYWORDS = {
     "remote": ["remote", "work from home", "wfh", "anywhere", "telecommute", "100% remote"],
@@ -1172,16 +1035,6 @@ def is_snippet_unambiguously_disqualified(text: str) -> bool:
             return True
     return False
 
-def is_disqualified_post(text: str) -> bool:
-    """Check for full text matching non-recruitment patterns."""
-    if not text or is_linkedin_boilerplate(text):
-        return True
-    lower_t = text.lower()
-    for pattern in COMPILED_NON_RECRUITMENT:
-        if pattern.search(lower_t):
-            return True
-    return False
-
 def analyze_recruitment_intent(text: str, author_headline: str = "", extra_context: str = "") -> Tuple[bool, str, List[str]]:
     """
     Analyzes post content, headline, and extra metadata to verify genuine recruitment/hiring intent.
@@ -1240,37 +1093,6 @@ def analyze_recruitment_intent(text: str, author_headline: str = "", extra_conte
 
     return True, "Verified genuine recruitment post", detected_signals
 
-def get_role_variants(clean_role: str) -> List[str]:
-    """Generates natural synonyms (e.g. Developer <-> Engineer) to maximize recruiter post discovery."""
-    variants = [clean_role]
-    lower_r = clean_role.lower()
-    if "developer" in lower_r:
-        variants.append(re.sub(r'(?i)\bdeveloper\b', 'Engineer', clean_role))
-    elif "engineer" in lower_r:
-        variants.append(re.sub(r'(?i)\bengineer\b', 'Developer', clean_role))
-    return list(dict.fromkeys(variants))
-
-def build_post_and_feed_queries(role: str, loc_str: str, phrases: List[str]) -> List[str]:
-    """Generates both linkedin.com/posts and linkedin.com/feed/update queries for high discovery rate."""
-    queries = []
-    loc_part = f'"{loc_str}"' if loc_str and not loc_str.startswith('"') and not loc_str.startswith("(") else loc_str
-    for p in phrases:
-        queries.append(f'site:linkedin.com/posts "{role}" {loc_part} {p}'.strip())
-    # Add top feed/update queries
-    for p in phrases[:3]:
-        queries.append(f'site:linkedin.com/feed/update "{role}" {loc_part} {p}'.strip())
-    return queries
-
-CORE_HIRING_TAGS = [
-    "hiring", "urgenthiring", "hiringalert", "jobopening", "jobopportunity",
-    "nowhiring", "recruiting", "careers", "immediatejoiner", "vacancy",
-    "employment", "recruitment", "hiringnow", "jobalert", "talentacquisition"
-]
-
-WORK_MODE_TAGS = [
-    "remote", "remotejob", "remotework", "workfromhome", "wfh", "telecommute"
-]
-
 ROLE_DOMAIN_KEYWORDS = {
     "flutter": ["flutter", "flutterdeveloper", "flutterdev", "dart", "mobiledev", "mobiledevelopment", "appdeveloper", "crossplatform", "ios", "android"],
     "react": ["react", "reactjs", "frontend", "frontenddeveloper", "javascript", "typescript", "webdev", "fullstack", "nextjs"],
@@ -1293,30 +1115,6 @@ ROLE_DOMAIN_KEYWORDS = {
     "security": ["cybersecurity", "infosec", "security", "securityengineer", "ethicalhacking"],
     "blockchain": ["blockchain", "web3", "crypto", "smartcontracts", "solidity"],
     "fullstack": ["fullstack", "fullstackdeveloper", "softwareengineer", "developer", "techjobs"]
-}
-
-LOCATION_TAG_MAPPINGS = {
-    "united states": ["usjobs", "techjobsusa", "hiringusa", "usajobs"],
-    "usa": ["usjobs", "techjobsusa", "hiringusa", "usajobs"],
-    "united kingdom": ["ukjobs", "londonjobs", "techjobsuk"],
-    "uk": ["ukjobs", "londonjobs", "techjobsuk"],
-    "germany": ["germanyjobs", "berlinjobs", "techjobsde", "jobsingermany"],
-    "france": ["recrutementfrance", "parisjobs", "emploi", "techjobsfrance"],
-    "uae": ["dubaijobs", "uaejobs", "gulfjobs", "middleeastjobs"],
-    "united arab emirates": ["dubaijobs", "uaejobs", "gulfjobs", "middleeastjobs"],
-    "saudi arabia": ["saudijobs", "riyadhjobs", "recruitmentksa"],
-    "qatar": ["qatarjobs", "dohajobs", "gulfjobs"],
-    "kuwait": ["kuwaitjobs", "gulfjobs"],
-    "morocco": ["moroccojobs", "recrutementmaroc", "casablancajobs"],
-    "egypt": ["egyptjobs", "cairojobs"],
-    "canada": ["canadajobs", "torontojobs", "vancouverjobs"],
-    "netherlands": ["amsterdamjobs", "dutchjobs"],
-    "switzerland": ["swissjobs", "zurichjobs"],
-    "spain": ["madridjobs", "barcelonajobs", "spainjobs"],
-    "singapore": ["singaporejobs", "sgjobs"],
-    "australia": ["australiajobs", "sydneyjobs", "melbournejobs"],
-    "remote": ["remotejob", "remotework", "workfromhome", "wfh", "remote"],
-    "worldwide": ["remotejob", "remotework", "workfromhome", "wfh", "worldwidejobs"]
 }
 
 DISQUALIFIED_NON_TECH_OCCUPATIONS = [
@@ -1711,8 +1509,6 @@ def unroll_linkedin_shortlinks(text: str, blacklisted_set: Set[str]) -> Dict[str
     return result
 
 
-_DOMAIN_CACHE: Dict[str, Optional[str]] = {}
-
 INVALID_COMPANY_NAMES = {
     "we", "i", "our", "my", "us", "you", "the", "this", "that", "here", "now",
     "were", "we're", "im", "i'm", "looking", "seeking", "hiring", "team",
@@ -1739,79 +1535,6 @@ def _is_valid_company_candidate(cand: str) -> bool:
     return True
 
 
-def resolve_company_recruiter_domain(company_name: str) -> Optional[str]:
-    """Resolves authoritative corporate domain for a verified company name."""
-    if not _is_valid_company_candidate(company_name):
-        return None
-
-    clean_name = re.sub(r"\b(inc|corp|ltd|llc|gmbh|sa|srl|b\.v\.|bv|group|technologies|technology|solutions|software|softwares|services)\b", "", company_name, flags=re.I).strip(" ,.-")
-    if not clean_name or len(clean_name) < 4 or clean_name.lower() in INVALID_COMPANY_NAMES:
-        return None
-
-    cache_key = clean_name.lower()
-    if cache_key in _DOMAIN_CACHE:
-        return _DOMAIN_CACHE[cache_key]
-
-    norm_target = re.sub(r"[^a-z0-9]", "", clean_name.lower())
-    if len(norm_target) < 4:
-        _DOMAIN_CACHE[cache_key] = None
-        return None
-
-    try:
-        url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={urllib.parse.quote(clean_name)}"
-        r = requests.get(url, timeout=2.0)
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list):
-                for item in data:
-                    sugg_name = re.sub(r"[^a-z0-9]", "", (item.get("name") or "").lower())
-                    dom = (item.get("domain") or "").lower()
-                    if dom and "." in dom and dom not in FALSE_DOMAINS:
-                        dom_stem = re.sub(r"[^a-z0-9]", "", dom.split(".")[0])
-                        if sugg_name == norm_target or dom_stem == norm_target:
-                            _DOMAIN_CACHE[cache_key] = dom
-                            return dom
-    except Exception:
-        pass
-
-    _DOMAIN_CACHE[cache_key] = None
-    return None
-
-
-def probe_or_derive_talent_emails(company_name: str, domain: str, blacklisted_set: Set[str]) -> List[Dict[str, Any]]:
-    """
-    Mines real, deliverable talent acquisition emails from an explicitly verified corporate domain.
-    """
-    found = []
-    if not domain or not strictly_verify_mx(domain):
-        return found
-
-    seen = set()
-    recruiter_prefixes = ["careers", "jobs", "recruiting", "talent", "hr"]
-    for prefix in recruiter_prefixes:
-        cand_email = f"{prefix}@{domain}".lower()
-        if cand_email in blacklisted_set or cand_email in seen:
-            continue
-        is_valid, _ = verify_recruiter_email_strictly(cand_email, blacklisted_set)
-        if is_valid:
-            seen.add(cand_email)
-            tier_meta = classify_recruiter_email_tier(cand_email, source="company_domain")
-            found.append({
-                "email": cand_email,
-                "name": f"Talent Team at {company_name}",
-                "title": "Talent Acquisition",
-                "source": "company_domain",
-                "verified": True,
-                "verification_status": "MX Deliverable",
-                **tier_meta,
-            })
-            if len(found) >= 2:
-                break
-
-    return found
-
-
-_BRAVE_SEMAPHORE = threading.Semaphore(2)
 _DDGS_SEMAPHORE = threading.Semaphore(8)
 
 COUNTRY_LINKEDIN_SUBDOMAINS: Dict[str, str] = {

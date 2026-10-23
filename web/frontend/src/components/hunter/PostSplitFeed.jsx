@@ -78,16 +78,16 @@ export default function PostSplitFeed({
             onClick={() => onSelectPost(post.id)}
             className={`group p-4 rounded-2xl border transition-all cursor-pointer space-y-2.5 relative overflow-hidden ${
               isSelected
-                ? 'bg-gradient-to-br from-slate-800/95 via-slate-900/95 to-blue-950/40 border-blue-500/80 shadow-lg shadow-blue-500/15 ring-1 ring-blue-500/50'
+                ? 'bg-gradient-to-br from-blue-950/60 via-slate-900/95 to-indigo-950/50 border-blue-500/80 shadow-lg shadow-blue-500/15 ring-1 ring-blue-500/50'
                 : 'glass-panel hover:bg-slate-800/60 hover:border-white/[0.14]'
-            } ${isApplied ? 'border-l-4 border-l-emerald-500' : ''}`}
+            } ${isApplied ? 'border-l-4 border-l-blue-500' : ''}`}
           >
             {/* Active Left Glow Accent with Shared Layout Spring */}
             {isSelected && (
               <motion.div
                 layoutId="active-post-left-accent"
                 transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-400 via-indigo-500 to-purple-500 z-0"
+                className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-400 via-indigo-500 to-blue-600 z-0"
               />
             )}
 
@@ -100,16 +100,12 @@ export default function PostSplitFeed({
               </h4>
               <div className="flex items-center gap-1 shrink-0">
                 {post.role_fit_score != null && (
-                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg border bg-purple-500/15 border-purple-500/30 text-purple-300">
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg border bg-blue-500/15 border-blue-500/35 text-blue-300">
                     {post.role_fit_score}% Fit
                   </span>
                 )}
                 {post.score != null && post.score !== post.role_fit_score && (
-                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-lg border ${
-                    post.score >= 75
-                      ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                      : 'bg-blue-500/15 border-blue-500/35 text-blue-300'
-                  }`}>
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg border bg-blue-500/15 border-blue-500/35 text-blue-300">
                     {post.score}% CV
                   </span>
                 )}
@@ -132,17 +128,17 @@ export default function PostSplitFeed({
                 {post.company}
               </span>
               {post.location && (
-                <span className="text-emerald-300 text-[10px] font-semibold bg-emerald-950/60 px-1.5 py-0.5 rounded-md border border-emerald-800/60 flex items-center gap-0.5">
-                  <MapPin size={9} /> {post.location}
+                <span className="text-slate-300 text-[10px] font-semibold bg-white/[0.04] px-1.5 py-0.5 rounded-md border border-white/[0.08] flex items-center gap-0.5">
+                  <MapPin size={9} className="text-blue-400" /> {post.location}
                 </span>
               )}
               {post.age_str && (
                 <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border flex items-center gap-0.5 ${
                   isRecent
-                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                    ? 'bg-blue-500/10 border-blue-500/25 text-blue-300'
                     : 'bg-white/[0.03] border-white/[0.07] text-slate-400'
                 }`}>
-                  {isRecent ? <Flame size={9} className="text-amber-400" /> : <Clock size={9} />}
+                  {isRecent ? <Flame size={9} className="text-blue-400" /> : <Clock size={9} />}
                   {post.age_str}
                 </span>
               )}
@@ -157,14 +153,14 @@ export default function PostSplitFeed({
             <div className="flex items-center justify-between text-[11px] pt-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 {hasEmail && (
-                  <span className="text-emerald-300 font-bold flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/25 text-[10px]">
-                    <ShieldCheck size={10} className="text-emerald-400" />
+                  <span className="text-blue-300 font-bold flex items-center gap-1 bg-blue-500/10 px-2 py-0.5 rounded-md border border-blue-500/25 text-[10px]">
+                    <ShieldCheck size={10} className="text-blue-400" />
                     {emailBadge}
                   </span>
                 )}
                 {isHumanRecruiter && (
-                  <span className="text-indigo-300 font-semibold flex items-center gap-1 bg-indigo-500/10 px-1.5 py-0.5 rounded-md border border-indigo-500/25 text-[10px]">
-                    <UserCheck size={10} className="text-indigo-400" />
+                  <span className="text-slate-300 font-semibold flex items-center gap-1 bg-white/[0.04] px-1.5 py-0.5 rounded-md border border-white/[0.08] text-[10px]">
+                    <UserCheck size={10} className="text-blue-400" />
                     Recruiter
                   </span>
                 )}
@@ -177,7 +173,7 @@ export default function PostSplitFeed({
 
               <div className="flex items-center gap-1.5 shrink-0">
                 {isApplied ? (
-                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                  <span className="text-blue-400 font-bold flex items-center gap-1">
                     <CheckCheck size={11} /> Applied
                   </span>
                 ) : (

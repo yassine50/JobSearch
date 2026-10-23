@@ -199,7 +199,7 @@ client.interceptors.response.use(
       reqUrl.includes('/auth/register') ||
       reqUrl.includes('/auth/google') ||
       reqUrl.includes('/auth/me')
-    if (st === 401 && !isAuthEndpoint && window.location.pathname !== '/') {
+    if (st === 401 && !isAuthEndpoint && window.location.pathname !== '/' && window.location.pathname !== '/seeker') {
       clearAllCache()
       localStorage.removeItem('token')
       localStorage.removeItem('user')

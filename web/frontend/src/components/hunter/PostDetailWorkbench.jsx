@@ -158,10 +158,10 @@ export default function PostDetailWorkbench({
           </motion.div>
         </div>
 
-        {/* Action Toolbar */}
+        {/* Unified Action Toolbar (Primary Blue CTA + Consistent Slate Secondary Buttons) */}
         <div className="flex items-center gap-2 pt-1 flex-wrap">
           {isApplied ? (
-            <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-300 bg-emerald-950/90 border border-emerald-600/50 px-4 py-2.5 rounded-xl shadow-xs">
+            <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-300 bg-emerald-500/15 border border-emerald-500/35 px-4 py-2.5 rounded-xl shadow-xs">
               <CheckCheck size={14} className="stroke-[3]" /> Applied
             </div>
           ) : hasEmails ? (
@@ -171,17 +171,17 @@ export default function PostDetailWorkbench({
               type="button"
               onClick={() => onAutoApply(post, firstEmail)}
               disabled={applying}
-              className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-amber-500/20 transition cursor-pointer disabled:opacity-50"
+              className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/25 transition cursor-pointer disabled:opacity-50"
             >
-              <Zap size={14} className="fill-slate-950" />
-              <span>⚡ Auto-Apply (Tailored CV)</span>
+              <Zap size={14} />
+              <span>Auto-Apply (Tailored CV)</span>
             </motion.button>
           ) : (
             <a
               href={post.post_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="shimmer-btn flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-500/20 transition cursor-pointer"
+              className="shimmer-btn flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 transition cursor-pointer"
             >
               <ExternalLink size={14} />
               <span>View on LinkedIn</span>
@@ -193,10 +193,10 @@ export default function PostDetailWorkbench({
               href={post.external_apply_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-emerald-200 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/70 border border-emerald-700/70 px-3.5 py-2.5 rounded-xl transition cursor-pointer font-bold"
+              className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
               title="Unrolled external application link from post"
             >
-              <Link2 size={13} className="text-emerald-400" />
+              <Link2 size={13} className="text-blue-400" />
               <span>Direct Apply Link</span>
             </a>
           )}
@@ -206,9 +206,9 @@ export default function PostDetailWorkbench({
             whileTap={{ scale: 0.97 }}
             type="button"
             onClick={() => onTailor(post)}
-            className="flex items-center gap-1.5 text-xs text-purple-200 hover:text-white bg-purple-950/60 hover:bg-purple-900/80 border border-purple-700/70 px-3.5 py-2.5 rounded-xl transition cursor-pointer font-bold"
+            className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
           >
-            <Sparkles size={13} className="text-amber-400" />
+            <Sparkles size={13} className="text-blue-400" />
             <span>Tailor CV</span>
           </motion.button>
 
@@ -228,10 +228,10 @@ export default function PostDetailWorkbench({
             whileTap={{ scale: 0.97 }}
             type="button"
             onClick={() => setContactsOpen(true)}
-            className="flex items-center gap-1.5 text-xs text-cyan-200 hover:text-white bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-500/35 px-3.5 py-2.5 rounded-xl transition cursor-pointer font-bold"
+            className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
             title="Discover company recruiters, HR contacts & MX-verified emails"
           >
-            <Users size={13} className="text-cyan-400" />
+            <Users size={13} className="text-blue-400" />
             <span>Find HR &amp; Emails</span>
           </motion.button>
 
@@ -248,7 +248,7 @@ export default function PostDetailWorkbench({
             type="button"
             onClick={() => !isApplied && onSave(post)}
             disabled={isSaved || isApplied}
-            className="p-2.5 rounded-xl border border-white/[0.08] hover:bg-white/[0.06] text-slate-300 hover:text-white transition cursor-pointer disabled:opacity-50"
+            className="p-2.5 rounded-xl border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] text-slate-300 hover:text-white transition cursor-pointer disabled:opacity-50"
             title={isSaved ? 'Saved to pipeline' : 'Save to pipeline'}
           >
             <Bookmark size={14} className={isSaved ? 'fill-blue-400 text-blue-400' : ''} />
@@ -262,17 +262,17 @@ export default function PostDetailWorkbench({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.08, duration: 0.3 }}
-          className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-indigo-950/35 to-slate-950/60 border border-purple-500/30 space-y-2.5"
+          className="p-4 rounded-2xl bg-slate-950/60 border border-blue-500/25 space-y-2.5"
         >
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <span className="text-[11px] font-extrabold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Mail size={12} className="text-purple-400" /> Mined Recruiter Direct Mailbox
+            <span className="text-[11px] font-extrabold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Mail size={12} className="text-blue-400" /> Mined Recruiter Direct Mailbox
             </span>
             <span className="text-[10px] text-emerald-300 font-bold bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1">
               <ShieldCheck size={11} className="text-emerald-400" /> {emailBadge}
             </span>
           </div>
-          <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-950/90 border border-white/[0.07]">
+          <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-900/90 border border-white/[0.07]">
             <div className="flex items-center gap-2 truncate">
               <span className="text-xs font-mono font-bold text-white truncate">{firstEmail}</span>
               {emails[0]?.name && <span className="text-xs text-slate-400 truncate">({emails[0].name})</span>}
@@ -280,7 +280,7 @@ export default function PostDetailWorkbench({
             <button
               type="button"
               onClick={() => handleCopyEmail(firstEmail)}
-              className="text-xs font-semibold text-purple-300 hover:text-white flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/30 border border-purple-500/25 cursor-pointer transition shrink-0"
+              className="text-xs font-semibold text-blue-300 hover:text-white flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/30 border border-blue-500/25 cursor-pointer transition shrink-0"
             >
               {copiedEmail === firstEmail ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
               <span>{copiedEmail === firstEmail ? 'Copied!' : 'Copy Email'}</span>

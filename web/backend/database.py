@@ -138,6 +138,7 @@ def init_db():
         "ALTER TABLE email_settings ADD COLUMN gmail_refresh_token TEXT DEFAULT ''",
         "ALTER TABLE cv_uploads ADD COLUMN persona_name VARCHAR DEFAULT 'Primary Resume'",
         "ALTER TABLE cv_uploads ADD COLUMN is_active BOOLEAN DEFAULT 1",
+        "ALTER TABLE cv_uploads ADD COLUMN parsed_json TEXT",
         "ALTER TABLE applications ADD COLUMN interview_prep_json TEXT DEFAULT ''",
         "CREATE INDEX IF NOT EXISTS idx_apps_user_applied ON applications(user_id, applied_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_apps_user_status ON applications(user_id, status)",

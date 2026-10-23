@@ -886,30 +886,3 @@ def enrich_job_emails(job: dict, fast_mode: bool = False) -> List[dict]:
     ranked = sorted(verified_results, key=sort_key, reverse=True)
     return ranked[:4]
 
-
-def batch_enrich_jobs(jobs: List[dict], max_workers: int = 12) -> List[dict]:
-    """Enriches an entire batch in parallel."""
-    if not jobs:
-        return []
-
-    def _worker(j: dict) -> dict:
-        try:
-            j["emails"] = enrich_job_emails(j)
-            if not j.get("company_domain") and j["emails"]:
-                j["company_domain"] = j["emails"][0]["email"].split("@")[-1]
-            if not j.get("company") and j.get("company_domain"):
-                j["company"] = j["company_domain"].split(".")[0].capitalize()
-        except Exception as err:
-            logger.error(f"[RecruiterHunter] Error enriching '{j.get('company')}': {err}")
-        return j
-
-    ex = ThreadPoolExecutor(max_workers=max_workers)
-    futures = [ex.submit(_worker, job) for job in jobs]
-    try:
-        for f in as_completed(futures, timeout=6.0):
-            pass
-    except Exception:
-        pass
-    ex.shutdown(wait=False, cancel_futures=True)
-
-    return jobs

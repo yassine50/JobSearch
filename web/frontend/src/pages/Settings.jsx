@@ -517,15 +517,15 @@ export default function Settings() {
           {/* Blacklisted & Bounced Emails */}
           <Section title="Blacklisted & Bounced Emails" sub="Zero-bounce protection across all recruiter post & job board searches" icon={ShieldAlert}>
             <div className="space-y-4">
-              <div className="bg-amber-950/40 border border-amber-500/30 rounded-2xl p-4 text-xs text-amber-200/90 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="bg-slate-950/60 border border-blue-500/25 rounded-2xl p-4 text-xs text-slate-300 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div>
-                  <p className="font-extrabold text-amber-200 mb-0.5">🌐 Platform-Wide Global Protection &amp; Zero Bounces</p>
+                  <p className="font-extrabold text-white mb-0.5">🌐 Platform-Wide Global Protection &amp; Zero Bounces</p>
                   Emails flagged with <strong>"Message bloqué"</strong> or <strong>"Adresse introuvable"</strong> are permanently blacklisted for <strong>all users</strong> across the platform.
                 </div>
                 <button
                   onClick={handleSyncBounces}
                   disabled={syncingBounces}
-                  className="shimmer-btn shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs px-4 py-2 rounded-xl shadow-md transition cursor-pointer"
+                  className="shimmer-btn shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-2 rounded-xl shadow-md transition cursor-pointer"
                 >
                   {syncingBounces ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
                   <span>{syncingBounces ? 'Scanning...' : 'Sync Bounces'}</span>

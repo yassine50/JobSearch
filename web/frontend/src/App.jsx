@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { AnimatePresence } from 'framer-motion'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
+import { ThemeProvider } from './context/ThemeContext.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
 import SEOHead      from './components/SEOHead.jsx'
@@ -28,10 +28,16 @@ const P = ({ C }) => <PrivateRoute><C /></PrivateRoute>
 
 function AnimatedRoutes() {
   const location = useLocation()
+  const { isAuth } = useAuth()
+  useEffect(() => {
+    if (isAuth) prefetchWorkspaceData()
+  }, [isAuth])
   return (
     <Routes location={location}>
-      {/* Public SEO Landing Routes */}
+      {/* Public Landing Page with Live App Test Workbench + Guest Seeker Route */}
       <Route path="/"                           element={<Login />} />
+      <Route path="/seeker"                     element={<Seeker />} />
+      <Route path="/login"                      element={<Login />} />
       <Route path="/ats-resume-checker"         element={<Login />} />
       <Route path="/linkedin-recruiter-posts"   element={<Login />} />
       <Route path="/ai-cover-letter-generator"  element={<Login />} />
@@ -40,7 +46,6 @@ function AnimatedRoutes() {
 
       {/* Authenticated Workspace Routes */}
       <Route path="/dashboard"    element={<P C={Dashboard}   />} />
-      <Route path="/seeker"       element={<P C={Seeker}      />} />
       <Route path="/recruiter"    element={<P C={Recruiter}   />} />
       <Route path="/tracker"      element={<P C={Tracker}     />} />
       <Route path="/coverletter"  element={<P C={CoverLetter} />} />
@@ -55,15 +60,17 @@ function AnimatedRoutes() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <ToastProvider>
-        <AuthProvider>
-          <BrowserRouter>
-            <SEOHead />
-            <CommandPalette />
-            <AnimatedRoutes />
-          </BrowserRouter>
-        </AuthProvider>
-      </ToastProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <BrowserRouter>
+              <SEOHead />
+              <CommandPalette />
+              <AnimatedRoutes />
+            </BrowserRouter>
+          </AuthProvider>
+        </ToastProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   )
 }

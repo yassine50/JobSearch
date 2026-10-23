@@ -38,6 +38,8 @@ class CvUpload(Base):
     is_active = Column(Boolean, default=True)
     filename = Column(String); text_content = Column(Text)
     file_data = deferred(Column(LargeBinary, nullable=True))
+    # User-reviewed structured CV (CV.to_dict() JSON). When set, tailoring uses it instead of re-parsing file_data.
+    parsed_json = Column(Text, nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="cv_uploads")
 

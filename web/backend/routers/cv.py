@@ -90,9 +90,14 @@ async def upload_cv(
 
     active_cv = _get_active_cv(db, current_user.id)
     if active_cv and not persona_name:
+        db.query(models.CvUpload).filter(
+            models.CvUpload.user_id == current_user.id,
+            models.CvUpload.id != active_cv.id,
+        ).update({"is_active": False})
         active_cv.filename = file.filename
         active_cv.text_content = text
         active_cv.file_data = content
+        active_cv.parsed_json = None   # new file → previous review no longer applies
         active_cv.is_active = True
         db.commit()
         return {
@@ -360,12 +365,6 @@ _TECH_SKILLS = [
     "C++","C#","Unity","Unreal","WordPress","Shopify","Salesforce","SAP"
 ]
 
-_COUNTRIES = [
-    "USA","UK","France","Germany","Canada","Australia","Netherlands","Spain","Belgium",
-    "Switzerland","Ireland","Sweden","Denmark","Norway","UAE","Singapore","Poland",
-    "Romania","Morocco","Tunisia","Saudi Arabia","Qatar","Brazil","India","Remote"
-]
-
 _LOC_PATTERN = _re.compile(
     r'\b(London|Paris|Berlin|Amsterdam|Madrid|Barcelona|Dubai|Remote|New York|San Francisco|'
     r'Toronto|Sydney|Singapore|Bucharest|Romania|Morocco|France|Germany|UK|USA|UAE|Canada|'
@@ -470,6 +469,7 @@ def tailor_user_cv(req: TailorCvRequest,
                    db: Session = Depends(get_db),
                    current_user: models.User = Depends(get_current_user)):
     """Analyzes the CV type & structure first, then returns tailored preview, scores, and adjustments."""
+    import base64
     cv = _get_active_cv(db, current_user.id)
     if not cv or not cv.text_content:
         raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
@@ -478,6 +478,8 @@ def tailor_user_cv(req: TailorCvRequest,
         r = tailor_cv_detailed(cv, req.job_title, req.company, req.job_description)
         if not r:
             raise HTTPException(500, "Could not analyze and tailor CV.")
+        pdf_bytes = r.get("pdf_bytes")
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii") if pdf_bytes else None
         return {
             "original_score": r.get("original_score", 0),
             "tailored_score": r.get("tailored_score", 0),
@@ -490,11 +492,72 @@ def tailor_user_cv(req: TailorCvRequest,
             "tips": r.get("tips", []),
             "filename": r.get("filename", "Tailored_CV.pdf"),
             "tailored_text": r.get("tailored_text", ""),
+            "extraction_quality": r.get("extraction_quality", {}),
+            "score_breakdown": r.get("score_breakdown", {}),
+            "core_competencies": r.get("core_competencies", []),
+            "pdf_base64": pdf_b64,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ─── Review-before-download: inspect & correct what was extracted from the CV file ───
+
+class ParsedCvPayload(BaseModel):
+    cv: dict
+
+
+@router.get("/parsed")
+def get_parsed_cv(db: Session = Depends(get_db),
+                  current_user: models.User = Depends(get_current_user)):
+    """Structured CV the tailoring engine will use + extraction confidence (reviewed version wins)."""
+    cv = _get_active_cv(db, current_user.id)
+    if not cv or not cv.text_content:
+        raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
+    try:
+        from web.backend.tailoring import extract_cv_structure
+        structured, quality = extract_cv_structure(cv)
+        return {"cv": structured, "quality": quality, "filename": cv.filename}
+    except Exception as e:
+        raise HTTPException(500, f"Could not read CV structure: {e}")
+
+
+@router.put("/parsed")
+def save_parsed_cv(payload: ParsedCvPayload,
+                   db: Session = Depends(get_db),
+                   current_user: models.User = Depends(get_current_user)):
+    """Save the user's corrections; all future tailoring uses this verified structure."""
+    import json
+    cv = _get_active_cv(db, current_user.id)
+    if not cv:
+        raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
+    from cv_engine.quality import cv_from_dict, assess_extraction
+    normalized = cv_from_dict(payload.cv)
+    if not normalized.name or not (normalized.experience or normalized.projects or normalized.education):
+        raise HTTPException(400, "Please keep at least your name and one experience, project or education entry.")
+    data = normalized.to_dict()
+    data["meta"] = {**(payload.cv.get("meta") or {}), "reviewed": True}
+    cv.parsed_json = json.dumps(data, ensure_ascii=False)
+    db.commit()
+    q = assess_extraction(None, normalized)
+    q.update({"reviewed": True, "level": "high", "score": max(q["score"], 90)})
+    return {"cv": data, "quality": q, "message": "Reviewed CV saved"}
+
+
+@router.delete("/parsed")
+def reset_parsed_cv(db: Session = Depends(get_db),
+                    current_user: models.User = Depends(get_current_user)):
+    """Discard the reviewed version and go back to automatic extraction."""
+    cv = _get_active_cv(db, current_user.id)
+    if not cv:
+        raise HTTPException(400, "No CV uploaded. Please upload your CV first.")
+    cv.parsed_json = None
+    db.commit()
+    from web.backend.tailoring import extract_cv_structure
+    structured, quality = extract_cv_structure(cv)
+    return {"cv": structured, "quality": quality, "message": "Reset to automatic extraction"}
 
 
 @router.post("/tailored-pdf")
@@ -509,7 +572,7 @@ def download_tailored_pdf(req: TailorCvRequest,
     try:
         from web.backend.tailoring import honest_tailored_attachment
         pdf_bytes, filename, original_score, tailored_score = honest_tailored_attachment(
-            cv, req.job_title, req.company, req.job_description
+            cv, req.job_title, req.company, req.job_description, allow_low_confidence=True
         )
         if not pdf_bytes:
             raise HTTPException(500, "PDF generation failed — no output returned.")

@@ -150,22 +150,13 @@ export default function JobDetailWorkbench({
                 {job.location || 'Remote'}
               </span>
               <span className="text-slate-600">·</span>
-              <span className={`px-2 py-0.5 rounded-lg font-bold text-[10px] uppercase border ${
-                isLinkedIn
-                  ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-                  : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-              }`}>
+              <span className="px-2 py-0.5 rounded-lg font-bold text-[10px] uppercase border bg-blue-500/10 text-blue-300 border-blue-500/25">
                 {job.site || 'Job Board'}
               </span>
               {job.age_str && (
                 <>
                   <span className="text-slate-600">·</span>
-                  <span className={`px-2 py-0.5 rounded-lg font-bold text-[10px] border ${
-                    job.is_under_24h || (job.age_hours != null && job.age_hours <= 24)
-                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 flex items-center gap-1'
-                      : 'bg-white/[0.04] text-slate-400 border-white/[0.08]'
-                  }`}>
-                    {(job.is_under_24h || (job.age_hours != null && job.age_hours <= 24)) && <span>⚡</span>}
+                  <span className="px-2 py-0.5 rounded-lg font-semibold text-[10px] border bg-white/[0.04] text-slate-300 border-white/[0.08] flex items-center gap-1">
                     {job.age_str}
                   </span>
                 </>
@@ -173,8 +164,8 @@ export default function JobDetailWorkbench({
               {!primaryEmail && isEasyApply && (
                 <>
                   <span className="text-slate-600">·</span>
-                  <span className="px-2 py-0.5 rounded-lg font-bold text-[10px] border bg-emerald-500/15 text-emerald-300 border-emerald-500/30 flex items-center gap-1">
-                    <Zap size={10} className="fill-emerald-400" />
+                  <span className="px-2 py-0.5 rounded-lg font-bold text-[10px] border bg-blue-500/10 text-blue-300 border-blue-500/25 flex items-center gap-1">
+                    <Zap size={10} />
                     Candidature Simplifiée
                   </span>
                 </>
@@ -182,26 +173,20 @@ export default function JobDetailWorkbench({
               {job.salary && (
                 <>
                   <span className="text-slate-600">·</span>
-                  <span className="text-emerald-400 font-bold">{job.salary}</span>
+                  <span className="text-blue-300 font-bold">{job.salary}</span>
                 </>
               )}
             </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <span className={`text-xs font-extrabold px-3 py-1.5 rounded-xl border flex items-center gap-1.5 shadow-sm ${
-              score >= 75
-                ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
-                : score >= 55
-                ? 'bg-blue-500/15 border-blue-500/35 text-blue-300'
-                : 'bg-amber-500/15 border-amber-500/35 text-amber-300'
-            }`}>
+            <span className="text-xs font-extrabold px-3 py-1.5 rounded-xl border flex items-center gap-1.5 shadow-sm bg-blue-500/15 border-blue-500/35 text-blue-300">
               <Target size={13} /> {score}% CV Match
             </span>
           </div>
         </div>
 
-        {/* Action Toolbar */}
+        {/* Unified Action Toolbar (Primary Blue CTA + Consistent Slate Secondary Buttons) */}
         <div className="flex items-center gap-2 pt-2 flex-wrap">
           {isApplied ? (
             <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/35 px-4 py-2.5 rounded-xl shadow-sm">
@@ -219,10 +204,10 @@ export default function JobDetailWorkbench({
                 recruiter_emails: [{ email: primaryEmail, name: 'Hiring Team' }]
               }, primaryEmail)}
               disabled={applying}
-              className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-amber-500/20 transition cursor-pointer disabled:opacity-50"
+              className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/25 transition cursor-pointer disabled:opacity-50"
             >
-              <Zap size={14} className="fill-slate-950" />
-              <span>⚡ Auto-Apply (Direct Email)</span>
+              <Zap size={14} />
+              <span>Auto-Apply (Direct Email)</span>
             </motion.button>
           ) : isEasyApply ? (
             <motion.button
@@ -231,10 +216,10 @@ export default function JobDetailWorkbench({
               whileTap={{ scale: 0.97 }}
               onClick={() => onEasyApply && onEasyApply(job)}
               disabled={applying}
-              className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-500/25 transition cursor-pointer disabled:opacity-50"
+              className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/25 transition cursor-pointer disabled:opacity-50"
             >
-              <Zap size={14} className="fill-white" />
-              <span>⚡ Auto-Apply (Candidature Simplifiée)</span>
+              <Zap size={14} />
+              <span>Auto-Apply (Candidature Simplifiée)</span>
             </motion.button>
           ) : (
             <a
@@ -254,35 +239,35 @@ export default function JobDetailWorkbench({
               href={jobUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/35 text-blue-200 hover:text-white font-bold text-xs transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 hover:text-white font-semibold text-xs transition cursor-pointer"
             >
-              <ExternalLink size={13} />
+              <ExternalLink size={13} className="text-blue-400" />
               <span>{isLinkedIn ? 'View on LinkedIn' : 'Apply on Portal'}</span>
             </a>
-          )}
-
-          {/* Mark as Applied button */}
-          {!isApplied && (
-            <button
-              type="button"
-              onClick={() => onMarkApplied && onMarkApplied(job)}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-200 hover:text-white font-bold text-xs transition cursor-pointer"
-              title="Mark this job as applied and save it into Tracker"
-            >
-              <CheckCheck size={14} className="text-emerald-400 stroke-[2.5]" />
-              <span>Mark as Applied</span>
-            </button>
           )}
 
           {/* 1-Click Tailor CV */}
           <button
             type="button"
             onClick={() => onTailor && onTailor(job)}
-            className="flex items-center gap-1.5 text-xs text-purple-200 hover:text-white bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 px-3.5 py-2.5 rounded-xl transition cursor-pointer font-bold"
+            className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
           >
-            <Sparkles size={13} className="text-amber-400" />
+            <Sparkles size={13} className="text-blue-400" />
             <span>Tailor CV</span>
           </button>
+
+          {/* Mark as Applied button */}
+          {!isApplied && (
+            <button
+              type="button"
+              onClick={() => onMarkApplied && onMarkApplied(job)}
+              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 hover:text-white font-semibold text-xs transition cursor-pointer"
+              title="Mark this job as applied and save it into Tracker"
+            >
+              <CheckCheck size={14} className="text-blue-400" />
+              <span>Mark as Applied</span>
+            </button>
+          )}
 
           {/* Connection Pitch */}
           <button
@@ -293,7 +278,7 @@ export default function JobDetailWorkbench({
               role_title: job.title,
               full_text: job.description
             })}
-            className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3 py-2.5 rounded-xl transition cursor-pointer font-semibold"
+            className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
           >
             <MessageSquare size={13} className="text-blue-400" />
             <span>Connection Pitch</span>
@@ -303,10 +288,10 @@ export default function JobDetailWorkbench({
           <button
             type="button"
             onClick={() => setContactsOpen(true)}
-            className="flex items-center gap-1.5 text-xs text-cyan-200 hover:text-white bg-cyan-950/50 hover:bg-cyan-900/60 border border-cyan-500/35 px-3.5 py-2.5 rounded-xl transition cursor-pointer font-bold"
+            className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
             title="Discover company recruiters, HR contacts & MX-verified emails"
           >
-            <Users size={13} className="text-cyan-400" />
+            <Users size={13} className="text-blue-400" />
             <span>Find HR &amp; Emails</span>
           </button>
 
@@ -319,10 +304,10 @@ export default function JobDetailWorkbench({
               }
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-sky-200 hover:text-white bg-sky-950/50 hover:bg-sky-900/60 border border-sky-500/35 px-3 py-2.5 rounded-xl transition cursor-pointer font-bold"
+              className="flex items-center gap-1.5 text-xs text-slate-200 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-3.5 py-2.5 rounded-xl transition cursor-pointer font-semibold"
               title={`Find ${job.company} engineers & hiring managers on LinkedIn for a warm referral`}
             >
-              <ExternalLink size={12} className="text-sky-400" />
+              <ExternalLink size={12} className="text-blue-400" />
               <span>Find Referral</span>
             </a>
           )}
@@ -360,10 +345,10 @@ export default function JobDetailWorkbench({
 
       {/* Recruiter Email Banner */}
       {primaryEmail ? (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-indigo-950/30 to-slate-900/60 border border-purple-500/30 space-y-2.5">
+        <div className="p-4 rounded-2xl bg-slate-950/60 border border-blue-500/25 space-y-2.5">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Mail size={12} className="text-purple-400" />
+            <span className="text-[11px] font-extrabold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Mail size={12} className="text-blue-400" />
               {(job.site || '').toLowerCase().includes('job bank') || (job.url || '').includes('jobbank.gc.ca')
                 ? 'Job Bank Recruiter Email (Additional ways to apply)'
                 : 'Mined Recruiter Direct Mailbox'}
@@ -372,14 +357,14 @@ export default function JobDetailWorkbench({
               <ShieldCheck size={10} className="text-emerald-400" /> MX Verified Deliverable
             </span>
           </div>
-          <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#050811]/80 border border-white/[0.08]">
+          <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-900/90 border border-white/[0.08]">
             <div className="flex items-center gap-2 truncate">
               <span className="text-xs font-mono font-bold text-white truncate">{primaryEmail}</span>
             </div>
             <button
               type="button"
               onClick={() => handleCopyEmail(primaryEmail)}
-              className="text-xs text-purple-300 hover:text-white flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 cursor-pointer transition shrink-0 font-semibold"
+              className="text-xs text-blue-300 hover:text-white flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 cursor-pointer transition shrink-0 font-semibold"
             >
               {copiedEmail === primaryEmail ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
               <span>{copiedEmail === primaryEmail ? 'Copied!' : 'Copy Email'}</span>
@@ -389,7 +374,7 @@ export default function JobDetailWorkbench({
       ) : ((job.site || '').toLowerCase().includes('job bank') || (job.url || '').includes('jobbank.gc.ca')) && (
         <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] flex items-center justify-between text-xs text-slate-400">
           <span className="flex items-center gap-1.5 text-slate-300">
-            <Mail size={13} className="text-amber-400" />
+            <Mail size={13} className="text-blue-400" />
             {fetchingDesc ? 'Mining "Additional ways to apply" for recruiter email...' : 'No email in "Additional ways to apply" (Direct Apply / Postal Mail)'}
           </span>
           {!fetchingDesc && (
@@ -418,7 +403,7 @@ export default function JobDetailWorkbench({
       )}
 
       {/* CV Match & Improvement Analysis Card */}
-      <div className="p-4 rounded-2xl bg-[#060A15]/90 border border-white/[0.07] space-y-3.5">
+      <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/[0.07] space-y-3.5">
         <div className="flex items-center justify-between">
           <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
             <Target size={14} className="text-blue-400" /> ATS CV Match Analysis
@@ -427,18 +412,12 @@ export default function JobDetailWorkbench({
         </div>
 
         {/* Score Progress Bar */}
-        <div className="w-full bg-slate-900 border border-white/[0.06] rounded-full h-2.5 overflow-hidden p-0.5">
+        <div className="w-full bg-slate-900 border border-white/[0.06] rounded-full h-2 overflow-hidden">
           <motion.div
             initial={{ width: 0 }}
             animate={{ width: `${Math.max(5, Math.min(100, score))}%` }}
             transition={{ duration: 0.6, ease: 'easeOut' }}
-            className={`h-full rounded-full ${
-              score >= 75
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                : score >= 55
-                ? 'bg-gradient-to-r from-blue-500 to-indigo-400'
-                : 'bg-gradient-to-r from-amber-500 to-orange-400'
-            }`}
+            className="h-full rounded-full bg-gradient-to-r from-blue-600 to-indigo-500"
           />
         </div>
 
@@ -538,17 +517,17 @@ export default function JobDetailWorkbench({
           </a>
         </div>
         {fetchingDesc ? (
-          <div className="p-6 rounded-2xl bg-[#060A15]/80 border border-white/[0.06] flex flex-col items-center justify-center gap-2 py-8 text-center text-xs text-blue-400">
+          <div className="p-6 rounded-2xl bg-slate-950/60 border border-white/[0.06] flex flex-col items-center justify-center gap-2 py-8 text-center text-xs text-blue-400">
             <Loader2 size={18} className="animate-spin text-blue-400" />
             <span className="font-bold text-slate-300">Fetching complete job description & ATS requirements from live board...</span>
             <span className="text-[11px] text-slate-500">Extracting responsibilities, tech stack, and recruiter contacts</span>
           </div>
         ) : job.description && job.description.trim() ? (
-          <div className="p-4 rounded-2xl bg-[#060A15]/80 border border-white/[0.06] text-xs text-slate-300 leading-relaxed whitespace-pre-line max-h-[420px] overflow-y-auto select-text">
+          <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/[0.06] text-xs text-slate-300 leading-relaxed whitespace-pre-line max-h-[420px] overflow-y-auto select-text">
             {job.description}
           </div>
         ) : (
-          <div className="p-4 rounded-2xl bg-[#060A15]/80 border border-white/[0.06] text-xs text-slate-400 space-y-2">
+          <div className="p-4 rounded-2xl bg-slate-950/60 border border-white/[0.06] text-xs text-slate-400 space-y-2">
             <p className="text-slate-400">
               Detailed requirements and full description are available directly on the original posting.
             </p>

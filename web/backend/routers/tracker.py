@@ -1,11 +1,11 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import io, csv, re
 from .. import models
 from ..database import get_db
@@ -204,11 +204,19 @@ def create_app(req: AppCreate, db: Session = Depends(get_db),
                current_user: models.User = Depends(get_current_user)):
     status = "applied" if req.status in ["applied", "sent"] else req.status
     
-    # Check if this application already exists (especially in saved status)
-    existing = db.query(models.Application).filter(
-        models.Application.user_id == current_user.id,
-        (models.Application.company.ilike(req.company) | (models.Application.url == (req.url or "nonexistent")))
-    ).first()
+    # Check if this application already exists (by exact URL or by company + title)
+    existing = None
+    if req.url and req.url.strip():
+        existing = db.query(models.Application).filter(
+            models.Application.user_id == current_user.id,
+            models.Application.url == req.url.strip()
+        ).first()
+    if not existing and req.company and req.company.strip() and req.title and req.title.strip():
+        existing = db.query(models.Application).filter(
+            models.Application.user_id == current_user.id,
+            models.Application.company.ilike(req.company.strip()),
+            models.Application.title.ilike(req.title.strip())
+        ).first()
 
     if existing:
         if status == "applied":
@@ -782,14 +790,20 @@ def get_app_thread(app_id: int,
 
 @router.get("/{app_id}/cv")
 def download_app_cv(app_id: int,
+                    request: Request,
                     token: Optional[str] = None,
                     db: Session = Depends(get_db)):
     """Downloads the tailored CV PDF binary stored for an application."""
     user = None
-    if token:
+    raw_token = token
+    if not raw_token:
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            raw_token = auth_header.split(" ", 1)[1].strip()
+    if raw_token:
         from ..auth import jwt, SECRET_KEY, ALGORITHM
         try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            payload = jwt.decode(raw_token, SECRET_KEY, algorithms=[ALGORITHM])
             user_email = payload.get("sub")
             user = db.query(models.User).filter(models.User.email == user_email).first()
         except Exception:

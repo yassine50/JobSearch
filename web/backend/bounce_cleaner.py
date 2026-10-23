@@ -622,20 +622,6 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
             pass
         raise e
 
-def purge_all_gmail_bounces_and_sent(db: Session) -> Dict[str, Any]:
-    """Iterates through all users with configured Gmail credentials and executes a full sync/purge."""
-    users = db.query(models.User).all()
-    results = {}
-    for u in users:
-        settings = db.query(models.EmailSettings).filter(models.EmailSettings.user_id == u.id).first()
-        if settings and settings.smtp_user and settings.smtp_password:
-            try:
-                res = sync_gmail_bounces(db, u.id, delete_from_gmail=True)
-                results[u.email] = res
-            except Exception as e:
-                results[u.email] = {"error": str(e)}
-    return results
-
 def get_blacklisted_emails(db: Session, user_id: Optional[int] = None) -> Set[str]:
     """Returns a set of lowercased blacklisted emails across the entire platform."""
     # All dead and blocked emails protect every user globally

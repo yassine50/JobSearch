@@ -74,12 +74,38 @@ def _compose_accent(m) -> str:
 
 
 _CEDILLA_RE = re.compile(r"([cC])\s?¸")
-_LETTERSPACED_RE = re.compile(r"^(?:[^\s]\s){3,}[^\s]$")
 _FA_NAME_LEAK_RE = re.compile(
     r"((?<![\w:/.])/?envel[⌢o]pe|(?<![\w:/.])/?map♂?mar¶?er|♂¶ap-¶arker|(?<![\w:/.])♂?phone(?=\+?\d)|"
     r"(?<![\w:/.])/linkedin(?=[a-z@])|(?<![\w:/.])/github(?=[a-z@])|(?<![\w:/.])/(?:globe|home|phone|envelope|map)(?=\s|\d|$)|"
     r"Ὄ5|♂|¶|⌢)",
 )
+
+_KERNING_WORD_REPAIRS = [
+    (re.compile(r"\bf\s+aster\b", re.I), "faster"),
+    (re.compile(r"\bAls\s+o\b"), "Also"),
+    (re.compile(r"\bals\s+o\b"), "also"),
+    (re.compile(r"\ban\s+d\b"), "and"),
+    (re.compile(r"\bGoogle\s+P\s+lay\b", re.I), "Google Play"),
+    (re.compile(r"\bP\s+lay\s+Console\b", re.I), "Play Console"),
+    (re.compile(r"\bAra\s+bic\b", re.I), "Arabic"),
+    (re.compile(r"\bimpac\s+t\b", re.I), "impact"),
+    (re.compile(r"\bdevel\s+oper(s?)\b", re.I), r"developer\1"),
+    (re.compile(r"\barchitec\s+ture\b", re.I), "architecture"),
+    (re.compile(r"\bperfor\s+mance\b", re.I), "performance"),
+    (re.compile(r"\bapplica\s+tion(s?)\b", re.I), r"application\1"),
+    (re.compile(r"\bintegra\s+tion\b", re.I), "integration"),
+    (re.compile(r"\bprodu\s+ction\b", re.I), "production"),
+    (re.compile(r"\bcolla\s+boration\b", re.I), "collaboration"),
+    (re.compile(r"\brespo\s+nsiveness\b", re.I), "responsiveness"),
+    (re.compile(r"\bmain\s+tained\b", re.I), "maintained"),
+    (re.compile(r"\bstandar\s+dizing\b", re.I), "standardizing"),
+    (re.compile(r"\bconfigu\s+rable\b", re.I), "configurable"),
+    (re.compile(r"\bnotifica\s+tions\b", re.I), "notifications"),
+    (re.compile(r"\bauthenti\s+cation\b", re.I), "authentication"),
+    (re.compile(r"\bexp\s+erience\b", re.I), "experience"),
+    (re.compile(r"\bman\s+agement\b", re.I), "management"),
+    (re.compile(r"\benvir\s+onment\b", re.I), "environment"),
+]
 
 
 def _collapse_letterspacing(s: str) -> str:
@@ -110,7 +136,16 @@ def normalize_text(s: str) -> str:
     s = s.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     if "\t" not in s:
         s = _collapse_letterspacing(s)
+    # Repair spaced hyphens inside compound words and URLs ("cross -platform" -> "cross-platform", "yassine -youssef" -> "yassine-youssef")
+    s = re.sub(r"([a-zA-Z0-9])\s+-\s*([a-zA-Z0-9])", lambda m: f"{m.group(1)}-{m.group(2)}" if (m.group(2).islower() or "/" in s) else m.group(0), s)
+    s = re.sub(r"([a-zA-Z0-9])-\s+([a-z]+)\b", r"\1-\2", s)
+    for pat, repl in _KERNING_WORD_REPAIRS:
+        s = pat.sub(repl, s)
+    s = re.sub(r"\b(\d+\s+(?:years?|months?|ans?|mois)|and\s+\d+\s+(?:months?|years?))\s+\1\b", r"\1", s, flags=re.I)
     s = "\t".join(re.sub(r"[ ]{2,}", " ", p).strip() for p in s.split("\t"))
+    # "Sousse , Tunisie" / "C , Swift ,Php" -> "Sousse, Tunisie" / "C, Swift, Php" (Canva/Word spacing)
+    s = re.sub(r"(?<=\w) +([,;])", r"\1", s)
+    s = re.sub(r"([,;])(?=[A-Za-zÀ-ÿ])", r"\1 ", s)
     return s.strip()
 
 
@@ -148,7 +183,9 @@ def _fragments_from_pdfminer(pdf_bytes: bytes):
     from pdfminer.layout import LAParams, LTChar, LTTextContainer, LTTextLine, LTFigure, LTImage
 
     pages = []
-    params = LAParams(line_margin=0.3, char_margin=1.6, word_margin=0.12, boxes_flow=None)
+    # all_texts=True: Canva / Figma / Illustrator exports wrap every text box in nested Form XObjects
+    # (LTFigure). Without it, pdfminer leaves those chars un-analysed and the whole CV text is lost.
+    params = LAParams(line_margin=0.3, char_margin=2.0, word_margin=0.18, boxes_flow=None, all_texts=True)
     for page in extract_pages(io.BytesIO(pdf_bytes), laparams=params):
         frags, images = [], []
 
@@ -157,12 +194,16 @@ def _fragments_from_pdfminer(pdf_bytes: bytes):
                 for ln in el:
                     if isinstance(ln, LTTextLine):
                         frags.append(_frag_from_line(ln, LTChar))
-            elif isinstance(el, (LTFigure, LTImage)):
+            elif isinstance(el, LTImage):
                 images.append(el.bbox)
-                if isinstance(el, LTFigure):
-                    for child in el:
-                        if isinstance(child, LTImage):
-                            images.append(child.bbox)
+            elif isinstance(el, LTFigure):
+                has_text = False
+                for child in el:
+                    if isinstance(child, (LTTextContainer, LTFigure)):
+                        has_text = True
+                    walk(child)
+                if not has_text:
+                    images.append(el.bbox)
 
         for el in page:
             walk(el)
@@ -170,10 +211,115 @@ def _fragments_from_pdfminer(pdf_bytes: bytes):
     return pages
 
 
+_OCR_CACHE: Dict[str, List] = {}
+
+
+def _fragments_from_ocr(pdf_bytes: bytes):
+    """Fallback layout-preserving OCR for image-only / scanned PDFs (macOS Vision + PDFKit)."""
+    import copy
+    import hashlib
+    import json
+    import os
+    import subprocess
+    import tempfile
+
+    if not pdf_bytes or not os.path.exists("/usr/bin/swift"):
+        return []
+    digest = hashlib.sha256(pdf_bytes).hexdigest()
+    if digest in _OCR_CACHE:
+        return copy.deepcopy(_OCR_CACHE[digest])
+    swift_code = """
+import Foundation
+import PDFKit
+import Vision
+
+let args = CommandLine.arguments
+guard args.count > 1 else { exit(1) }
+let url = URL(fileURLWithPath: args[1])
+guard let doc = PDFDocument(url: url) else { exit(1) }
+var outPages: [[String: Any]] = []
+for pi in 0..<doc.pageCount {
+    guard let page = doc.page(at: pi) else { continue }
+    let b = page.bounds(for: .mediaBox)
+    let w = b.width > 0 ? b.width : 595.0
+    let h = b.height > 0 ? b.height : 842.0
+    let img = page.thumbnail(of: CGSize(width: w * 2.0, height: h * 2.0), for: .mediaBox)
+    guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
+    let req = VNRecognizeTextRequest()
+    req.recognitionLevel = .accurate
+    req.usesLanguageCorrection = true
+    let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+    try? handler.perform([req])
+    var frags: [[String: Any]] = []
+    for obs in req.results ?? [] {
+        guard let top = obs.topCandidates(1).first else { continue }
+        let bb = obs.boundingBox
+        let x0 = Double(bb.minX * w)
+        let x1 = Double(bb.maxX * w)
+        let y0 = Double(bb.minY * h)
+        let y1 = Double(bb.maxY * h)
+        let sz = max(8.0, min(22.0, (y1 - y0) * 0.78))
+        frags.append(["text": top.string, "x0": x0, "x1": x1, "y0": y0, "y1": y1, "size": sz])
+    }
+    outPages.append(["w": Double(w), "h": Double(h), "frags": frags])
+}
+if let data = try? JSONSerialization.data(withJSONObject: outPages),
+   let str = String(data: data, encoding: .utf8) {
+    print(str)
+}
+"""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+            tf.write(pdf_bytes)
+            tmp_path = tf.name
+        proc = subprocess.run(
+            ["/usr/bin/swift", "-e", swift_code, tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return []
+        raw_pages = json.loads(proc.stdout.strip())
+        pages = []
+        for p in raw_pages:
+            w, h = float(p.get("w", 595.0)), float(p.get("h", 842.0))
+            frags = []
+            for f in p.get("frags", []):
+                txt = (f.get("text") or "").strip()
+                if not txt:
+                    continue
+                sz = float(f.get("size", 10.0))
+                frags.append({
+                    "text": txt,
+                    "x0": float(f["x0"]),
+                    "x1": float(f["x1"]),
+                    "y0": float(f["y0"]),
+                    "y1": float(f["y1"]),
+                    "size": sz,
+                    "bold": _is_caps(txt) or sz >= 11.8,
+                })
+            pages.append(((0.0, 0.0, w, h), frags, []))
+        if sum(len(f["text"].strip()) for _, frs, _ in pages for f in frs) >= 80:
+            _OCR_CACHE[digest] = copy.deepcopy(pages)
+        return pages
+    except Exception:
+        return []
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
 def _frag_from_line(ln, LTChar):
+    items = list(ln)
     chars = []
+    real_seen = []
     seen_real = False
-    for c in ln:
+    for idx, c in enumerate(items):
         if isinstance(c, LTChar):
             t = c.get_text()
             font = c.fontname or ""
@@ -184,15 +330,42 @@ def _frag_from_line(ln, LTChar):
             if ICON_FONT_RE.search(font) or t.startswith("(cid:"):
                 chars.append((" ", None))
                 continue
+            # Suppress faux-bold / shadow duplicate glyphs drawn at the same (x0, y0)
+            if t.strip() and any(
+                t == rc.get_text() and abs(c.x0 - rc.x0) < 1.6 and abs(c.y0 - rc.y0) < 1.6
+                for rc in real_seen
+            ):
+                if chars and chars[-1][1] is None and chars[-1][0] == " ":
+                    chars.pop()
+                continue
             if t.strip():
                 seen_real = True
+                real_seen.append(c)
             chars.append((t, c))
         else:  # LTAnno (inferred spaces)
-            chars.append((c.get_text(), None))
+            # Suppress false kerning spaces inside words when adjacent LTChars are tightly spaced
+            txt_anno = c.get_text()
+            if txt_anno == " " and chars and chars[-1][1] is not None:
+                prev_c = chars[-1][1]
+                next_c = next((it for it in items[idx + 1:] if isinstance(it, LTChar)), None)
+                if next_c is not None and next_c.x0 < prev_c.x1 - 2.0:
+                    continue
+                if (
+                    next_c is not None
+                    and prev_c.get_text().isalpha()
+                    and next_c.get_text().isalpha()
+                    and next_c.get_text().islower()
+                    and (next_c.x0 - prev_c.x1) < 0.085 * max(prev_c.size, 8.0)
+                ):
+                    continue
+            chars.append((txt_anno, None))
     real = [c for _, c in chars if c is not None and c.get_text().strip()]
     if not real:
         return None
     text = "".join(t for t, _ in chars).replace("\n", " ")
+    # Canva / Figma exports encode word spaces as literal TAB glyphs inside one text run; real column
+    # tabs are re-inserted later by _row() from geometry, so in-run tabs are always plain spaces.
+    text = re.sub(r"[ \t]*\t[ \t]*", " ", text)
     sizes = [c.size for c in real]
     bold_ratio = sum(1 for c in real if BOLD_FONT_RE.search(c.fontname or "")) / len(real)
     lead_chars = [c for c in real[:14] if c.get_text().isalpha()]
@@ -209,15 +382,16 @@ def _frag_from_line(ln, LTChar):
 
 def _find_gutter(frags, width) -> Optional[float]:
     """Return x of a vertical gutter splitting the page into two text columns, or None."""
-    body = [f for f in frags if len(f["text"].strip()) > 1]
-    if len(body) < 12:
+    # Ignore full-width spanning lines (e.g. header/summary across the top) when searching for the column gutter
+    body = [f for f in frags if len(f["text"].strip()) > 1 and (f["x1"] - f["x0"]) <= 0.58 * width]
+    if len(body) < 10:
         return None
     best = None
-    for g in range(int(width * 0.22), int(width * 0.78), 2):
-        left = [f for f in body if f["x1"] <= g]
-        right = [f for f in body if f["x0"] >= g]
+    for g in range(int(width * 0.20), int(width * 0.80), 2):
+        left = [f for f in body if f["x1"] <= g + 2]
+        right = [f for f in body if f["x0"] >= g - 2]
         cross = len(body) - len(left) - len(right)
-        if len(left) < 0.18 * len(body) or len(right) < 0.18 * len(body):
+        if len(left) < 0.15 * len(body) or len(right) < 0.15 * len(body):
             continue
         if cross > max(3, 0.12 * len(body)):
             continue
@@ -239,6 +413,16 @@ def _find_gutter(frags, width) -> Optional[float]:
     if partnered / max(1, len(right)) > 0.55 and datey >= 0.3 * len(right):
         return None
     if partnered / max(1, len(right)) > 0.8:
+        return None
+    # Reject "single column + left date/label margin" (Europass / eJobs layouts)
+    partnered_l = sum(1 for f in left if has_partner(f, right))
+    left_text = " ".join(f["text"] for f in left)
+    datey_l = len(re.findall(r"\b(19|20)\d{2}\b|present|présent|current|aujourd|\b\d+\s*(?:years?|months?|ans?|mois)\b", left_text, re.I))
+    if g < 0.33 * width and (
+        (partnered_l / max(1, len(left)) > 0.40 and datey_l >= 0.25 * len(left))
+        or partnered_l / max(1, len(left)) > 0.65
+        or datey_l >= 0.45 * len(left)
+    ):
         return None
     return float(g)
 
@@ -265,11 +449,31 @@ def _merge_rows(frags, col_of) -> List[Dict]:
 
 
 def _row(fs, col) -> Dict:
-    fs = sorted(fs, key=lambda f: f["x0"])
+    fs = sorted(fs, key=lambda f: (round(f["x0"], 1), -len(f["text"])))
+    dedup_fs = [fs[0]]
+    for f in fs[1:]:
+        prev = dedup_fs[-1]
+        t_cur = f["text"].strip()
+        t_prev = prev["text"].strip()
+        # Suppress faux-bold / partial label overlays starting at the same x0 or overlapping horizontally
+        if f["x0"] < prev["x1"] - 2.0 and (t_cur == t_prev or t_prev.startswith(t_cur) or t_cur in t_prev):
+            prev["bold"] = prev["bold"] or f["bold"]
+            continue
+        if f["x0"] < prev["x1"] - 2.0 and t_cur.startswith(t_prev):
+            f["bold"] = prev["bold"] or f["bold"]
+            dedup_fs[-1] = f
+            continue
+        dedup_fs.append(f)
+    fs = dedup_fs
     parts = [fs[0]["text"].strip()]
     for prev, f in zip(fs, fs[1:]):
         gap = f["x0"] - prev["x1"]
-        sep = "\t" if gap > max(5.0, 0.6 * f["size"]) else " "
+        # Only insert TAB for genuine column/tab stops or right-aligned metadata, never for justified prose gaps
+        is_tab = (
+            gap > max(20.0, 2.0 * f["size"])
+            or (gap > max(9.0, 0.95 * f["size"]) and (f["x0"] > 300 or col == 0 and prev["x0"] < 90 and f["x0"] > 125))
+        )
+        sep = "\t" if is_tab else " "
         parts.append(sep + f["text"].strip())
     text = "".join(parts)
     biggest = max(fs, key=lambda f: len(f["text"]))
@@ -287,6 +491,21 @@ def extract_pdf(pdf_bytes: bytes) -> Document:
     except Exception:
         return _extract_pdf_pypdf2(pdf_bytes)
 
+    raw_chars = sum(len(f["text"].strip()) for _, frags, _ in pages for f in frags)
+    used_ocr = False
+    if raw_chars < 80:
+        ocr_pages = _fragments_from_ocr(pdf_bytes)
+        if ocr_pages and sum(len(f["text"].strip()) for _, frags, _ in ocr_pages for f in frags) >= 80:
+            pages = ocr_pages
+            used_ocr = True
+        else:
+            try:
+                pypdf_doc = _extract_pdf_pypdf2(pdf_bytes)
+                if not pypdf_doc.meta.get("scanned"):
+                    return pypdf_doc
+            except Exception:
+                pass
+
     links = _pdf_links(pdf_bytes)
     lines: List[Line] = []
     offset = 0.0
@@ -300,7 +519,7 @@ def extract_pdf(pdf_bytes: bytes) -> Document:
             w, h = ix1 - ix0, iy1 - iy0
             if pi == 0 and 45 < w < 220 and 45 < h < 260 and 0.6 < w / max(h, 1) < 1.6 and iy1 > bbox[3] * 0.55:
                 has_photo = True
-        gutter = _find_gutter(frags, width)
+        gutter = None if (pi > 0 and columns_seen == 0) else _find_gutter(frags, width)
         if gutter is not None:
             columns_seen = max(columns_seen, 2)
 
@@ -322,6 +541,12 @@ def extract_pdf(pdf_bytes: bytes) -> Document:
             text = normalize_text(r["text"])
             if not text:
                 continue
+            if len(pages) > 1 and r["y0"] < bbox[1] + 45 and re.search(
+                r"\b(?:page\s*\d+|\d+\s*/\s*\d+|ejobs\.ro|curriculum\s+vitae)\b",
+                text,
+                re.I,
+            ):
+                continue
             ln = Line(
                 text=text, size=round(r["size"], 1), bold=r["bold"], x0=r["x0"], x1=r["x1"],
                 top=offset + (bbox[3] - r["y1"]), page=pi, col=r["col"], caps=_is_caps(text),
@@ -332,7 +557,7 @@ def extract_pdf(pdf_bytes: bytes) -> Document:
         # Attach each PDF link annotation to the single best matching row on this page
         for (rx0, ry0, rx1, ry1), uri in page_links:
             clean_u = sanitize_url(uri)
-            if not clean_u:
+            if not clean_u or "ejobs.ro" in clean_u.lower():
                 continue
             annot_ymid = 0.5 * (ry0 + ry1)
             best_ln = None
@@ -354,10 +579,11 @@ def extract_pdf(pdf_bytes: bytes) -> Document:
     body = statistics.median(sizes) if sizes else 10.0
     doc = Document(
         lines=lines, body_size=body,
-        links=[u for u in (sanitize_url(raw_u) for _, _, raw_u in links) if u],
+        links=[u for u in (sanitize_url(raw_u) for _, _, raw_u in links) if u and "ejobs.ro" not in u.lower()],
         meta={
             "source": "pdf", "pages": len(pages), "layout": "two-column" if columns_seen >= 2 else "single-column",
-            "has_photo": has_photo, "scanned": total_chars < 80, "extractor": "pdfminer",
+            "has_photo": has_photo, "scanned": total_chars < 80, "ocr_recovered": used_ocr,
+            "extractor": "vision-ocr" if used_ocr else "pdfminer",
         },
     )
     return doc
@@ -365,6 +591,11 @@ def extract_pdf(pdf_bytes: bytes) -> Document:
 
 _BLOCKED_DOMAINS = (
     "job-search-two-beryl.vercel.app",
+    # webmail inbox links that Canva/Word users accidentally attach to their e-mail text
+    "mail.google.com",
+    "outlook.live.com",
+    "outlook.office.com",
+    "mail.yahoo.com",
 )
 
 
@@ -505,16 +736,21 @@ def extract_txt(text: str) -> Document:
 def extract_document(data: Optional[bytes] = None, filename: str = "", text: str = "") -> Document:
     """Entry point: bytes + filename (pdf/docx/txt) or raw text."""
     name = (filename or "").lower()
+    if isinstance(data, str):
+        data = data.encode("utf-8")
     if data:
-        if name.endswith(".pdf") or data[:5] == b"%PDF-":
+        head = data.lstrip()[:8]
+        if head.startswith(b"%PDF-"):
             doc = extract_pdf(data)
             if not doc.meta.get("scanned") or not text:
                 return doc
-        elif name.endswith(".docx") or data[:2] == b"PK":
+        elif data[:4] == b"PK\x03\x04" or name.endswith(".docx"):
             try:
                 return extract_docx(data)
             except Exception:
                 pass
-        elif name.endswith(".txt"):
-            return extract_txt(data.decode("utf-8", errors="ignore"))
+        elif name.endswith(".txt") or not head.startswith(b"%PDF-"):
+            decoded = data.decode("utf-8", errors="ignore")
+            if decoded.strip():
+                return extract_txt(decoded)
     return extract_txt(text)

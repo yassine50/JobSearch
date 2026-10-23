@@ -27,12 +27,39 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+import unicodedata
+
 from .parse import CV, Entry
+
+_NON_WINANSI_MAP = str.maketrans({
+    "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ı": "i", "İ": "I",
+    "ș": "s", "Ș": "S", "ş": "s", "Ş": "S", "ț": "t", "Ț": "T", "ţ": "t", "Ţ": "T",
+})
+
+
+def _winansi_safe(text: str) -> str:
+    """Ensure every character renders cleanly in ReportLab's built-in Helvetica (WinAnsi / CP1252) without black boxes."""
+    if not text:
+        return ""
+    s = text.translate(_NON_WINANSI_MAP)
+    try:
+        s.encode("cp1252")
+        return s
+    except UnicodeEncodeError:
+        out = []
+        for ch in s:
+            try:
+                ch.encode("cp1252")
+                out.append(ch)
+            except UnicodeEncodeError:
+                decomposed = "".join(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c))
+                out.append(decomposed or "")
+        return "".join(out)
 
 
 def _esc(text: str) -> str:
     return (
-        (text or "")
+        _winansi_safe(text or "")
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
@@ -98,6 +125,7 @@ def _clean_lang_level(lvl: str) -> str:
 
 SECTION_TITLES: Dict[str, Tuple[str, str]] = {
     "summary": ("Professional Summary", "Profil Professionnel"),
+    "competencies": ("Core Competencies", "Compétences Clés"),
     "skills": ("Technical Skills", "Compétences Techniques"),
     "experience": ("Professional Experience", "Expérience Professionnelle"),
     "projects": ("Selected Projects", "Projets Réalisés"),
@@ -129,9 +157,10 @@ def render_cv_pdf(
     ]
 
     def _build(scale: int = 0) -> Tuple[bytes, int]:
-        # scale 0 = normal, 1 = compact, 2 = tight, 3 = ultra-tight
-        margin_x = [34, 30, 26, 24][scale]
-        margin_y = [26, 21, 17, 14][scale]
+        # scale -1 = generous (short CVs), 0 = normal, 1 = compact, 2 = tight, 3 = ultra-tight
+        idx = scale + 1
+        margin_x = [38, 34, 30, 26, 24][idx]
+        margin_y = [32, 26, 21, 17, 14][idx]
         buf = io.BytesIO()
         doc = SimpleDocTemplate(
             buf,
@@ -151,16 +180,16 @@ def render_cv_pdf(
         MUTED = colors.HexColor("#475569")
         RULE = colors.HexColor("#334155")
 
-        f_name = [20.5, 19.0, 17.6, 16.5][scale]
-        f_head = [11.0, 10.4, 9.8, 9.4][scale]
-        f_sec = [9.8, 9.3, 8.9, 8.6][scale]
-        f_role = [9.8, 9.3, 8.9, 8.6][scale]
-        f_body = [9.2, 8.75, 8.35, 8.0][scale]
-        l_body = [12.3, 11.4, 10.6, 10.0][scale]
-        f_meta = [8.6, 8.25, 7.95, 7.65][scale]
-        sec_gap = [7.5, 5.5, 4.0, 3.0][scale]
-        item_gap = [4.5, 3.2, 2.2, 1.5][scale]
-        bul_gap = [1.2, 0.8, 0.4, 0.2][scale]
+        f_name = [21.5, 20.5, 19.0, 17.6, 16.5][idx]
+        f_head = [11.5, 11.0, 10.4, 9.8, 9.4][idx]
+        f_sec = [10.2, 9.8, 9.3, 8.9, 8.6][idx]
+        f_role = [10.0, 9.8, 9.3, 8.9, 8.6][idx]
+        f_body = [9.5, 9.2, 8.75, 8.35, 8.0][idx]
+        l_body = [13.2, 12.3, 11.4, 10.6, 10.0][idx]
+        f_meta = [8.9, 8.6, 8.25, 7.95, 7.65][idx]
+        sec_gap = [10.0, 7.5, 5.5, 4.0, 3.0][idx]
+        item_gap = [6.0, 4.5, 3.2, 2.2, 1.5][idx]
+        bul_gap = [1.8, 1.2, 0.8, 0.4, 0.2][idx]
 
         base = getSampleStyleSheet()["Normal"]
         st_name = ParagraphStyle(
@@ -261,7 +290,8 @@ def render_cv_pdf(
             "Bullet",
             parent=st_body,
             leftIndent=11,
-            firstLineIndent=-6,
+            firstLineIndent=0,
+            bulletIndent=2,
             spaceBefore=bul_gap,
         )
         st_stack = ParagraphStyle(
@@ -282,7 +312,13 @@ def render_cv_pdf(
             return f'<link href="{_esc(href)}" color="#1E3A8A">{_esc(label)}</link>'
 
         def two_col(left_p, right_p, ratio=0.74, top=0.0, bottom=0.5):
-            t = Table([[left_p, right_p]], colWidths=[avail_w * ratio, avail_w * (1 - ratio)])
+            raw_r = getattr(right_p, "text", "") if right_p is not None else ""
+            plain_r = re.sub(r"<[^>]+>", "", raw_r).replace("&nbsp;", " ").strip()
+            if not plain_r:
+                t = Table([[left_p]], colWidths=[avail_w])
+            else:
+                r_w = min(avail_w * 0.34, max(avail_w * (1 - ratio), len(plain_r) * f_meta * 0.56 + 10.0))
+                t = Table([[left_p, right_p]], colWidths=[avail_w - r_w, r_w])
             t.setStyle(
                 TableStyle(
                     [
@@ -321,7 +357,8 @@ def render_cv_pdf(
 
         contact_items: List[str] = []
         if cv.contact.get("location"):
-            contact_items.append(_esc(cv.contact["location"]))
+            loc_txt = re.sub(r"\s+,", ",", cv.contact["location"])
+            contact_items.append(_esc(loc_txt).replace(" ", "&nbsp;"))
         if cv.contact.get("phone"):
             contact_items.append(_esc(cv.contact["phone"]).replace(" ", "&nbsp;"))
         if cv.contact.get("email"):
@@ -336,9 +373,17 @@ def render_cv_pdf(
 
         sep = "&nbsp;&nbsp;•&nbsp;&nbsp;"
         all_header_items = contact_items + profile_items
+
+        def _fits_one_line(items: List[str]) -> bool:
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            plain = re.sub(r"<[^>]+>", "", sep.join(items)).replace("&nbsp;", " ").replace("&amp;", "&")
+            return stringWidth(plain, "Helvetica", f_meta) <= avail_w * 0.98
+
         if all_header_items:
             story.append(Spacer(1, 2.5))
-            if len(all_header_items) <= 5:
+            # One centered line when it fits; otherwise a clean 2-line split (contact / profiles)
+            # instead of letting ReportLab wrap mid-item ("Monastir," alone on a line).
+            if _fits_one_line(all_header_items):
                 story.append(Paragraph(sep.join(all_header_items), st_contact))
             else:
                 story.append(Paragraph(sep.join(contact_items), st_contact))
@@ -557,15 +602,28 @@ def render_cv_pdf(
                 lvl = _clean_lang_level(raw_lvl)
                 if not name:
                     continue
-                formatted.append(f"<b>{_esc(name)}</b> ({_esc(lvl)})" if lvl else f"<b>{_esc(name)}</b>")
+                # non-breaking inside each item so "Chinese (Basic — A2)" never splits across lines
+                item = f"<b>{_esc(name)}</b> ({_esc(lvl)})" if lvl else f"<b>{_esc(name)}</b>"
+                formatted.append(item.replace(" ", "&nbsp;"))
             if not formatted:
                 return []
             out = section_header("languages")
-            out.append(Paragraph("&nbsp;&nbsp;•&nbsp;&nbsp;".join(formatted), st_body))
+            out.append(Paragraph("&nbsp;&nbsp;•&nbsp; ".join(formatted), st_body))
+            return out
+
+        def render_competencies():
+            comps = [c.strip() for c in ((cv.meta or {}).get("core_competencies") or []) if c and c.strip()]
+            if not comps:
+                return []
+            out = section_header("competencies")
+            # non-breaking inside each item, breakable after each separator
+            items = [_esc(c).replace(" ", "&nbsp;") for c in comps]
+            out.append(Paragraph("&nbsp;&nbsp;•&nbsp; ".join(items), st_body))
             return out
 
         dispatch = {
             "summary": render_summary,
+            "competencies": render_competencies,
             "skills": render_skills,
             "experience": render_experience,
             "projects": render_projects,
@@ -586,11 +644,32 @@ def render_cv_pdf(
         buf.close()
         return pdf_bytes, getattr(doc, "page", 1)
 
+    def _is_thin_second_page(pdf_data: bytes) -> bool:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(pdf_data))
+            if len(reader.pages) != 2:
+                return False
+            p1 = len((reader.pages[0].extract_text() or "").strip())
+            p2 = len((reader.pages[1].extract_text() or "").strip())
+            return p1 > 300 and p2 < 0.32 * p1
+        except Exception:
+            return False
+
     pdf_bytes, pages = _build(scale=0)
-    if pages > max_pages:
+    total_entries = len(cv.experience) + len(cv.projects)
+    total_bullets = sum(len(e.bullets) for e in cv.experience + cv.projects)
+    if pages == 1 and total_entries <= 3 and total_bullets <= 8:
+        gen_bytes, gen_pages = _build(scale=-1)
+        if gen_pages == 1:
+            return gen_bytes
+
+    target_pages = 1 if (pages == 2 and _is_thin_second_page(pdf_bytes)) else max_pages
+    if pages > target_pages:
         for s in (1, 2, 3):
             cand_bytes, cand_pages = _build(scale=s)
-            pdf_bytes = cand_bytes
-            if cand_pages <= max_pages:
-                break
+            if cand_pages <= target_pages:
+                return cand_bytes
+            if target_pages == max_pages:
+                pdf_bytes = cand_bytes
     return pdf_bytes

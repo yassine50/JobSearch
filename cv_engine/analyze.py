@@ -11,11 +11,11 @@ Produces:
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from .lexicon import (
-    ACTION_NOUNS_FR, ACTION_VERBS_EN, BUZZWORDS, CATEGORY_ORDER, DATA, FRONT, BACK, MOBILE, CLOUD, DESIGN, TECH,
-    OBJECTIVE_RE, PERSONAL_INFO, WEAK_OPENERS, tech_category,
+    ACTION_NOUNS_FR, ACTION_VERBS_EN, BUZZWORDS, DATA, FRONT, BACK, MOBILE, CLOUD, DESIGN, TECH,
+    OBJECTIVE_RE, WEAK_OPENERS, tech_category,
 )
 from .parse import CV
 
