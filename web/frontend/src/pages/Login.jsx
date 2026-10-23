@@ -254,11 +254,24 @@ export default function Login() {
     return () => window.removeEventListener('open-auth-gate', onOpenAuthGate)
   }, [])
 
+  const [guestStreaming, setGuestStreaming] = useState(false)
+
   const handleGuestBoardSearch = async (params) => {
     setGuestLoading(true)
+    setGuestStreaming(true)
     setGuestMeta(null)
+    let fullFinished = false
+
+    client.post('/jobs/search-fast', params).then(({ data }) => {
+      if (!fullFinished && Array.isArray(data?.jobs) && data.jobs.length > 0) {
+        setGuestJobs(data.jobs)
+        setGuestLoading(false)
+      }
+    }).catch(() => {})
+
     try {
       const r = await client.post('/jobs/search', params)
+      fullFinished = true
       const jobs = r.data.jobs || []
       const meta = {
         total: r.data.total,
@@ -275,9 +288,11 @@ export default function Login() {
       } catch {}
       toast(`Found ${r.data.total} jobs! Create a free account to unlock all results.`, 'info')
     } catch (err) {
+      fullFinished = true
       toast(err.response?.data?.detail || 'Job search failed', 'error')
     } finally {
       setGuestLoading(false)
+      setGuestStreaming(false)
     }
   }
 
@@ -792,6 +807,7 @@ export default function Login() {
               <JobBoardScraper
                 jobs={guestJobs}
                 loading={guestLoading}
+                streaming={guestStreaming}
                 searchMeta={guestMeta}
                 onSearch={handleGuestBoardSearch}
                 onSaveJob={() => setAuthGateReason('Create a Free Account to Save Jobs to Your Kanban Board')}
@@ -1696,6 +1712,16 @@ export default function Login() {
               <p className="text-xs text-slate-400 leading-relaxed max-w-md">
                 CVtoMatch is an AI Career Intelligence &amp; Talent Sourcing platform combining 6-factor NLP resume-to-job matching, live LinkedIn hiring post discovery with DNS MX-verified emails, multi-board job aggregation, AI cover letter generation, and IMAP inbox-synced application tracking.
               </p>
+              <div className="mt-4 inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-blue-500/10 border border-blue-500/25 text-xs">
+                <Mail size={13} className="text-blue-400 shrink-0" />
+                <span className="text-slate-400 font-medium">Official Support:</span>
+                <a
+                  href="mailto:support@cvtomatch.com"
+                  className="font-bold text-blue-400 hover:text-blue-300 transition"
+                >
+                  support@cvtomatch.com
+                </a>
+              </div>
             </div>
 
             <div>
@@ -1732,7 +1758,11 @@ export default function Login() {
 
           <div className="pt-6 border-t border-white/[0.06] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
             <span>© {new Date().getFullYear()} CVtoMatch (cvtomatch.com). All rights reserved.</span>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <a href="mailto:support@cvtomatch.com" className="text-blue-400 hover:text-blue-300 font-semibold transition">
+                support@cvtomatch.com
+              </a>
+              <span>·</span>
               <a href="/privacy.html" className="hover:text-slate-300 transition">Privacy Policy</a>
               <span>·</span>
               <a href="/terms.html" className="hover:text-slate-300 transition">Terms of Service</a>

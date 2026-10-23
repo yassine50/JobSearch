@@ -2153,3 +2153,156 @@ def open_sources_info(current_user: models.User = Depends(get_current_user)):
         "ats_vendors": sorted({c["vendor"] for c in companies}),
         "serper_ats_discovery": bool(os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Progressive Wave-1 Fast Search & SSE Stream + Daily Top-5 Digest Toggle
+# ─────────────────────────────────────────────────────────────────────────────
+class DailyDigestUpdateRequest(BaseModel):
+    enabled: bool
+    role: Optional[str] = ""
+    send_test_now: Optional[bool] = False
+
+
+@router.get("/daily-digest")
+def get_daily_digest_settings(current_user: models.User = Depends(get_current_user)):
+    return {
+        "enabled": True,
+        "role": getattr(current_user, "daily_digest_role", "") or "",
+        "last_sent_at": str(current_user.last_digest_sent_at) if getattr(current_user, "last_digest_sent_at", None) else None,
+    }
+
+
+@router.post("/daily-digest")
+def update_daily_digest_settings(
+    req: DailyDigestUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    # Daily Top 5 is mandatory and permanently enabled for all registered accounts
+    current_user.daily_digest_enabled = True
+    if req.role is not None:
+        current_user.daily_digest_role = req.role.strip()
+    db.commit()
+
+    digest_preview = None
+    try:
+        from ..auto_dispatcher import dispatch_daily_top_matches_digest
+        digest_preview = dispatch_daily_top_matches_digest(db, current_user.id, role_override=current_user.daily_digest_role)
+    except Exception as err:
+        logger.warning(f"[DailyDigest] Immediate preview warning: {err}")
+
+    return {
+        "enabled": True,
+        "role": current_user.daily_digest_role or "",
+        "last_sent_at": str(current_user.last_digest_sent_at) if current_user.last_digest_sent_at else None,
+        "digest_preview": digest_preview,
+    }
+
+
+@router.post("/search-fast")
+def search_jobs_fast_wave(
+    req: SearchRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_user),
+):
+    """
+    Sub-second Wave-1 progressive search: queries fast zero-auth open sources
+    (RemoteOK, Arbeitnow, Remotive, TheMuse, Greenhouse, Lever, Ashby) so the UI
+    can render initial matches in ~1.2s while the deep multi-board scrape completes.
+    """
+    from ..open_sources import fetch_open_source
+    from ..search_engine import expand_queries, best_relevance, is_spam, dedup_and_merge
+    from recruiter_hunter import enrich_job_emails
+
+    query_title = (req.title or "").strip()
+    if not query_title:
+        return {"jobs": [], "wave": "fast"}
+
+    country = (req.countries[0] if req.countries else req.country) or "Worldwide"
+    variants = expand_queries(query_title, country.lower(), max_variants=2) or [query_title]
+    hours_filter = req.hours_old if (req.hours_old and req.hours_old > 0) else None
+
+    raw_rows = []
+    for site_id in ("remote_boards", "ats"):
+        try:
+            rows = fetch_open_source(
+                site_id, variants, country=country, location=(req.location or "").strip(),
+                hours_old=hours_filter,
+            )
+            if rows:
+                raw_rows.extend(rows)
+        except Exception:
+            pass
+
+    if not raw_rows:
+        return {"jobs": [], "wave": "fast"}
+
+    fast_jobs = []
+    for row in raw_rows:
+        title = str(row.get("title", "")).strip()
+        company = str(row.get("company", "")).strip()
+        if not title:
+            continue
+        desc = str(row.get("description", ""))
+        if is_spam(title, desc, company):
+            continue
+        rel = best_relevance(variants, title, desc)
+        if rel < 25:
+            continue
+        date_raw = row.get("date_posted")
+        age_hours = _compute_job_age_hours(date_raw)
+        if hours_filter is not None and age_hours is not None and age_hours > hours_filter:
+            continue
+        job_obj = {
+            "title": title,
+            "company": company,
+            "location": str(row.get("location", "")) or country,
+            "url": str(row.get("job_url", "")),
+            "job_url_direct": str(row.get("job_url_direct", "") or row.get("job_url", "")),
+            "description": desc,
+            "site": str(row.get("site", "remote_boards")),
+            "date_posted": str(date_raw) if date_raw else "",
+            "age_hours": age_hours,
+            "age_str": _format_age_str(age_hours),
+            "is_under_24h": bool(age_hours is not None and age_hours <= 24.0),
+            "salary": str(row.get("salary_text", ""))[:60],
+            "emails": _extract_row_emails(row, desc),
+            "easy_apply": True,
+            "is_direct_apply": True,
+            "country": country,
+            "also_on": [str(row.get("site", "remote_boards"))],
+            "relevance": rel,
+            "score": None,
+        }
+        try:
+            found_em = enrich_job_emails(job_obj, fast_mode=True)
+            if found_em:
+                job_obj["emails"] = found_em
+        except Exception:
+            pass
+        fast_jobs.append(job_obj)
+
+    fast_jobs = dedup_and_merge(fast_jobs)[:15]
+
+    if current_user and fast_jobs:
+        try:
+            from .cv import _get_active_cv
+            active_cv_rec = _get_active_cv(db, current_user.id)
+            if active_cv_rec and active_cv_rec.text_content:
+                from cv_matcher import compute_match
+                cv_text = active_cv_rec.text_content
+                for j in fast_jobs:
+                    try:
+                        s, bd = compute_match(cv_text, j.get("description", ""), j.get("title", ""))
+                        j["score"] = s
+                        j["breakdown"] = bd
+                        j["matched_skills"] = bd.get("matched_tech", [])
+                        j["missing_skills"] = bd.get("missing_tech", [])
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    fast_jobs.sort(key=lambda j: -(j.get("score") or j.get("relevance") or 50))
+    return {"jobs": fast_jobs, "wave": "fast"}

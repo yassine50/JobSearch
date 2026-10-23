@@ -21,6 +21,7 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
   const [tailorData, setTailorData] = useState(null)
   const [downloading, setDownloading] = useState(false)
   const [view, setView] = useState('results')        // 'results' | 'preview' | 'review'
+  const [showDiffHighlight, setShowDiffHighlight] = useState(true)
   const [parsed, setParsed] = useState(null)         // { cv, quality }
   const [parsedLoading, setParsedLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -247,27 +248,122 @@ export default function TailorCvModal({ isOpen, onClose, job }) {
         <div className="p-6 space-y-4 overflow-y-auto flex-1">
           {view === 'preview' && pdfUrl ? (
             <div className="space-y-3 h-full flex flex-col">
-              <div className="flex items-center justify-between gap-2 bg-slate-950/80 border border-white/[0.08] rounded-xl px-4 py-2.5">
+              <div className="flex items-center justify-between gap-2 bg-slate-950/80 border border-white/[0.08] rounded-xl px-4 py-2.5 flex-wrap">
                 <div className="flex items-center gap-2 text-xs text-slate-300">
-                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                  <CheckCircle2 size={14} className="text-blue-400 shrink-0" />
                   <span>
-                    <strong className="text-white">{tailorData?.filename || 'Tailored_CV.pdf'}</strong> · Single-Column A4 ATS Format · <strong className="text-emerald-300">{tailoredScore}% ATS Match</strong>
+                    <strong className="text-white">{tailorData?.filename || 'Tailored_CV.pdf'}</strong> · Single-Column A4 ATS Format · <strong className="text-blue-300">{tailoredScore}% ATS Match (+{lift}% lift)</strong>
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={openReview}
-                  className="text-[11px] font-bold text-blue-300 hover:text-white bg-blue-500/15 border border-blue-500/30 px-2.5 py-1 rounded-lg cursor-pointer transition"
-                >
-                  Need a tweak? Edit Extracted CV →
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDiffHighlight(v => !v)}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer transition flex items-center gap-1.5 ${
+                      showDiffHighlight
+                        ? 'bg-blue-600 text-white border-blue-500 shadow-xs'
+                        : 'bg-white/[0.04] text-slate-300 border-white/[0.1] hover:text-white'
+                    }`}
+                  >
+                    <Sparkles size={11} />
+                    <span>{showDiffHighlight ? 'Hide Before/After Diff' : 'Show Before/After Diff'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openReview}
+                    className="text-[11px] font-bold text-blue-300 hover:text-white bg-blue-500/15 border border-blue-500/30 px-2.5 py-1 rounded-lg cursor-pointer transition"
+                  >
+                    Edit Extracted CV →
+                  </button>
+                </div>
               </div>
-              <div className="w-full h-[64vh] rounded-2xl overflow-hidden border border-white/[0.12] bg-slate-950 shadow-inner">
-                <iframe
-                  src={`${pdfUrl}#toolbar=0&navpanes=0&view=FitH`}
-                  title="Tailored A4 Resume PDF Preview"
-                  className="w-full h-full border-0"
-                />
+
+              <div className={`grid grid-cols-1 ${showDiffHighlight ? 'lg:grid-cols-12' : ''} gap-3 flex-1 min-h-[62vh]`}>
+                {showDiffHighlight && (
+                  <div className="lg:col-span-5 bg-slate-950/70 border border-blue-500/25 rounded-2xl p-4 overflow-y-auto max-h-[64vh] space-y-3.5 text-xs">
+                    <div className="flex items-center justify-between border-b border-white/[0.08] pb-2.5">
+                      <span className="font-extrabold text-white flex items-center gap-1.5">
+                        <Sparkles size={13} className="text-blue-400" />
+                        Before vs. After Tailoring Diff
+                      </span>
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                        {origScore}% → {tailoredScore}%
+                      </span>
+                    </div>
+
+                    {tailorData?.target_headline && (
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Injected Role Headline
+                        </span>
+                        <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/25 text-blue-300 font-bold text-xs">
+                          + {tailorData.target_headline}
+                        </div>
+                      </div>
+                    )}
+
+                    {skillsList.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Injected &amp; Prioritized ATS Keywords ({skillsList.length})
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {skillsList.map((sk, idx) => (
+                            <span
+                              key={idx}
+                              className="px-2 py-0.5 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[10.5px] font-bold"
+                            >
+                              + {sk}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {enhancements.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Bullet &amp; Wording Rewrites ({enhancements.length})
+                        </span>
+                        <div className="space-y-2">
+                          {enhancements.slice(0, 10).map((ch, idx) => (
+                            <div key={idx} className="p-2.5 rounded-xl bg-slate-900/90 border border-white/[0.07] space-y-1">
+                              {ch.before && (
+                                <div className="text-[11px] text-slate-400 line-through leading-snug">
+                                  − {ch.before}
+                                </div>
+                              )}
+                              {ch.after && (
+                                <div className="text-[11px] text-blue-300 font-semibold leading-snug">
+                                  + {ch.after}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {tailorData?.tailored_summary && (
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Tailored Executive Summary
+                        </span>
+                        <p className="p-2.5 rounded-xl bg-slate-900/90 border border-white/[0.07] text-[11px] text-slate-300 leading-relaxed">
+                          {tailorData.tailored_summary}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className={`${showDiffHighlight ? 'lg:col-span-7' : 'col-span-1'} w-full h-[64vh] rounded-2xl overflow-hidden border border-white/[0.12] bg-slate-950 shadow-inner`}>
+                  <iframe
+                    src={`${pdfUrl}#toolbar=0&navpanes=0&view=FitH`}
+                    title="Tailored A4 Resume PDF Preview"
+                    className="w-full h-full border-0"
+                  />
+                </div>
               </div>
             </div>
           ) : view === 'review' ? (

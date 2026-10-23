@@ -45,6 +45,7 @@ const CORE_SITES = [
 export default function JobBoardScraper({
   jobs = [],
   loading,
+  streaming = false,
   searchMeta,
   onSearch,
   onSaveJob = () => {},
@@ -882,6 +883,13 @@ export default function JobBoardScraper({
                 <span>Job Postings ({filteredJobs.length})</span>
                 <span className="text-slate-500 font-normal">Ranked by fit &amp; quality</span>
               </div>
+
+              {streaming && (
+                <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center gap-2 text-[11px] font-bold text-blue-300">
+                  <Loader2 size={13} className="animate-spin text-blue-400 shrink-0" />
+                  <span>Streaming more jobs from LinkedIn, Indeed &amp; Google...</span>
+                </div>
+              )}
 
               {searchMeta?.stats && (
                 <div className="p-3 rounded-2xl glass-card space-y-1.5 text-[10px]">

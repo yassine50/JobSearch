@@ -182,16 +182,25 @@ def _build_mime_message(settings, current_user, to_email: str, to_name: str,
                         subject: str, body: str, attach_cv: bool, db,
                         custom_attachment_bytes: Optional[bytes] = None,
                         custom_attachment_name: Optional[str] = None,
-                        cached_cv=None) -> MIMEMultipart:
-    """Constructs a RFC-compliant MIME message with UTF-8 headers and CV attachment."""
+                        cached_cv=None,
+                        html_body: Optional[str] = None,
+                        sender_name_override: Optional[str] = None) -> MIMEMultipart:
+    """Constructs a RFC-compliant MIME message with UTF-8 headers, optional HTML body, and CV attachment."""
     msg = MIMEMultipart("mixed")
     msg["Subject"] = Header(subject, "utf-8")
-    sender_display = (settings.sender_name if settings else None) or current_user.name
+    sender_display = sender_name_override or (settings.sender_name if settings else None) or current_user.name
     sender_addr = settings.smtp_user if settings else current_user.email
     msg["From"]    = f"{Header(sender_display, 'utf-8')} <{sender_addr}>"
     recipient_name = to_name or "Hiring Team"
     msg["To"]      = f"{Header(recipient_name, 'utf-8')} <{to_email}>"
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    if html_body:
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body or "", "plain", "utf-8"))
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(alt)
+    else:
+        msg.attach(MIMEText(body, "plain", "utf-8"))
 
     if attach_cv:
         if custom_attachment_bytes and custom_attachment_name:
@@ -450,9 +459,11 @@ def _dispatch_smtp(settings, current_user, to_email, to_name, subject, body, att
                    custom_attachment_bytes: Optional[bytes] = None,
                    custom_attachment_name: Optional[str] = None,
                    smtp_session: Optional[BatchSmtpSession] = None,
-                   cached_cv=None):
-    """Low-level robust SMTP/Relay/OAuth sender with UTF-8 headers and CV attachment."""
-    if not settings or not settings.smtp_user:
+                   cached_cv=None,
+                   html_body: Optional[str] = None,
+                   sender_name_override: Optional[str] = None):
+    """Low-level robust SMTP/Relay/OAuth sender with UTF-8 headers, optional HTML body, and CV attachment."""
+    if not settings or not (settings.smtp_user or getattr(settings, "gmail_refresh_token", "")):
         raise HTTPException(400, "Email not configured. Go to Settings → Email Setup.")
 
     msg = _build_mime_message(
@@ -467,6 +478,8 @@ def _dispatch_smtp(settings, current_user, to_email, to_name, subject, body, att
         custom_attachment_bytes=custom_attachment_bytes,
         custom_attachment_name=custom_attachment_name,
         cached_cv=cached_cv,
+        html_body=html_body,
+        sender_name_override=sender_name_override,
     )
     raw_bytes = msg.as_bytes()
 

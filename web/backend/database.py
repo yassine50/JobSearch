@@ -11,7 +11,11 @@ ensure_project_root_on_path()
 logger = logging.getLogger("jobsearcher.database")
 
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "jobsearcher.db"))
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
+_raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
+# Normalize legacy postgres:// scheme to postgresql:// for SQLAlchemy 1.4/2.0+
+if _raw_db_url.startswith("postgres://"):
+    _raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1)
+SQLALCHEMY_DATABASE_URL = _raw_db_url
 
 
 def _ensure_healthy_sqlite_db(db_path: str) -> None:
@@ -99,25 +103,65 @@ def _ensure_healthy_sqlite_db(db_path: str) -> None:
             pass
 
 
+def backup_sqlite_database(db_path: str = DB_PATH, max_backups: int = 14) -> str:
+    """Create a hot online backup of the SQLite database using sqlite3's backup API (safe with WAL)."""
+    if not SQLALCHEMY_DATABASE_URL.startswith("sqlite") or not os.path.exists(db_path):
+        return ""
+    try:
+        from datetime import datetime as _dt
+        backup_dir = os.path.expanduser(os.getenv("DB_BACKUP_DIR", os.path.join(os.path.dirname(db_path), "backups")))
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = _dt.utcnow().strftime("%Y%m%d")
+        dest_path = os.path.join(backup_dir, f"jobsearcher_{stamp}.db")
+        src = sqlite3.connect(db_path, timeout=30)
+        dst = sqlite3.connect(dest_path, timeout=30)
+        try:
+            with dst:
+                src.backup(dst, pages=250, sleep=0.05)
+        finally:
+            dst.close()
+            src.close()
+        # Prune backups older than max_backups
+        backups = sorted(
+            [os.path.join(backup_dir, f) for f in os.listdir(backup_dir) if f.startswith("jobsearcher_") and f.endswith(".db")]
+        )
+        for old_file in backups[:-max_backups]:
+            try:
+                os.remove(old_file)
+            except Exception:
+                pass
+        return dest_path
+    except Exception as err:
+        logger.warning(f"[database] Online SQLite backup skipped: {err}")
+        return ""
+
+
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     _ensure_healthy_sqlite_db(DB_PATH)
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        connect_args={"check_same_thread": False, "timeout": 30},
+        pool_pre_ping=True,
+    )
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 15},
-    pool_pre_ping=True,
-)
-
-if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA temp_store=MEMORY")
-        cursor.execute("PRAGMA cache_size=-32000")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA cache_size=-64000")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
+else:
+    # Production PostgreSQL engine with connection pooling
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
+        pool_recycle=1800,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -132,8 +176,15 @@ def get_db():
 
 
 def init_db():
+    if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+        backup_sqlite_database(DB_PATH)
+
     migrations = (
         "ALTER TABLE users ADD COLUMN linkedin_cookie VARCHAR DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN daily_digest_enabled BOOLEAN DEFAULT 1",
+        "UPDATE users SET daily_digest_enabled = 1",
+        "ALTER TABLE users ADD COLUMN daily_digest_role VARCHAR DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN last_digest_sent_at DATETIME",
         "ALTER TABLE email_settings ADD COLUMN auth_method VARCHAR DEFAULT 'smtp'",
         "ALTER TABLE email_settings ADD COLUMN gmail_refresh_token TEXT DEFAULT ''",
         "ALTER TABLE cv_uploads ADD COLUMN persona_name VARCHAR DEFAULT 'Primary Resume'",

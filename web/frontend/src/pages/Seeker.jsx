@@ -13,7 +13,7 @@ import client, { getCached } from '../api/client.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import {
-  Upload, CheckCircle2, Briefcase, Sparkles, Users, Radar, Layers, Bell, Loader2, Lock
+  Upload, CheckCircle2, Briefcase, Sparkles, Users, Radar, Layers, Bell, Loader2, Lock, Mail, Send, X
 } from 'lucide-react'
 import {
   getCleanJobUrl,
@@ -41,6 +41,7 @@ export default function Seeker() {
     }
   })
   const [boardLoading, setBoardLoading] = useState(false)
+  const [boardStreaming, setBoardStreaming] = useState(false)
   const [boardMeta, setBoardMeta] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem('guest_board_meta') || 'null')
@@ -118,27 +119,39 @@ export default function Seeker() {
     }
   }
 
-  // Handle Board Search
+  // Handle Board Search (Progressive Wave-1 Fast Stream + Full Multi-Board Scrape)
   const handleBoardSearch = async (params) => {
     setBoardLoading(true)
-    try {
-      const hoursOld = params.hours_old !== undefined ? params.hours_old : (
-        params.filters?.datePosted === '24h' ? 24 :
-        params.filters?.datePosted === 'week' ? 168 :
-        params.filters?.datePosted === 'month' ? 720 : null
-      )
+    setBoardStreaming(true)
+    const hoursOld = params.hours_old !== undefined ? params.hours_old : (
+      params.filters?.datePosted === '24h' ? 24 :
+      params.filters?.datePosted === 'week' ? 168 :
+      params.filters?.datePosted === 'month' ? 720 : null
+    )
+    const payload = {
+      title: params.title.trim(),
+      country: params.countries[0] || 'Worldwide',
+      countries: params.countries,
+      sites: params.sites,
+      results_wanted: Number(params.results_wanted) || 30,
+      hours_old: hoursOld,
+      is_remote: params.is_remote,
+      easy_apply: Boolean(params.filters?.easyApply || params.easy_apply),
+      international_only: Boolean(params.filters?.internationalOnly || params.international_only)
+    }
 
-      const { data } = await client.post('/jobs/search', {
-        title: params.title.trim(),
-        country: params.countries[0] || 'Worldwide',
-        countries: params.countries,
-        sites: params.sites,
-        results_wanted: Number(params.results_wanted) || 30,
-        hours_old: hoursOld,
-        is_remote: params.is_remote,
-        easy_apply: Boolean(params.filters?.easyApply || params.easy_apply),
-        international_only: Boolean(params.filters?.internationalOnly || params.international_only)
-      })
+    let fullFinished = false
+    // Wave 1: Sub-second fast open sources so results appear in ~1.2s
+    client.post('/jobs/search-fast', payload).then(({ data }) => {
+      if (!fullFinished && Array.isArray(data?.jobs) && data.jobs.length > 0) {
+        setBoardJobs(data.jobs)
+        setBoardLoading(false)
+      }
+    }).catch(() => {})
+
+    try {
+      const { data } = await client.post('/jobs/search', payload)
+      fullFinished = true
       const foundJobs = data.jobs || []
       const metaObj = { queries: data.queries_used || [], stats: data.stats || null }
       setBoardJobs(foundJobs)
@@ -152,9 +165,11 @@ export default function Seeker() {
       const merged = st.raw && st.after_dedup ? ` · ${st.raw - st.after_dedup} duplicates merged` : ''
       toast(`Found ${data.jobs?.length || 0} relevant jobs${merged}`, 'success')
     } catch (err) {
+      fullFinished = true
       toast(err?.response?.data?.detail || 'Job board search failed', 'error')
     } finally {
       setBoardLoading(false)
+      setBoardStreaming(false)
     }
   }
 
@@ -306,10 +321,10 @@ export default function Seeker() {
                     }
                     setWatchlistModalOpen(true)
                   }}
-                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-200 text-xs font-bold transition cursor-pointer shadow-sm"
+                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.1] text-slate-200 text-xs font-bold transition cursor-pointer shadow-sm"
                   title="Manage Auto-Pilot Saved Watchlists"
                 >
-                  <Bell size={14} className="text-amber-400" />
+                  <Bell size={14} className="text-blue-400" />
                   <span>Watchlists</span>
                 </motion.button>
 
@@ -403,6 +418,7 @@ export default function Seeker() {
               <JobBoardScraper
                 jobs={boardJobs}
                 loading={boardLoading}
+                streaming={boardStreaming}
                 searchMeta={boardMeta}
                 onSearch={handleBoardSearch}
                 onSaveJob={handleSaveBoardJob}

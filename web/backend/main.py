@@ -105,6 +105,8 @@ def _warm_open_feeds_worker():
 @app.on_event("startup")
 def start_keep_alive():
     threading.Thread(target=_warm_open_feeds_worker, daemon=True).start()
+    from .auto_dispatcher import run_daily_digest_for_all_users
+    threading.Thread(target=run_daily_digest_for_all_users, daemon=True).start()
     if os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"):
         t = threading.Thread(target=_render_keep_alive_worker, daemon=True)
         t.start()

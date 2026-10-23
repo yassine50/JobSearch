@@ -65,6 +65,10 @@ User=$USER
 WorkingDirectory=/opt/cvtomatch
 Environment="PATH=/opt/cvtomatch/venv/bin"
 Environment="PYTHONUNBUFFERED=1"
+Environment="RESEND_API_KEY=re_Ph6cNz28_AQi1mTkSWut8aWEofaejWPkt"
+Environment="PLATFORM_FROM_EMAIL=support@cvtomatch.com"
+Environment="PLATFORM_REPLY_TO_EMAIL=support@cvtomatch.com"
+Environment="PLATFORM_FROM_NAME=CVtoMatch AI"
 ExecStart=/opt/cvtomatch/venv/bin/uvicorn web.backend.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always
 RestartSec=3
@@ -76,6 +80,21 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable cvtomatch
 sudo systemctl restart cvtomatch
+
+# 5.5 Configure Daily Automated Database Backup Cron (keeps 14 days of hot snapshots)
+echo "--> Configuring daily automated SQLite backup cron..."
+sudo tee /etc/cron.daily/cvtomatch-db-backup > /dev/null <<'EOF'
+#!/usr/bin/env bash
+BACKUP_DIR="/opt/cvtomatch/web/backend/backups"
+DB_FILE="/opt/cvtomatch/web/backend/jobsearcher.db"
+mkdir -p "$BACKUP_DIR"
+if [ -f "$DB_FILE" ]; then
+  STAMP=$(date +%Y%m%d_%H%M)
+  /opt/cvtomatch/venv/bin/python3 -c "import sqlite3; s=sqlite3.connect('$DB_FILE', timeout=30); d=sqlite3.connect('$BACKUP_DIR/jobsearcher_$STAMP.db'); s.backup(d); d.close(); s.close()"
+  ls -1t "$BACKUP_DIR"/jobsearcher_*.db 2>/dev/null | tail -n +15 | xargs -r rm -f
+fi
+EOF
+sudo chmod +x /etc/cron.daily/cvtomatch-db-backup
 
 # 6. Configure Nginx Reverse Proxy on Port 80 -> 127.0.0.1:8000
 echo "--> Configuring Nginx reverse proxy on port 80..."

@@ -177,6 +177,19 @@ function NavContent({ onClose, collapsed = false, onToggleCollapse }) {
         <div className="flex items-center justify-center">
           <ThemeToggle compact={collapsed} className={collapsed ? '' : 'w-full justify-center'} />
         </div>
+        <a
+          href="mailto:support@cvtomatch.com"
+          title="Contact Support: support@cvtomatch.com"
+          className={`flex items-center ${collapsed ? 'justify-center p-2' : 'gap-2.5 px-3 py-2'} rounded-xl bg-blue-500/[0.07] hover:bg-blue-500/[0.14] border border-blue-500/20 text-xs transition`}
+        >
+          <Mail size={14} className="text-blue-400 shrink-0" />
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 leading-none">Support Desk</p>
+              <p className="text-xs font-bold text-blue-400 truncate mt-0.5">support@cvtomatch.com</p>
+            </div>
+          )}
+        </a>
         {isAuth ? (
           <>
             <div className={`flex items-center ${collapsed ? 'justify-center p-2' : 'gap-3 p-2.5'} rounded-xl bg-white/[0.02] border border-white/[0.05]`} title={collapsed ? `${user?.name || 'User'} (${user?.email || ''})` : undefined}>

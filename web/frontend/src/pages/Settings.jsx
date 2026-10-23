@@ -621,6 +621,29 @@ export default function Settings() {
             </div>
           </Section>
 
+          {/* Official Support & Contact Card */}
+          <Section title="Help & Official Support" icon={Mail} badge="support@cvtomatch.com">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-white">Need help with CV tailoring, recruiter outreach, or your account?</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Reach our team directly at{' '}
+                  <a href="mailto:support@cvtomatch.com" className="text-blue-400 font-bold hover:underline">
+                    support@cvtomatch.com
+                  </a>
+                  {' '}and we will get back to you promptly.
+                </p>
+              </div>
+              <a
+                href="mailto:support@cvtomatch.com"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold transition shrink-0 shadow-sm"
+              >
+                <Mail size={14} />
+                <span>Email support@cvtomatch.com</span>
+              </a>
+            </div>
+          </Section>
+
         </main>
       </div>
     </PageWrapper>
