@@ -593,7 +593,7 @@ _DATE_WORD = re.compile(
     r"^(?:from|de|du|to|au|à|a|since|depuis|until|present|presnt|pr[ée]sent|current|now|aujourd'?hui|"
     r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
     r"janv(?:ier)?|f[ée]vr?(?:ier)?|mars|avr(?:il)?|mai|juin|juil(?:let)?|ao[uû]t|septembre|octobre|novembre|d[ée]c(?:embre)?|"
-    r"summer|[ée]t[ée]|winter|hiver|spring|printemps|(?:19|20)\d{2}|\d{1,2}/(?:19|20)\d{2}|[-–—/,.])$",
+    r"summer|[ée]t[ée]|winter|hiver|spring|printemps|(?:19|20)\d{2}|\d{1,2}/(?:19|20)\d{2}|\d{1,2}(?:st|nd|rd|th)?|[-–—/,.])$",
     re.I,
 )
 
@@ -660,10 +660,18 @@ def parse_entries(lines: List[Line], section: str, body: float, lang: str) -> Li
         nonlocal cur, date_frags
         if cur is None:
             return
-        if date_frags and not cur.dates:
-            found = find_date_span(" ".join(date_frags))
-            if found:
-                cur.dates = found[0]
+        if date_frags:
+            if not cur.dates:
+                found = find_date_span(" – ".join(date_frags)) or find_date_span(" ".join(date_frags))
+                if found:
+                    cur.dates = found[0]
+            elif not cur.dates.end:
+                found = find_date_span(" ".join(date_frags))
+                if found:
+                    other = found[0].end or found[0].start
+                    if (other.year, other.month or 1) != (cur.dates.start.year, cur.dates.start.month or 1):
+                        s_pt, e_pt = sorted([cur.dates.start, other], key=lambda p: (p.year, p.month or 1))
+                        cur.dates = DateSpan(start=s_pt, end=e_pt, raw=f"{cur.dates.raw} – {' '.join(date_frags)}")
         if cur.dates:
             cur.date_text = cur.dates.display(lang)
         _finalize_entry(cur, section)
@@ -991,13 +999,20 @@ def _absorb_header_line(cur: Entry, text: str, section: str) -> None:
     parts = [p.strip() for p in text.split("\t") if p.strip()]
     for part in parts:
         found = find_date_span(part)
-        if found and not cur.dates:
-            cur.dates = found[0]
+        if found:
+            if not cur.dates:
+                cur.dates = found[0]
+            elif not cur.dates.end:
+                if found[0].end:
+                    cur.dates = found[0]
+                elif (found[0].start.year, found[0].start.month or 1) != (cur.dates.start.year, cur.dates.start.month or 1):
+                    s_pt, e_pt = sorted([cur.dates.start, found[0].start], key=lambda p: (p.year, p.month or 1))
+                    cur.dates = DateSpan(start=s_pt, end=e_pt, raw=f"{cur.dates.raw} – {found[0].raw}")
             rest = strip_dates(part)
         else:
             rest = part
         rest = _trim_edges(rest)
-        if not rest:
+        if not rest or _is_date_fragment(rest):
             continue
         # "HealthCare Plus | Android: Java, XML, Firebase" / "Live demo | GitHub"
         segs = [s.strip() for s in re.split(r"\s+\|\s+|\s*\|\s*(?=[A-Z])|\s+·\s+", rest) if s.strip()]
@@ -1009,7 +1024,7 @@ def _absorb_header_line(cur: Entry, text: str, section: str) -> None:
 
 def _assign_segment(cur: Entry, seg: str, section: str) -> None:
     seg = _trim_edges(seg)
-    if not seg:
+    if not seg or _is_date_fragment(seg):
         return
     if LINK_LABEL_RE.match(seg):
         if re.match(r"^[\w-]+\.(?:tn|com|io|app|dev|me|net|org|fr)(?:/\S*)?$", seg, re.I):
@@ -1191,6 +1206,18 @@ _INDUSTRY_NOISE_ORGS = {
 
 
 def _finalize_entry(e: Entry, section: str) -> None:
+    if e.org and _is_date_fragment(e.org):
+        found_org_dt = find_date_span(e.org)
+        if found_org_dt:
+            if not e.dates:
+                e.dates = found_org_dt[0]
+            elif not e.dates.end:
+                other = found_org_dt[0].end or found_org_dt[0].start
+                if (other.year, other.month or 1) != (e.dates.start.year, e.dates.start.month or 1):
+                    s_pt, e_pt = sorted([e.dates.start, other], key=lambda p: (p.year, p.month or 1))
+                    e.dates = DateSpan(start=s_pt, end=e_pt, raw=f"{e.dates.raw} – {e.org}")
+            e.date_text = e.dates.display("en")
+        e.org = ""
     if e.org and e.org.strip().lower() in _INDUSTRY_NOISE_ORGS:
         e.org = ""
     e.extra = [x for x in e.extra if x.strip().lower() not in _INDUSTRY_NOISE_ORGS]

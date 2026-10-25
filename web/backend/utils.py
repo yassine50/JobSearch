@@ -24,6 +24,32 @@ def ensure_project_root_on_path() -> str:
 EMAIL_REGEX = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+", re.IGNORECASE)
 
 
+def is_safe_public_url(url: str) -> bool:
+    """
+    SSRF guard: only allow http(s) URLs whose host resolves exclusively to public
+    IP addresses (blocks localhost, private LANs, link-local cloud metadata 169.254.x.x, etc.).
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse((url or "").strip())
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
+        if not infos:
+            return False
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0].split("%")[0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                    or ip.is_multicast or ip.is_unspecified):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def extract_emails(text: str) -> List[str]:
     """Extracts unique lowercase email addresses from arbitrary text."""
     if not text:

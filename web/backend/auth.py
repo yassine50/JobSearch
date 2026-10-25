@@ -9,9 +9,40 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from . import models
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "jobsearcher-secret-key-change-in-production-2025")
+def _load_secret_key() -> str:
+    """
+    JWT signing key. Uses JWT_SECRET_KEY from the environment if set; otherwise
+    generates a strong random key ONCE and persists it to web/backend/.jwt_secret
+    (git-ignored) so every worker and restart shares the same key.
+    Never falls back to a public, hardcoded default.
+    """
+    env_key = (os.getenv("JWT_SECRET_KEY") or "").strip()
+    if env_key:
+        return env_key
+    import secrets as _secrets
+    import time as _time
+    path = os.path.join(os.path.dirname(__file__), ".jwt_secret")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(_secrets.token_urlsafe(64))
+    except FileExistsError:
+        pass
+    for _ in range(50):  # another worker may be mid-write
+        try:
+            with open(path, "r") as fh:
+                key = fh.read().strip()
+            if key:
+                return key
+        except OSError:
+            pass
+        _time.sleep(0.05)
+    raise RuntimeError("Could not load or create JWT secret key")
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 90  # 90 days persistent login
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days persistent login
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)

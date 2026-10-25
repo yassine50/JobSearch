@@ -177,19 +177,6 @@ export function AuthFormCard({
       const { data } = await client.post('/auth/login', { email, password })
       finishAuth(data.access_token, data.user, 'Signed in! Your search results are now unlocked.')
     } catch (loginErr) {
-      if (loginErr?.response?.status === 401 && password.length >= 6 && email.includes('@')) {
-        try {
-          const autoName = email.split('@')[0].replace(/[._-]+/g, ' ').trim() || 'Candidate'
-          const { data } = await client.post('/auth/register', {
-            name: autoName,
-            email,
-            password,
-            role: 'seeker',
-          })
-          finishAuth(data.access_token, data.user, 'Account created! Your search results are now unlocked.')
-          return
-        } catch {}
-      }
       setErr(loginErr?.response?.data?.detail || 'Invalid email or password.')
     } finally {
       setBusy(false)

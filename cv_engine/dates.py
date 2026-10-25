@@ -33,10 +33,11 @@ _MONTH_ALT = "|".join(sorted((re.escape(m) for m in MONTHS), key=len, reverse=Tr
 _SEASON_ALT = "|".join(sorted((re.escape(s) for s in SEASONS), key=len, reverse=True))
 PRESENT_RE = r"(?:present|presnt|pr[ée]sent|current|currently|now|today|ongoing|aujourd'?hui|actuel(?:lement)?|en cours|à ce jour|a ce jour)"
 
-# A single point in time
+# A single point in time (supports optional day-of-month or day-range like "15 May 2024" or "15 – 27 july 2024")
+_DAY_PREFIX = r"(?:(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?(?:\s*(?:–|—|-|to|au)\s*(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?)?\s+)"
 _POINT = (
     rf"(?:(?:{_SEASON_ALT})\s*,?\s*(?:19|20)\d{{2}}"                    # summer 2021 / summer2021
-    rf"|(?:{_MONTH_ALT})\.?\s*[,/\-]?\s*(?:19|20)\d{{2}}"                 # Mar 2022 / Sep, 2019 / Sep/2019
+    rf"|{_DAY_PREFIX}?(?:{_MONTH_ALT})\.?\s*[,/\-]?\s*(?:19|20)\d{{2}}"   # 15 May 2024 / 15 – 27 july 2024 / Mar 2022
     rf"|(?:0?[1-9]|1[0-2])\s*[/.\-]\s*(?:19|20)\d{{2}}"                   # 09/2019
     rf"|(?:19|20)\d{{2}}\s*[/.\-]\s*(?:0?[1-9]|1[0-2])(?!\d)"             # 2019-09
     rf"|(?<![\d/])(?:19|20)\d{{2}}(?![\d/])"                              # 2019
@@ -121,7 +122,7 @@ def _parse_point(txt: str) -> Optional[DatePoint]:
             month = num
             break
     if month is None:
-        mm = re.match(rf"({_MONTH_ALT})", t, re.I)
+        mm = re.search(rf"\b({_MONTH_ALT})\b", t, re.I)
         if mm:
             month = MONTHS.get(mm.group(1).lower().rstrip("."))
     if month is None:

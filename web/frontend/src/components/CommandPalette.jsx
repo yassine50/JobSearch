@@ -42,6 +42,15 @@ export default function CommandPalette() {
     }
   }, [open])
 
+  // Quick hunts: persist the role so Seeker can pick it up even if it's still lazy-loading,
+  // then Seeker switches to the LinkedIn Posts tab and triggers the hunt itself.
+  const quickHunt = (role) => {
+    if (!role) return
+    try { sessionStorage.setItem('pending_quick_hunt', role) } catch {}
+    navigate('/seeker')
+    setTimeout(() => window.dispatchEvent(new Event('seeker-quick-hunt')), 60)
+  }
+
   const actions = useMemo(() => [
     {
       id: 'nav-seeker',
@@ -147,8 +156,7 @@ export default function CommandPalette() {
       icon: Sparkles,
       color: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
       run: () => {
-        navigate('/seeker')
-        setTimeout(() => window.dispatchEvent(new CustomEvent('quick-hunt-role', { detail: 'Flutter Developer' })), 120)
+        quickHunt('Flutter Developer')
       },
     },
     {
@@ -159,8 +167,7 @@ export default function CommandPalette() {
       icon: Sparkles,
       color: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
       run: () => {
-        navigate('/seeker')
-        setTimeout(() => window.dispatchEvent(new CustomEvent('quick-hunt-role', { detail: 'React / Next.js' })), 120)
+        quickHunt('React / Next.js')
       },
     },
     {
@@ -171,11 +178,10 @@ export default function CommandPalette() {
       icon: Sparkles,
       color: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
       run: () => {
-        navigate('/seeker')
-        setTimeout(() => window.dispatchEvent(new CustomEvent('quick-hunt-role', { detail: 'Python AI Engineer' })), 120)
+        quickHunt('Python AI Engineer')
       },
     },
-  ], [navigate])
+  ], [navigate, theme, toggleTheme])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -260,8 +266,7 @@ export default function CommandPalette() {
                   <button
                     type="button"
                     onClick={() => {
-                      navigate('/seeker')
-                      setTimeout(() => window.dispatchEvent(new CustomEvent('quick-hunt-role', { detail: query.trim() })), 120)
+                      quickHunt(query.trim())
                       setOpen(false)
                     }}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition cursor-pointer"

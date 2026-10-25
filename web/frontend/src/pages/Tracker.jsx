@@ -329,27 +329,48 @@ export default function Tracker() {
     }
   }
 
+  const [savingApp, setSavingApp] = useState(false)
   const addApp = async () => {
-    if (!form.title) return
-    await client.post('/tracker', form)
-    setForm({ title:'', company:'', location:'', url:'', notes:'' })
-    setAdding(false); load()
+    if (!form.title || savingApp) return
+    setSavingApp(true)
+    try {
+      await client.post('/tracker', form)
+      setForm({ title:'', company:'', location:'', url:'', notes:'' })
+      setAdding(false); load()
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Could not add application', 'error')
+    } finally {
+      setSavingApp(false)
+    }
   }
 
   const moveStatus = async (id, status) => {
-    await client.patch(`/tracker/${id}`, { status })
-    setApps(a => a.map(x => x.id === id ? { ...x, status } : x))
+    try {
+      await client.patch(`/tracker/${id}`, { status })
+      setApps(a => a.map(x => x.id === id ? { ...x, status } : x))
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Could not update status', 'error')
+    }
   }
 
   const saveNotes = async () => {
-    await client.patch(`/tracker/${editing}`, { notes })
-    setApps(a => a.map(x => x.id === editing ? { ...x, notes } : x))
-    setEditing(null)
+    try {
+      await client.patch(`/tracker/${editing}`, { notes })
+      setApps(a => a.map(x => x.id === editing ? { ...x, notes } : x))
+      setEditing(null)
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Could not save notes', 'error')
+    }
   }
 
   const del = async (id) => {
-    await client.delete(`/tracker/${id}`)
-    setApps(a => a.filter(x => x.id !== id))
+    if (!window.confirm('Delete this application and its email thread? This cannot be undone.')) return
+    try {
+      await client.delete(`/tracker/${id}`)
+      setApps(a => a.filter(x => x.id !== id))
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Could not delete application', 'error')
+    }
   }
 
   const filteredApps = useMemo(() => {
@@ -1015,8 +1036,8 @@ export default function Tracker() {
                     <button onClick={() => setAdding(false)} className="flex-1 bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] py-2.5 rounded-xl text-xs font-bold transition cursor-pointer">
                       Cancel
                     </button>
-                    <button onClick={addApp} className="shimmer-btn flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer">
-                      Add Application
+                    <button onClick={addApp} disabled={savingApp || !form.title} className="shimmer-btn flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                      {savingApp ? 'Adding...' : 'Add Application'}
                     </button>
                   </div>
                 </div>

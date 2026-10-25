@@ -1,7 +1,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Any
 from datetime import datetime, timedelta, date
 import os
@@ -824,6 +824,17 @@ class SearchRequest(BaseModel):
     easy_apply: Optional[bool] = None
     international_only: Optional[bool] = False
 
+    # Abuse guards: clamp fan-out so a single request can't trigger unbounded scraping
+    @field_validator("results_wanted")
+    @classmethod
+    def _clamp_results(cls, v):
+        return max(1, min(int(v or 30), 100))
+
+    @field_validator("countries", "sites")
+    @classmethod
+    def _clamp_lists(cls, v):
+        return list(v or [])[:8]
+
 class ImportUrlRequest(BaseModel):
     url: str
 
@@ -1572,6 +1583,9 @@ def fetch_job_description(req: JobDescriptionRequest,
         desc = _fetch_linkedin_description(req.job_id or url)
 
     if not desc and url.startswith("http"):
+        from ..utils import is_safe_public_url
+        if not is_safe_public_url(url):
+            raise HTTPException(400, "This URL is not allowed.")
         try:
             from bs4 import BeautifulSoup
             from ..liveness import decode_page
@@ -1676,6 +1690,9 @@ def import_from_url(req: ImportUrlRequest,
                     "tips": tips
                 }
             }
+    from ..utils import is_safe_public_url
+    if not is_safe_public_url(clean_url):
+        raise HTTPException(400, "This URL is not allowed. Please paste a public job posting link.")
     try:
         from bs4 import BeautifulSoup
         from ..liveness import decode_page
@@ -1696,9 +1713,7 @@ def import_from_url(req: ImportUrlRequest,
                 raise Exception(f"HTTP {resp.status_code}")
             html = decode_page(resp.content, resp.headers.get("Content-Type"))
         except ImportError:
-            import urllib3
-            urllib3.disable_warnings()
-            resp = _JOBS_SESSION.get(clean_url, headers=headers, timeout=12, verify=False)
+            resp = _JOBS_SESSION.get(clean_url, headers=headers, timeout=12)
             resp.raise_for_status()
             html = decode_page(resp.content, resp.headers.get("Content-Type"))
 
@@ -2197,11 +2212,15 @@ def update_daily_digest_settings(
     db.commit()
 
     digest_preview = None
-    try:
-        from ..auto_dispatcher import dispatch_daily_top_matches_digest
-        digest_preview = dispatch_daily_top_matches_digest(db, current_user.id, role_override=current_user.daily_digest_role)
-    except Exception as err:
-        logger.warning(f"[DailyDigest] Immediate preview warning: {err}")
+    # Anti-abuse: only send an on-demand digest if none was sent in the last 23 hours
+    last = current_user.last_digest_sent_at
+    recently_sent = bool(last and (datetime.utcnow() - last).total_seconds() < 23 * 3600)
+    if req.send_test_now and not recently_sent:
+        try:
+            from ..auto_dispatcher import dispatch_daily_top_matches_digest
+            digest_preview = dispatch_daily_top_matches_digest(db, current_user.id, role_override=current_user.daily_digest_role)
+        except Exception as err:
+            logger.warning(f"[DailyDigest] Immediate preview warning: {err}")
 
     return {
         "enabled": True,

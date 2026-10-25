@@ -545,13 +545,34 @@ def _dispatch_platform_digest_email(
     reply_to_email = os.getenv("PLATFORM_REPLY_TO_EMAIL", "support@cvtomatch.com").strip() or from_email
 
     target_addr = (recipient_user.email or "").strip().lower()
-    if not target_addr or target_addr.endswith(("@example.com", "@test.com", ".local")):
+    if (
+        not target_addr
+        or target_addr.endswith(("@example.com", "@test.com", ".local", "@cvtomatch.com"))
+        or target_addr in ("cvtomatch1@gmail.com",)
+    ):
         return False
 
+    # Load .env fallback if RESEND_API_KEY is not yet in os.environ
+    resend_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not resend_key:
+        for env_candidate in (
+            "/opt/cvtomatch/.env",
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env")),
+        ):
+            if os.path.exists(env_candidate):
+                try:
+                    with open(env_candidate, "r", encoding="utf-8") as ef:
+                        for line in ef:
+                            line = line.strip()
+                            if line.startswith("RESEND_API_KEY="):
+                                resend_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                break
+                except Exception:
+                    pass
+            if resend_key:
+                break
+
     # 1. Resend API (Verified cvtomatch.com domain -> From: CVtoMatch AI <support@cvtomatch.com>)
-    # Note: Split fallback avoids GitHub Secret Scanning auto-revoking the key on git push
-    _default_rk = "_".join(["re", "CbcifsGN", "Af2fHyDwKeMjVWeNJUK4WQSi"])
-    resend_key = os.getenv("RESEND_API_KEY", "").strip() or _default_rk
     if resend_key:
         try:
             resp = requests.post(
@@ -625,36 +646,7 @@ def _dispatch_platform_digest_email(
         except Exception as err:
             print(f"[PlatformMailer] Platform SMTP warning: {err}")
 
-    # 4. Fallback to Platform Admin EmailSettings (user_id == 1 or first admin sender, never the recipient's personal SMTP)
-    from .routers.email import _dispatch_smtp
-    admin_email = os.getenv("PLATFORM_ADMIN_EMAIL", "").strip()
-    admin_settings = None
-    if admin_email:
-        admin_user = db.query(models.User).filter(models.User.email == admin_email).first()
-        if admin_user:
-            admin_settings = db.query(models.EmailSettings).filter(models.EmailSettings.user_id == admin_user.id).first()
-    if not admin_settings:
-        admin_settings = (
-            db.query(models.EmailSettings)
-            .filter(models.EmailSettings.smtp_user != "")
-            .order_by(models.EmailSettings.user_id.asc())
-            .first()
-        )
-    if admin_settings and (admin_settings.smtp_user or getattr(admin_settings, "gmail_refresh_token", "")):
-        _dispatch_smtp(
-            admin_settings,
-            recipient_user,
-            recipient_user.email,
-            recipient_user.name or "Explorer",
-            subject,
-            plain_body,
-            attach_cv=False,
-            db=db,
-            html_body=html_body,
-            sender_name_override=from_name,
-        )
-        return True
-
+    # NEVER fall back to any user's personal EmailSettings / Gmail OAuth!
     return False
 
 
@@ -837,6 +829,34 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
 
     # CASE 1: User has NOT uploaded any CV yet -> Send branded "Upload Your CV & Start Hunting" email
     if not cv_text:
+        # If this user already has another registered account (same first+last name or email prefix) WITH a CV,
+        # skip sending the Upload-CV reminder to their secondary/empty account.
+        norm_first = ((user.name or "").strip().lower().split(" ")[0] if user.name else "")
+        if norm_first and len(norm_first) >= 3:
+            sibling_users = (
+                db.query(models.User)
+                .filter(models.User.id != user.id)
+                .all()
+            )
+            for sib in sibling_users:
+                sib_first = ((sib.name or "").strip().lower().split(" ")[0] if sib.name else "")
+                if sib_first == norm_first:
+                    sib_cv = _get_active_cv(db, sib.id)
+                    if sib_cv and (sib_cv.text_content or "").strip():
+                        try:
+                            user.last_digest_sent_at = datetime.utcnow()
+                            db.commit()
+                        except Exception:
+                            db.rollback()
+                        return {
+                            "sent": False,
+                            "mode": "skipped_secondary_account",
+                            "role": "",
+                            "matches_count": 0,
+                            "matches": [],
+                            "html_preview": "",
+                        }
+
         html_body = build_upload_cv_reminder_html(
             user_name=user.name or "Explorer",
             user_email=user.email,
@@ -854,6 +874,10 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
         email_sent = False
         if user.email:
             try:
+                # Claim and commit timestamp BEFORE sending so a locked DB can never cause repeat spam
+                user.daily_digest_enabled = True
+                user.last_digest_sent_at = datetime.utcnow()
+                db.commit()
                 email_sent = _dispatch_platform_digest_email(
                     db=db,
                     recipient_user=user,
@@ -861,11 +885,8 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
                     plain_body=plain_body,
                     html_body=html_body,
                 )
-                if email_sent:
-                    user.daily_digest_enabled = True
-                    user.last_digest_sent_at = datetime.utcnow()
-                    db.commit()
             except Exception as err:
+                db.rollback()
                 print(f"[DailyDigest] Upload-CV reminder skipped for user {user_id}: {err}")
 
         return {
@@ -1044,7 +1065,7 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
         user.seen_digest_urls_json = _json.dumps(merged_seen[-50:])
         db.commit()
     except Exception:
-        pass
+        db.rollback()
 
     html_body = build_daily_digest_html(
         user_name=user.name or "Explorer",
@@ -1056,6 +1077,11 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
     email_sent = False
     if top_5 and user.email:
         try:
+            # Claim and commit timestamp BEFORE sending so a locked DB can never cause repeat spam
+            user.daily_digest_enabled = True
+            user.last_digest_sent_at = datetime.utcnow()
+            db.commit()
+
             lines = [
                 f"Good morning {user.name.split(' ')[0] if user.name else 'there'},",
                 "",
@@ -1079,11 +1105,8 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
                 plain_body=plain_body,
                 html_body=html_body,
             )
-            if email_sent:
-                user.daily_digest_enabled = True
-                user.last_digest_sent_at = datetime.utcnow()
-                db.commit()
         except Exception as err:
+            db.rollback()
             print(f"[DailyDigest] Email dispatch skipped for user {user_id}: {err}")
 
     return {
@@ -1102,6 +1125,22 @@ def run_daily_digest_for_all_users() -> None:
     Mandatory for all registered users.
     """
     from .database import SessionLocal
+    import os
+    import tempfile
+
+    # With `uvicorn --workers N`, every worker runs startup hooks. Hold an exclusive
+    # OS file lock so only ONE process runs the digest loop (prevents duplicate emails).
+    try:
+        import fcntl
+        lock_path = os.path.join(tempfile.gettempdir(), "cvtomatch_daily_digest.lock")
+        _lock_fh = open(lock_path, "w")
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        run_daily_digest_for_all_users._lock_fh = _lock_fh  # keep handle alive
+    except (BlockingIOError, OSError):
+        return  # another worker already owns the digest loop
+    except ImportError:
+        pass  # non-POSIX (Windows dev) — single process, no lock needed
+
     while True:
         time.sleep(1800)  # Check every 30 minutes
         db = SessionLocal()

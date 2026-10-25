@@ -23,6 +23,7 @@ from .routers import (
     coverletter,
     linkedin_posts,
     power,
+    extension,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -58,6 +59,7 @@ for router in [
     coverletter.router,
     linkedin_posts.router,
     power.router,
+    extension.router,
 ]:
     app.include_router(router)
 
@@ -104,9 +106,11 @@ def _warm_open_feeds_worker():
 
 @app.on_event("startup")
 def start_keep_alive():
+    import sys
     threading.Thread(target=_warm_open_feeds_worker, daemon=True).start()
-    from .auto_dispatcher import run_daily_digest_for_all_users
-    threading.Thread(target=run_daily_digest_for_all_users, daemon=True).start()
+    if sys.platform.startswith("linux") or os.getenv("ENABLE_DAILY_DIGEST_WORKER") == "1":
+        from .auto_dispatcher import run_daily_digest_for_all_users
+        threading.Thread(target=run_daily_digest_for_all_users, daemon=True).start()
     if os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"):
         t = threading.Thread(target=_render_keep_alive_worker, daemon=True)
         t.start()

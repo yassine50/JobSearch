@@ -199,9 +199,13 @@ export default function Dashboard() {
   }
 
   const deleteSaved = async (id) => {
-    await client.delete(`/jobs/saved/${id}`)
-    setSaved(s => s.filter(j => j.id !== id))
-    toast('Job removed', 'info')
+    try {
+      await client.delete(`/jobs/saved/${id}`)
+      setSaved(s => s.filter(j => j.id !== id))
+      toast('Job removed', 'info')
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Could not remove job', 'error')
+    }
   }
 
   const totalApps = stats?.total || 0

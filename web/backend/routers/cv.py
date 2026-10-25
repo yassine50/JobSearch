@@ -84,6 +84,10 @@ async def upload_cv(
     current_user: models.User = Depends(get_current_user),
 ):
     content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 10 MB)")
+    if not file.filename:
+        raise HTTPException(400, "Missing file name")
     text = _parse(file.filename, content)
     if not text.strip():
         raise HTTPException(400, "No text found in file")
@@ -168,6 +172,10 @@ async def create_cv_persona(
     current_user: models.User = Depends(get_current_user),
 ):
     content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 10 MB)")
+    if not file.filename:
+        raise HTTPException(400, "Missing file name")
     text = _parse(file.filename, content)
     if not text.strip():
         raise HTTPException(400, "No text found in file")

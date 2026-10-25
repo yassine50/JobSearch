@@ -1,5 +1,5 @@
 
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { clearAllCache } from '../api/client.js'
 
 const AuthContext = createContext(null)
@@ -37,6 +37,13 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('user')
     setToken(null); setUser(null)
   }
+
+  // API client fires this on any 401 for an authenticated request (expired/rotated token)
+  useEffect(() => {
+    const onExpired = () => { setToken(null); setUser(null) }
+    window.addEventListener('auth-expired', onExpired)
+    return () => window.removeEventListener('auth-expired', onExpired)
+  }, [])
 
   const updateUser = (patch) => {
     const updated = { ...user, ...patch }

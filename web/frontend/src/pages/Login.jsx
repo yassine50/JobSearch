@@ -244,6 +244,12 @@ export default function Login() {
     client.get('/auth/google-config').then(res => {
       if (res.data?.client_id) setGoogleClientId(res.data.client_id)
     }).catch(() => {})
+    if (window.location.search.includes('ext_google_auth=1')) {
+      setTimeout(() => {
+        const el = document.getElementById('auth-workbench')
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 250)
+    }
   }, [])
 
   useEffect(() => {
@@ -445,94 +451,7 @@ export default function Login() {
             login(data.access_token, data.user)
             navigate(getPostAuthDestination(), { replace: true })
           } catch (apiErr) {
-            const st = apiErr?.response?.status
-            if (st === 404 || st === 405 || st === 501) {
-              // Seamless fallback when remote server has not yet restarted with POST /api/auth/google
-              // (Note: FastAPI catch-all GET /{full_path:path} returns 405 Method Not Allowed for unknown POST routes)
-              try {
-                const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                  headers: { Authorization: `Bearer ${gToken}` },
-                })
-                if (!uRes.ok) {
-                  throw new Error('Could not verify Google account profile.')
-                }
-                const gInfo = await uRes.json()
-                const email = (gInfo.email || '').trim().toLowerCase()
-                if (!email) {
-                  throw new Error('Google account did not return an email address.')
-                }
-                const name = (gInfo.name || gInfo.given_name || email.split('@')[0] || 'User').trim()
-                const googlePwd = `GAuth!${gInfo.sub || email}#CVtoMatch`
-                try {
-                  const { data } = await client.post('/auth/login', { email, password: googlePwd })
-                  try { localStorage.setItem('saved_login_email', email) } catch {}
-                  login(data.access_token, data.user)
-                  navigate(getPostAuthDestination(), { replace: true })
-                  return
-                } catch {
-                  try {
-                    const { data } = await client.post('/auth/register', {
-                      name,
-                      email,
-                      password: googlePwd,
-                      role: rf.role || 'seeker',
-                    })
-                    try { localStorage.setItem('saved_login_email', email) } catch {}
-                    login(data.access_token, data.user)
-                    navigate(getPostAuthDestination(), { replace: true })
-                    return
-                  } catch (regErr) {
-                    // Existing user who originally registered with a manual password
-                    const b64url = (input) => {
-                      const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input)
-                      let bin = ''
-                      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-                      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-                    }
-                    const signJwt = async (secretStr) => {
-                      const hdr = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-                      const pld = b64url(JSON.stringify({
-                        sub: email,
-                        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 90,
-                      }))
-                      const signingInput = `${hdr}.${pld}`
-                      const cryptoKey = await window.crypto.subtle.importKey(
-                        'raw',
-                        new TextEncoder().encode(secretStr),
-                        { name: 'HMAC', hash: 'SHA-256' },
-                        false,
-                        ['sign']
-                      )
-                      const sig = await window.crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(signingInput))
-                      return `${signingInput}.${b64url(sig)}`
-                    }
-
-                    for (const sec of [
-                      'jobsearcher-secret-key-change-in-production-2025',
-                      'jobsearcher-super-secret-key-change-in-production-2024',
-                    ]) {
-                      try {
-                        const tok = await signJwt(sec)
-                        const meRes = await client.get('/auth/me', {
-                          headers: { Authorization: `Bearer ${tok}` },
-                        })
-                        if (meRes?.data?.email) {
-                          try { localStorage.setItem('saved_login_email', email) } catch {}
-                          login(tok, meRes.data)
-                          navigate(getPostAuthDestination(), { replace: true })
-                          return
-                        }
-                      } catch {}
-                    }
-                    throw regErr
-                  }
-                }
-              } catch (fallbackErr) {
-                setErr(fallbackErr?.response?.data?.detail || fallbackErr?.message || 'Google sign-in failed.')
-              }
-            } else {
-              setErr(apiErr?.response?.data?.detail || 'Google authentication failed.')
-            }
+            setErr(apiErr?.response?.data?.detail || 'Google authentication failed.')
           } finally {
             setGoogleBusy(false)
           }
@@ -571,25 +490,7 @@ export default function Login() {
       login(data.access_token, data.user)
       navigate(getPostAuthDestination(), { replace: true })
     } catch (loginErr) {
-      // If a brand-new user typed their email + password on the Sign In tab instead of Create Account,
-      // automatically try registering them if the password is >= 6 characters
-      if (loginErr?.response?.status === 401 && password.length >= 6 && email.includes('@')) {
-        try {
-          const autoName = email.split('@')[0].replace(/\d+$/g, '').replace(/[._-]+/g, ' ').trim() || email.split('@')[0]
-          const { data } = await client.post('/auth/register', {
-            name: autoName.length >= 2 ? autoName : email.split('@')[0],
-            email,
-            password,
-            role: 'seeker',
-          })
-          try { localStorage.setItem('saved_login_email', email) } catch {}
-          login(data.access_token, data.user)
-          navigate(getPostAuthDestination(), { replace: true })
-          return
-        } catch {
-          // If email already exists with a different password, show the original login error
-        }
-      }
+      // No silent auto-registration: a typo in the email would create an unintended new account
       setErr(loginErr?.response?.data?.detail || 'Invalid email or password')
     } finally {
       setBusy(false)

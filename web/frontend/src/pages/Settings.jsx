@@ -7,7 +7,7 @@ import PageWrapper from '../components/PageWrapper.jsx'
 import client, { getCached } from '../api/client.js'
 import {
   Settings as SettingsIcon, Mail, User, Trash2, Plus, Eye, EyeOff,
-  Save, Send, ShieldAlert, RefreshCw, Search, Loader2, Sparkles
+  Save, Send, ShieldAlert, RefreshCw, Search, Loader2, Sparkles, Puzzle, Download
 } from 'lucide-react'
 
 function Section({ title, sub, icon: Icon, children }) {
@@ -84,8 +84,12 @@ export default function Settings() {
   }
 
   const disconnectGmail = async () => {
-    await client.post('/email/google/disconnect').catch(() => {})
-    toast('Gmail disconnected', 'success')
+    try {
+      await client.post('/email/google/disconnect')
+      toast('Gmail disconnected', 'success')
+    } catch (e) {
+      toast(e.response?.data?.detail || 'Could not disconnect Gmail', 'error')
+    }
     loadGmail()
   }
 
@@ -617,6 +621,48 @@ export default function Settings() {
                       </div>
                     ))
                 )}
+              </div>
+            </div>
+          </Section>
+
+          {/* Chrome Extension Autofill Card */}
+          <Section
+            title="1-Click Chrome Autofill Extension"
+            sub="Automatically fill job application forms & attach your tailored CV on Workday, Greenhouse, Lever, Ashby & LinkedIn"
+            icon={Puzzle}
+          >
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/70 border border-blue-500/30 rounded-2xl p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-extrabold text-white flex items-center gap-2">
+                    <span>⚡ CVtoMatch Autofill for Chrome / Brave / Edge</span>
+                  </p>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Fills your name, email, phone, LinkedIn, GitHub, screening questions, and directly injects your tailored PDF resume into file upload boxes in 1 click.
+                  </p>
+                </div>
+                <a
+                  href="/api/extension/download.zip"
+                  download="CVtoMatch-Autofill-Extension.zip"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-extrabold transition shrink-0 shadow-md shadow-blue-500/20"
+                >
+                  <Download size={14} />
+                  <span>Download Extension (.zip)</span>
+                </a>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800">
+                  <span className="font-extrabold text-blue-400">1. Unzip Archive</span>
+                  <p className="text-slate-400 mt-1 text-[11px]">Download and extract <code className="text-slate-200">CVtoMatch-Autofill-Extension.zip</code> on your computer.</p>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800">
+                  <span className="font-extrabold text-blue-400">2. Open Extensions</span>
+                  <p className="text-slate-400 mt-1 text-[11px]">Visit <code className="text-slate-200">chrome://extensions</code> and toggle on <b>Developer mode</b> in the top-right corner.</p>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800">
+                  <span className="font-extrabold text-blue-400">3. Load Unpacked</span>
+                  <p className="text-slate-400 mt-1 text-[11px]">Click <b>Load unpacked</b>, select the extracted folder, and refresh this page to auto-sync your account.</p>
+                </div>
               </div>
             </div>
           </Section>

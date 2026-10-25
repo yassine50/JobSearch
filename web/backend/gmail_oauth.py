@@ -72,9 +72,23 @@ def frontend_url() -> str:
     return (os.getenv("FRONTEND_URL") or "http://localhost:5173").rstrip("/")
 
 
+_ALLOWED_ORIGINS = {
+    "https://www.cvtomatch.com",
+    "https://cvtomatch.com",
+    "http://localhost:5173",
+}
+
+
+def _safe_origin(origin: str) -> str:
+    """Exact-match origin whitelist (prevents open redirects like cvtomatch.com.evil.io)."""
+    clean = (origin or "").strip().rstrip("/")
+    extra = {o.strip().rstrip("/") for o in (os.getenv("ALLOWED_FRONTEND_ORIGINS") or "").split(",") if o.strip()}
+    return clean if clean in (_ALLOWED_ORIGINS | extra | {frontend_url()}) else ""
+
+
 def redirect_uri(origin: str = "") -> str:
-    clean_origin = (origin or "").strip().rstrip("/")
-    if clean_origin and ("cvtomatch.com" in clean_origin or "localhost:5173" in clean_origin):
+    clean_origin = _safe_origin(origin)
+    if clean_origin:
         if "localhost:5173" in clean_origin:
             return "http://localhost:8000/api/email/google/callback"
         return f"{clean_origin}/api/email/google/callback"
@@ -140,7 +154,7 @@ def auth_url(origin: str = "", current_user: models.User = Depends(get_current_u
     cid, _ = _client()
     if not is_configured():
         raise HTTPException(400, "Connect Gmail isn't set up yet by the platform admin.")
-    clean_origin = (origin or "").strip().rstrip("/")
+    clean_origin = _safe_origin(origin)
     r_uri = redirect_uri(clean_origin)
     state = jwt.encode({
         "uid": current_user.id,
@@ -164,15 +178,16 @@ def callback(code: str = "", state: str = "", error: str = "", db: Session = Dep
         if payload.get("p") != "gmail":
             raise JWTError("bad purpose")
         uid = int(payload["uid"])
-        if payload.get("origin"):
-            back = f"{payload['origin']}/settings"
+        if payload.get("origin") and _safe_origin(payload["origin"]):
+            back = f"{_safe_origin(payload['origin'])}/settings"
         if payload.get("r_uri"):
             r_uri = payload["r_uri"]
     except Exception:
         return RedirectResponse(f"{back}?gmail=error&reason=expired")
 
     if error:
-        return RedirectResponse(f"{back}?gmail=error&reason={error}")
+        from urllib.parse import quote
+        return RedirectResponse(f"{back}?gmail=error&reason={quote(error[:100])}")
 
     cid, secret = _client()
     r = requests.post("https://oauth2.googleapis.com/token", data={

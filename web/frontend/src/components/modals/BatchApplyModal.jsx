@@ -46,6 +46,16 @@ export default function BatchApplyModal({
     let title = item.role_title || item.title || 'Open Role'
     let id = item.id || `item-${idx}`
     let score = item.score || item.role_fit_score || null
+    if (item.score == null && score != null && source === 'linkedin') {
+      const skillsCount = Array.isArray(item.matched_skills) ? item.matched_skills.length : 1
+      const reqYrs = item.required_years ?? (/\b([4-9]|\d{2})\+?\s*(?:years?|yrs?)\b/i.test(title) ? 5 : null)
+      const isSenior = /\b(senior|sr\.?|lead|principal|staff|architect)\b/i.test(title)
+      const textLen = (item.full_text || item.post_snippet || '').length
+      let refined = 72 + Math.min(skillsCount * 5, 18) + (textLen > 350 ? 4 : textLen > 160 ? 2 : 0)
+      if (reqYrs != null && reqYrs >= 4) refined -= 8
+      else if (isSenior) refined -= 5
+      score = Math.max(58, Math.min(96, refined))
+    }
 
     if (source === 'linkedin') {
       email = item.recruiter_emails?.[0]?.email || ''
@@ -368,7 +378,7 @@ export default function BatchApplyModal({
                       onClick={() => toggleSelect(item.id)}
                       className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                         isSelected
-                          ? 'bg-slate-850 border-blue-500/70 shadow-sm'
+                          ? 'bg-slate-800/90 border-blue-500/70 shadow-sm'
                           : 'bg-slate-900/60 border-slate-800 opacity-60'
                       }`}
                     >

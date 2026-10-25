@@ -1270,19 +1270,42 @@ def check_role_and_skill_fit(
     if core_specialty_tokens and not core_token_in_post and len(matched_skills) == 0:
         return False, 0, [], clean_role
 
-    # 6. Fit Score calculation
-    fit_score = 52  # baseline
+    # 6. Fit Score calculation (granularity across role match, ecosystem skills, seniority, and post detail)
+    non_role_skills = [s for s in matched_skills if s.lower() not in role_tokens]
+    fit_score = 54  # baseline
     if exact_role_in_post:
-        fit_score += 25
+        fit_score += 16
     elif core_token_in_post:
-        fit_score += 18
+        fit_score += 12
     elif any(tok in combined_text for tok in role_tokens):
-        fit_score += 10
+        fit_score += 7
 
     if core_specialty_tokens and any(tok in extracted_title_lower for tok in core_specialty_tokens):
-        fit_score += 8  # Bonus when the primary extracted title explicitly contains the core specialty
+        fit_score += 6  # Bonus when the primary extracted title explicitly contains the core specialty
 
-    fit_score += min(len(matched_skills) * 7, 22)
+    # Ecosystem / complementary technical skills (excluding the searched role word itself)
+    fit_score += min(len(non_role_skills) * 5, 18)
+
+    # Post detail depth bonus (reward detailed job descriptions over 1-line blurbs)
+    word_count = len((full_text or "").split())
+    if word_count >= 120:
+        fit_score += 4
+    elif word_count >= 60:
+        fit_score += 2
+    elif word_count < 25:
+        fit_score -= 4
+
+    # Seniority / heavy experience requirement penalty (e.g. "5+ Years", "7+ years", "Senior/Lead")
+    req_years = extract_post_required_years(full_text or "")
+    if req_years is not None:
+        if req_years >= 6:
+            fit_score -= 9
+        elif req_years >= 4:
+            fit_score -= 5
+        elif req_years <= 2:
+            fit_score += 3
+    elif re.search(r"\b(senior|sr\.?|lead|principal|staff|architect)\b", extracted_title_lower):
+        fit_score -= 4
 
     # 7. Multi-Role "Laundry-List" Detection & Penalty
     distinct_families = sum(1 for pat in LAUNDRY_LIST_ROLE_FAMILIES if re.search(pat, full_text or "", re.I))
@@ -2570,7 +2593,8 @@ def fetch_linkedin_voyager_posts(
     limit: int = 40,
     page: int = 1,
     li_at_cookie: str = "",
-    tags: Optional[List[str]] = None
+    tags: Optional[List[str]] = None,
+    blacklisted_set: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Directly scrapes LinkedIn's official Content Search (Voyager Search API)
@@ -2894,7 +2918,8 @@ def search_linkedin_recruiter_posts(
     # 0b. Prioritize direct LinkedIn Voyager Content Search when session cookie is provided
     if li_at_cookie and li_at_cookie.strip():
         voyager_posts = fetch_linkedin_voyager_posts(
-            clean_role, target_locs, time_range=time_range, limit=limit, page=page, li_at_cookie=li_at_cookie, tags=tags
+            clean_role, target_locs, time_range=time_range, limit=limit, page=page, li_at_cookie=li_at_cookie, tags=tags,
+            blacklisted_set=blacklisted_set,
         )
         if voyager_posts:
             save_verified_posts_to_db(voyager_posts, clean_role)

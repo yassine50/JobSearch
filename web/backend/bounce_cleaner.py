@@ -461,6 +461,12 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
 
         existing_bl = db.query(models.EmailBlacklist.email).all()
         full_blacklist = {r[0].strip().lower() for r in existing_bl if r[0]}
+        # Destructive actions (marking logs bounced, deleting tracker apps, trashing Gmail Sent)
+        # must only use THIS user's entries + system entries — never another user's manual entries.
+        own_bl = db.query(models.EmailBlacklist.email).filter(
+            (models.EmailBlacklist.user_id == user_id) | (models.EmailBlacklist.user_id.is_(None))
+        ).all()
+        destructive_blacklist = {r[0].strip().lower() for r in own_bl if r[0]}
 
         if all_ids:
             msg_ids = sorted(list(all_ids), key=lambda x: int(x))
@@ -530,10 +536,12 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
         # 2. Keep track of all sent emails and safely purge dead applications from Tracker
         all_blacklisted_emails = {b["target_email"] for b in extracted_bounces}
         full_blacklist = full_blacklist.union(all_blacklisted_emails)
+        destructive_blacklist = destructive_blacklist.union(all_blacklisted_emails)
 
-        # Mark only OUTBOUND sent emails to dead addresses as 'bounced' (NEVER mark recruiter_reply as bounced)
+        # Mark only THIS user's OUTBOUND sent emails to dead addresses as 'bounced' (NEVER mark recruiter_reply as bounced)
         db.query(models.EmailLog).filter(
-            models.EmailLog.to_email.in_(list(full_blacklist)),
+            models.EmailLog.user_id == user_id,
+            models.EmailLog.to_email.in_(list(destructive_blacklist)),
             models.EmailLog.template_type != "recruiter_reply"
         ).update({"status": "bounced"}, synchronize_session=False)
 
@@ -541,8 +549,9 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
         from .utils import extract_emails
         linked_log_app_ids = {
             r[0] for r in db.query(models.EmailLog.application_id).filter(
+                models.EmailLog.user_id == user_id,
                 models.EmailLog.application_id.isnot(None),
-                models.EmailLog.to_email.in_(list(full_blacklist)),
+                models.EmailLog.to_email.in_(list(destructive_blacklist)),
                 models.EmailLog.template_type != "recruiter_reply"
             ).all() if r[0]
         }
@@ -560,7 +569,7 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
             if app.id in apps_with_replies or "📥 Recruiter Reply:" in (app.notes or ""):
                 continue
             notes_emails = set(extract_emails(app.notes or ""))
-            is_dead = (app.id in linked_log_app_ids) or bool(notes_emails and notes_emails.issubset(full_blacklist))
+            is_dead = (app.id in linked_log_app_ids) or bool(notes_emails and notes_emails.issubset(destructive_blacklist))
             if is_dead:
                 db.query(models.EmailLog).filter(
                     models.EmailLog.application_id == app.id,
@@ -590,7 +599,7 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
         # 4. Remove sent messages to blocked/dead addresses from Gmail Sent mailbox (la boîte mail envoyée)
         deleted_sent_count = 0
         if delete_from_gmail:
-            deleted_sent_count = purge_sent_bounced_messages(mail, full_blacklist, trash_folder)
+            deleted_sent_count = purge_sent_bounced_messages(mail, destructive_blacklist, trash_folder)
 
         # 5. Expunge Trash folder to permanently wipe deleted messages forever
         if trash_folder:

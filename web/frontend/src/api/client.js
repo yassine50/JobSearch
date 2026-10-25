@@ -180,10 +180,12 @@ client.interceptors.response.use(
   async err => {
     const cfg = err.config
     const st = err.response?.status
+    const method = (cfg?.method || 'get').toLowerCase()
     if (
       cfg &&
       !cfg._retriedDirect &&
-      (!st || st === 502 || st === 503 || st === 504 || st === 405) &&
+      method === 'get' && // never replay mutations (would duplicate emails / applications)
+      (!st || st === 502 || st === 503 || st === 504) &&
       typeof window !== 'undefined' &&
       !window.location.hostname.includes('localhost') &&
       !window.location.hostname.includes('127.0.0.1')
@@ -197,13 +199,18 @@ client.interceptors.response.use(
     const isAuthEndpoint =
       reqUrl.includes('/auth/login') ||
       reqUrl.includes('/auth/register') ||
-      reqUrl.includes('/auth/google') ||
-      reqUrl.includes('/auth/me')
-    if (st === 401 && !isAuthEndpoint && window.location.pathname !== '/' && window.location.pathname !== '/seeker') {
+      reqUrl.includes('/auth/google')
+    const sentToken = Boolean(cfg?.headers?.Authorization)
+    if (st === 401 && !isAuthEndpoint && sentToken) {
+      // Expired/invalid session: always clear credentials and notify AuthContext
       clearAllCache()
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      window.location.href = '/'
+      window.dispatchEvent(new Event('auth-expired'))
+      // Only hard-redirect from protected pages; public pages (/, /seeker) just fall back to guest mode
+      if (window.location.pathname !== '/' && window.location.pathname !== '/seeker') {
+        window.location.href = '/'
+      }
     }
     return Promise.reject(err)
   }

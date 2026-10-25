@@ -144,6 +144,12 @@ export default function JobBoardScraper({
   // Explicit Mark as Applied action (external portal / manual application)
   const handleMarkApplied = async (job) => {
     if (!job) return
+    if (!isAuth) {
+      window.dispatchEvent(new CustomEvent('open-auth-gate', {
+        detail: { reason: 'Create a Free Account to Track Your Applications' }
+      }))
+      return
+    }
     try {
       await client.post('/jobs/mark-applied', {
         title: job.title,

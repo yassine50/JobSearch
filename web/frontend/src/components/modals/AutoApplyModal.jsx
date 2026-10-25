@@ -349,24 +349,24 @@ export default function AutoApplyModal({
           </div>
 
           {/* Resume Attachment: Authentic Verified PDF */}
-          <div className="p-3.5 rounded-xl bg-slate-850 border border-slate-700/60 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30">
+          <div className="p-3.5 rounded-xl bg-slate-850 border border-slate-700/60 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="p-2 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
                 <FileText size={16} />
               </div>
-              <div>
-                <p className="text-xs font-semibold text-white flex items-center gap-2">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-white flex items-center gap-2 flex-wrap">
                   <span>Attached: Authentic Verified Resume</span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-700 text-emerald-300">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-300 truncate max-w-[180px]">
                     {displayCvName}
                   </span>
                 </p>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-400 mt-0.5">
                   A copy of your resume tailored to this job is attached: missing job skills added, off-topic content removed, headline set to the role. Your original CV is never changed.
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 rounded-lg">
+            <div className="flex items-center gap-1 text-[11px] font-semibold text-blue-300 bg-blue-500/15 border border-blue-500/30 px-2.5 py-1 rounded-lg shrink-0">
               <ShieldCheck size={13} />
               <span>Original PDF</span>
             </div>

@@ -33,7 +33,15 @@ def reviewed_cv_dict(cv):
         return None
     try:
         d = json.loads(raw)
-        return d if isinstance(d, dict) else None
+        if not isinstance(d, dict):
+            return None
+        # Self-heal if an older parser stored a date fragment (e.g. "15 – 27 july 2024") inside `org`
+        from cv_engine.parse import _is_date_fragment
+        for sec in ("experience", "education", "projects"):
+            for item in (d.get(sec) or []):
+                if isinstance(item, dict) and _is_date_fragment(str(item.get("org") or "")):
+                    return None
+        return d
     except Exception:
         return None
 

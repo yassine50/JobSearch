@@ -343,6 +343,7 @@ html.light-mode .glass-input {
 html.light-mode [class*="bg-[#050811]"],
 html.light-mode [class*="bg-[#060A15]"],
 html.light-mode [class*="bg-[#070B18]"],
+html.light-mode [class*="bg-[#070C1A]"],
 html.light-mode [class*="bg-[#0A0F1F]"],
 html.light-mode [class*="bg-[#0B1120]"],
 html.light-mode [class*="bg-[#080D1A]"] {
@@ -379,10 +380,16 @@ html.light-mode .h-1\.5.bg-slate-900 {
   background-color: #cbd5e1 !important;
 }
 
+html.light-mode .bg-slate-850,
+html.light-mode [class*="bg-slate-850/"],
 html.light-mode .bg-slate-800,
 html.light-mode [class*="bg-slate-800/"],
+html.light-mode .bg-slate-750,
+html.light-mode [class*="bg-slate-750/"],
 html.light-mode .bg-slate-700,
-html.light-mode [class*="bg-slate-700/"] {
+html.light-mode [class*="bg-slate-700/"],
+html.light-mode .bg-slate-650,
+html.light-mode [class*="bg-slate-650/"] {
   background-color: #dce3ec !important;
 }
 
@@ -503,10 +510,16 @@ html.light-mode textarea::placeholder {
 
 /* Borders & Dividers in Light Mode */
 html.light-mode [class*="border-white/"],
+html.light-mode .border-slate-850,
+html.light-mode [class*="border-slate-850/"],
 html.light-mode .border-slate-800,
 html.light-mode [class*="border-slate-800/"],
+html.light-mode .border-slate-750,
+html.light-mode [class*="border-slate-750/"],
 html.light-mode .border-slate-700,
-html.light-mode [class*="border-slate-700/"] {
+html.light-mode [class*="border-slate-700/"],
+html.light-mode .border-slate-650,
+html.light-mode [class*="border-slate-650/"] {
   border-color: #cbd5e1 !important;
 }
 html.light-mode [class*="divide-white/"] > :not([hidden]) ~ :not([hidden]) {

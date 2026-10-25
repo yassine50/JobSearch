@@ -31,6 +31,13 @@ def _ensure_healthy_sqlite_db(db_path: str) -> None:
                 return bool(res and res[0] == "ok")
             finally:
                 conn.close()
+        except sqlite3.OperationalError as err:
+            # "database is locked/busy" just means another worker is using it — NOT corruption.
+            # Treating it as corruption would delete the live WAL and lose committed data.
+            msg = str(err).lower()
+            if "locked" in msg or "busy" in msg:
+                return True
+            return False
         except Exception:
             return False
 
@@ -176,6 +183,26 @@ def get_db():
 
 
 def init_db():
+    # Serialize startup backup/migrations across uvicorn workers with an OS file lock
+    _init_lock_fh = None
+    try:
+        import fcntl
+        import tempfile
+        _init_lock_fh = open(os.path.join(tempfile.gettempdir(), "cvtomatch_init_db.lock"), "w")
+        fcntl.flock(_init_lock_fh, fcntl.LOCK_EX)
+    except Exception:
+        _init_lock_fh = None
+    try:
+        _init_db_locked()
+    finally:
+        if _init_lock_fh:
+            try:
+                _init_lock_fh.close()
+            except Exception:
+                pass
+
+
+def _init_db_locked():
     if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         backup_sqlite_database(DB_PATH)
 

@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext.jsx'
 import {
   Zap, Building2, MapPin, Check, Loader2,
   X, ShieldCheck, Sparkles, Send, ExternalLink,
-  CheckCheck, FileText
+  CheckCheck, FileText, Download, Puzzle
 } from 'lucide-react'
 
 export default function EasyApplyModal({
@@ -21,6 +21,26 @@ export default function EasyApplyModal({
   const [loading, setLoading] = useState(false)
   const [pitch, setPitch] = useState('')
   const [cvFilename, setCvFilename] = useState(() => getCached('/cv/info')?.filename || '')
+  const [extInstalled, setExtInstalled] = useState(
+    () => typeof document !== 'undefined' && document.documentElement.getAttribute('data-cvtomatch-extension') === 'installed'
+  )
+  const [showExtHelp, setShowExtHelp] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const checkInstalled = () => {
+      if (document.documentElement.getAttribute('data-cvtomatch-extension') === 'installed') {
+        setExtInstalled(true)
+      }
+    }
+    checkInstalled()
+    const onMsg = (e) => {
+      if (e.data?.type === 'CVTOMATCH_EXTENSION_PONG') setExtInstalled(true)
+    }
+    window.addEventListener('message', onMsg)
+    window.postMessage({ type: 'CVTOMATCH_EXTENSION_PING' }, '*')
+    return () => window.removeEventListener('message', onMsg)
+  }, [isOpen])
 
   useEffect(() => {
     if (isOpen) {
@@ -78,6 +98,17 @@ Best regards,`
       if (pitch && navigator.clipboard) {
         try { await navigator.clipboard.writeText(pitch) } catch(e) {}
       }
+      window.postMessage({
+        type: 'CVTOMATCH_PREPARE_EASY_APPLY',
+        job: {
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          url: jobUrl,
+          description: job.description || '',
+          custom_pitch: pitch
+        }
+      }, '*')
       if (jobUrl) {
         window.open(jobUrl, '_blank')
       }
@@ -165,7 +196,7 @@ Best regards,`
               }`}>
                 {job.site || 'LinkedIn'}
               </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-emerald-950/80 text-emerald-300 border-emerald-700">
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-blue-500/15 text-blue-300 border-blue-500/30">
                 {score}% CV
               </span>
             </div>
@@ -183,22 +214,74 @@ Best regards,`
               value={pitch}
               onChange={e => setPitch(e.target.value)}
               rows={5}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 resize-none font-sans leading-relaxed"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-blue-500 resize-none font-sans leading-relaxed"
             />
           </div>
 
           <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <div className="p-2 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30">
+            <div className="p-2 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
               <FileText size={16} />
             </div>
-            <div className="text-xs">
-              <span className="font-semibold text-emerald-300 flex items-center gap-1">
-                Authentic Verified Resume ({displayCvName})
+            <div className="text-xs min-w-0">
+              <span className="font-semibold text-white flex items-center gap-2 flex-wrap">
+                <span>Authentic Verified Resume</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-300 truncate max-w-[180px]">
+                  {displayCvName}
+                </span>
               </span>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-400 mt-0.5">
                 A copy of your resume tailored to this job (missing skills added, off-topic content removed) is saved on the Tracker card. Download it there to upload on the job site. Your original CV is never changed.
               </p>
             </div>
+          </div>
+
+          {/* Chrome Extension 1-Click Autofill Banner */}
+          <div className="p-3 rounded-xl bg-slate-850 border border-blue-500/30 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 shrink-0">
+                  <Puzzle size={15} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-white flex items-center gap-2">
+                    <span>1-Click Chrome Autofill Extension</span>
+                    {extInstalled && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/15 border border-blue-500/30 text-blue-300">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    {extInstalled
+                      ? 'Extension synced! Click the floating "⚡ 1-Click Autofill" button once the job page opens.'
+                      : 'Automatically fills forms, screening answers & attaches your tailored PDF on Workday, Greenhouse, Lever & LinkedIn.'}
+                  </p>
+                </div>
+              </div>
+              {!extInstalled && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <a
+                    href="/api/extension/download.zip"
+                    download="CVtoMatch-Autofill-Extension.zip"
+                    onClick={() => setShowExtHelp(true)}
+                    className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center gap-1 transition"
+                  >
+                    <Download size={12} />
+                    <span>Get Extension</span>
+                  </a>
+                </div>
+              )}
+            </div>
+            {showExtHelp && !extInstalled && (
+              <div className="text-[11px] text-slate-300 bg-slate-900 border border-slate-700/70 rounded-lg p-2.5 space-y-1">
+                <p className="font-semibold text-white">Install in 20 seconds:</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-slate-400">
+                  <li>Unzip <code className="text-blue-300">CVtoMatch-Autofill-Extension.zip</code></li>
+                  <li>Open <code className="text-blue-300">chrome://extensions</code> in Chrome and enable <b>Developer mode</b> (top-right)</li>
+                  <li>Click <b>Load unpacked</b> and select the unzipped folder — your session syncs automatically!</li>
+                </ol>
+              </div>
+            )}
           </div>
         </div>
 
@@ -230,7 +313,7 @@ Best regards,`
               type="button"
               onClick={handleSubmit}
               disabled={loading}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-500/25 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-blue-500/25 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               {loading ? (
                 <>

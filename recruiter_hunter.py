@@ -31,7 +31,7 @@ import urllib.parse
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Set
+from typing import Any, List, Dict, Optional, Set
 import requests
 import urllib3
 from bs4 import BeautifulSoup

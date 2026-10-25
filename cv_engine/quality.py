@@ -13,9 +13,9 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional
 
-from .dates import find_date_span
+from .dates import DateSpan, find_date_span
 from .extract import Document
-from .parse import CV, Entry
+from .parse import CV, Entry, _is_date_fragment
 
 _WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9+#.'’-]*")
 
@@ -158,11 +158,25 @@ def _str_list(v) -> List[str]:
 def _entry_from_dict(d: Dict, kind: str) -> Entry:
     date_text = _s(d.get("date_text"))
     found = find_date_span(date_text) if date_text else None
+    dates = found[0] if found else None
+    org = _s(d.get("org"))
+    if org and _is_date_fragment(org):
+        found_org = find_date_span(org)
+        if found_org:
+            if not dates:
+                dates = found_org[0]
+            elif not dates.end:
+                other = found_org[0].end or found_org[0].start
+                if (other.year, other.month or 1) != (dates.start.year, dates.start.month or 1):
+                    s_pt, e_pt = sorted([dates.start, other], key=lambda p: (p.year, p.month or 1))
+                    dates = DateSpan(start=s_pt, end=e_pt, raw=f"{dates.raw} – {org}")
+            date_text = dates.display("en")
+        org = ""
     e = Entry(
         title=_s(d.get("title")),
-        org=_s(d.get("org")),
+        org=org,
         location=_s(d.get("location")),
-        dates=found[0] if found else None,
+        dates=dates,
         date_text=date_text,
         bullets=_str_list(d.get("bullets")),
         stack=_str_list(d.get("stack")),

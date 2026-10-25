@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CVtoMatch Autofill</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    }
+    body {
+      width: 360px;
+      background: #0b1120;
+      color: #f8fafc;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 13px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 14px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      user-select: none;
+    }
+    .wordmark-col {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .wordmark {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.025em;
+      line-height: 1;
+      display: flex;
+      align-items: baseline;
+    }
+    .wordmark .cvto { color: #ffffff; }
+    .wordmark .match { color: #818CF8; }
+    .wordmark-sub {
+      font-size: 7.5px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(148, 163, 184, 0.9);
+      margin-top: 4px;
+      line-height: 1;
+    }
+    .badge {
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 3.5px 9px;
+      border-radius: 999px;
+      background: rgba(37, 99, 235, 0.18);
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      color: #93c5fd;
+    }
+    .card {
+      background: #131c31;
+      border: 1px solid #26334d;
+      border-radius: 14px;
+      padding: 13px;
+      margin-bottom: 11px;
+    }
+    .label {
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+      margin-bottom: 8px;
+      display: block;
+    }
+    .btn-google {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      background: #ffffff;
+      color: #0f172a;
+      font-weight: 700;
+      font-size: 12.5px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    .btn-google:hover {
+      background: #f1f5f9;
+    }
+    .btn-google:active {
+      transform: scale(0.99);
+    }
+    .btn-google:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 11px 0;
+      color: #64748b;
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .divider::before,
+    .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #26334d;
+    }
+    input[type="email"],
+    input[type="password"],
+    input[type="text"],
+    select {
+      width: 100%;
+      padding: 8.5px 10px;
+      background: #0b1120;
+      border: 1px solid #2e3d59;
+      border-radius: 9px;
+      color: #f8fafc;
+      font-size: 12px;
+      margin-bottom: 8px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: #6366f1;
+    }
+    .btn-primary {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 12.5px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+    }
+    .btn-primary:hover { opacity: 0.94; }
+    .btn-primary:disabled { opacity: 0.55; cursor: wait; }
+    .btn-secondary {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 9px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #cbd5e1;
+      font-weight: 600;
+      font-size: 11.5px;
+      cursor: pointer;
+      margin-top: 7px;
+    }
+    .btn-secondary:hover { background: #334155; color: #ffffff; }
+    .pills-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .copy-pill {
+      background: #0b1120;
+      border: 1px solid #26334d;
+      border-radius: 8px;
+      padding: 6px 8px;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.15s ease;
+      overflow: hidden;
+    }
+    .copy-pill:hover {
+      border-color: #6366f1;
+    }
+    .copy-pill .k {
+      font-size: 9.5px;
+      color: #64748b;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .copy-pill .v {
+      font-size: 11px;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 1px;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: #cbd5e1;
+      margin: 6px 0 10px;
+    }
+    .toggle-row input {
+      accent-color: #4f46e5;
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+    .status {
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 8px 10px;
+      border-radius: 9px;
+      margin-top: 9px;
+      display: none;
+    }
+    .status.info {
+      display: block;
+      background: rgba(37, 99, 235, 0.16);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #bfdbfe;
+    }
+    .status.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #64748b;
+      padding-top: 6px;
+    }
+    .footer a, .link-btn {
+      color: #818cf8;
+      text-decoration: none;
+      background: none;
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- Official CVtoMatch Brand Logo Header -->
+  <div class="header">
+    <div class="brand">
+      <svg width="34" height="32" viewBox="0 0 60 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="cvm-c" x1="6" y1="8" x2="40" y2="50" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#5B58F6" />
+            <stop offset="100%" stop-color="#4338CA" />
+          </linearGradient>
+          <linearGradient id="cvm-v" x1="22" y1="38" x2="48" y2="14" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#6366F1" />
+            <stop offset="100%" stop-color="#8B93FF" />
+          </linearGradient>
+        </defs>
+        <path d="M36.8 16.5C33.6 13.5 29.3 12 24.5 12C14.6 12 7 19.8 7 30C7 40.2 14.6 48 24.5 48C29.6 48 34 46.2 37.3 42.9" stroke="url(#cvm-c)" stroke-width="10.2" stroke-linecap="butt" />
+        <path d="M22.5 27.5L29.8 38.2L45 16.8" stroke="url(#cvm-v)" stroke-width="8.2" stroke-linecap="butt" stroke-linejoin="miter" />
+        <circle cx="50" cy="10.5" r="4.2" fill="#10B981" />
+      </svg>
+      <div class="wordmark-col">
+        <div class="wordmark">
+          <span class="cvto">CVto</span><span class="match">Match</span>
+        </div>
+        <span class="wordmark-sub">AI RESUME &amp; CAREER OS</span>
+      </div>
+    </div>
+    <span class="badge" id="authBadge">Checking...</span>
+  </div>
+
+  <!-- LOGIN VIEW -->
+  <div id="loginView" class="hidden">
+    <div class="card">
+      <span class="label">Sign in to CVtoMatch</span>
+
+      <!-- Official Sign in with Google Button -->
+      <button class="btn-google" id="googleLoginBtn" type="button">
+        <svg width="16" height="16" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        <span>Sign in with Google</span>
+      </button>
+
+      <div class="divider">or sign in with email</div>
+
+      <input type="email" id="emailInput" placeholder="you@example.com" />
+      <input type="password" id="passwordInput" placeholder="Password" />
+      <input type="text" id="apiBaseInput" value="https://cvtomatch.com" placeholder="Server URL" />
+      <button class="btn-primary" id="loginBtn" type="button">Sign In &amp; Sync CV</button>
+    </div>
+  </div>
+
+  <!-- MAIN AUTHENTICATED VIEW -->
+  <div id="mainView" class="hidden">
+    <div class="card">
+      <span class="label">Active CV Persona</span>
+      <select id="personaSelect"></select>
+      <div style="font-size: 11px; color: #93c5fd; display: flex; align-items: center; justify-content: space-between;">
+        <span id="cvFileLabel">Authentic PDF Ready</span>
+        <span id="skillsCountLabel"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="label">Autofill Current Job Tab</span>
+      <label class="toggle-row">
+        <span>✨ Tailor CV PDF &amp; AI Answers to Job</span>
+        <input type="checkbox" id="tailorCheck" checked />
+      </label>
+      <button class="btn-primary" id="autofillNowBtn" type="button">
+        ⚡ Autofill This Page Now
+      </button>
+      <button class="btn-secondary" id="saveTrackerBtn" type="button">
+        📌 Save Current Job to Tracker
+      </button>
+    </div>
+
+    <div class="card">
+      <span class="label">Quick-Copy Candidate Fields (Click to Copy)</span>
+      <div class="pills-grid" id="copyPills"></div>
+    </div>
+
+    <div class="footer">
+      <a href="https://cvtomatch.com" target="_blank" id="openDashboardLink">Open CVtoMatch ↗</a>
+      <button class="link-btn" id="logoutBtn" type="button">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="status" id="statusMsg"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import Sidebar from '../components/Sidebar.jsx'
 import PageWrapper from '../components/PageWrapper.jsx'
@@ -105,6 +105,26 @@ export default function Seeker() {
     }
   }, [isAuth])
 
+  // Command Palette quick hunts → switch to LinkedIn Posts tab and run the hunt
+  useEffect(() => {
+    const runPendingHunt = () => {
+      let role = ''
+      try {
+        role = sessionStorage.getItem('pending_quick_hunt') || ''
+        sessionStorage.removeItem('pending_quick_hunt')
+      } catch {}
+      if (!role) return
+      setActiveTab('linkedin_posts')
+      setHunterRole(role)
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('quick-hunt-role', { detail: role }))
+      }, 150)
+    }
+    runPendingHunt()
+    window.addEventListener('seeker-quick-hunt', runPendingHunt)
+    return () => window.removeEventListener('seeker-quick-hunt', runPendingHunt)
+  }, [])
+
   // Handle CV Upload
   const handleCvUpload = async (e) => {
     const file = e.target.files?.[0]
@@ -126,7 +146,10 @@ export default function Seeker() {
   }
 
   // Handle Board Search (Progressive Wave-1 Fast Stream + Full Multi-Board Scrape)
+  const searchIdRef = useRef(0)
   const handleBoardSearch = async (params) => {
+    const searchId = ++searchIdRef.current
+    const isLatest = () => searchId === searchIdRef.current
     setBoardLoading(true)
     setBoardStreaming(true)
     const hoursOld = params.hours_old !== undefined ? params.hours_old : (
@@ -149,7 +172,7 @@ export default function Seeker() {
     let fullFinished = false
     // Wave 1: Sub-second fast open sources so results appear in ~1.2s
     client.post('/jobs/search-fast', payload).then(({ data }) => {
-      if (!fullFinished && Array.isArray(data?.jobs) && data.jobs.length > 0) {
+      if (isLatest() && !fullFinished && Array.isArray(data?.jobs) && data.jobs.length > 0) {
         setBoardJobs(data.jobs)
         setBoardLoading(false)
       }
@@ -158,6 +181,7 @@ export default function Seeker() {
     try {
       const { data } = await client.post('/jobs/search', payload)
       fullFinished = true
+      if (!isLatest()) return // a newer search superseded this one
       const foundJobs = data.jobs || []
       const metaObj = { queries: data.queries_used || [], stats: data.stats || null }
       setBoardJobs(foundJobs)
@@ -172,10 +196,12 @@ export default function Seeker() {
       toast(`Found ${data.jobs?.length || 0} relevant jobs${merged}`, 'success')
     } catch (err) {
       fullFinished = true
-      toast(err?.response?.data?.detail || 'Job board search failed', 'error')
+      if (isLatest()) toast(err?.response?.data?.detail || 'Job board search failed', 'error')
     } finally {
-      setBoardLoading(false)
-      setBoardStreaming(false)
+      if (isLatest()) {
+        setBoardLoading(false)
+        setBoardStreaming(false)
+      }
     }
   }
 
@@ -187,6 +213,14 @@ export default function Seeker() {
     const cleanUrl = getCleanJobUrl(rawUrl)
     const key2 = `${(j.title || j.role_title || '').trim().toLowerCase()}|${(j.company || '').trim().toLowerCase()}`
     return (rawUrl && appliedJobs.has(rawUrl)) || (cleanUrl && appliedJobs.has(cleanUrl)) || (key2 !== '|' && appliedJobs.has(key2))
+  }
+
+  const openTailor = (job) => {
+    if (!isAuth) {
+      setAuthGateReason('Create a Free Account to Tailor Your CV')
+      return
+    }
+    setTailorJob(job)
   }
 
   const handleJobApplied = (job) => {
@@ -221,6 +255,10 @@ export default function Seeker() {
   }
 
   const handleSaveBoardJob = async (job) => {
+    if (!isAuth) {
+      setAuthGateReason('Create a Free Account to Save Jobs')
+      return
+    }
     try {
       await client.post('/jobs/save', {
         title: job.title,
@@ -413,7 +451,7 @@ export default function Seeker() {
               <LinkedInPostHunter
                 initialRole={hunterRole}
                 cvUploaded={cvInfo.uploaded}
-                onTailor={j => setTailorJob(j)}
+                onTailor={openTailor}
               />
             </motion.div>
             <motion.div
@@ -428,7 +466,7 @@ export default function Seeker() {
                 searchMeta={boardMeta}
                 onSearch={handleBoardSearch}
                 onSaveJob={handleSaveBoardJob}
-                onTailorJob={j => setTailorJob(j)}
+                onTailorJob={openTailor}
                 isJobApplied={isJobApplied}
                 isJobSaved={isJobSaved}
                 onJobApplied={handleJobApplied}

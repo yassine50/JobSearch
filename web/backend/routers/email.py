@@ -1174,7 +1174,8 @@ def delete_from_blacklist(entry_id: int,
     ).first()
     if not entry:
         raise HTTPException(404, "Blacklist entry not found")
-    if entry.user_id and entry.user_id != current_user.id and current_user.role != 'admin':
+    from .jobs import is_admin
+    if entry.user_id != current_user.id and not is_admin(current_user):
         raise HTTPException(403, "You can only unblock entries that were added by your account")
     db.delete(entry)
     db.commit()
@@ -1467,6 +1468,10 @@ def get_calendar_analytics(year: Optional[int] = None,
     Groups sent emails by calendar date (YYYY-MM-DD), with deliverability, quota tracking,
     recruiter contacts, and full thread inspection.
     """
+    if month is not None and not (1 <= month <= 12):
+        raise HTTPException(400, "month must be between 1 and 12")
+    if year is not None and not (1970 <= year <= 2100):
+        raise HTTPException(400, "year is out of range")
     import calendar
     now = datetime.utcnow()
     target_year = year or now.year

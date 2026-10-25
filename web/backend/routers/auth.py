@@ -60,7 +60,19 @@ def google_config():
 @router.post("/google")
 def google_auth(req: GoogleAuthRequest, db: Session = Depends(get_db)):
     info = {}
+    client_id = _get_google_client_id()
     if req.access_token and req.access_token.strip():
+        # Ensure the access token was issued to OUR OAuth client (prevents token-substitution logins)
+        ti = requests.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={"access_token": req.access_token.strip()},
+            timeout=10,
+        )
+        if ti.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid or expired Google access token")
+        aud = (ti.json().get("aud") or ti.json().get("azp") or "").strip()
+        if client_id and aud != client_id:
+            raise HTTPException(status_code=401, detail="Google token was not issued for CVtoMatch")
         r = requests.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
             headers={"Authorization": f"Bearer {req.access_token.strip()}"},
@@ -78,6 +90,8 @@ def google_auth(req: GoogleAuthRequest, db: Session = Depends(get_db)):
         if r.status_code != 200:
             raise HTTPException(status_code=401, detail="Invalid or expired Google ID token")
         info = r.json()
+        if client_id and (info.get("aud") or "").strip() != client_id:
+            raise HTTPException(status_code=401, detail="Google token was not issued for CVtoMatch")
     else:
         raise HTTPException(status_code=400, detail="Missing Google authentication token")
 
@@ -135,8 +149,9 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
     if db.query(models.User).filter(models.User.email == email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
+    role = req.role if req.role in ("seeker", "recruiter", "both") else "seeker"  # never allow self-assigned "admin"
     user = models.User(name=name, email=email,
-                       hashed_password=get_password_hash(password), role=req.role)
+                       hashed_password=get_password_hash(password), role=role)
     db.add(user); db.commit(); db.refresh(user)
     token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer", "user": _user_dict(user)}
@@ -150,23 +165,9 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
-        if "@" not in email or "." not in email.split("@")[-1]:
-            raise HTTPException(status_code=400, detail="Please enter a valid email address")
-        if len(password) < 6:
-            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-        auto_name = re.sub(r"\d+$", "", email.split("@")[0]).replace(".", " ").replace("_", " ").replace("-", " ").strip().title()
-        if len(auto_name) < 2:
-            auto_name = email.split("@")[0].title()
-        user = models.User(
-            name=auto_name,
-            email=email,
-            hashed_password=get_password_hash(password),
-            role="seeker",
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    elif not verify_password(password, user.hashed_password):
+        # Never auto-create accounts on login: it allowed unverified account pre-hijacking.
+        raise HTTPException(status_code=401, detail="No account found with this email. Please create an account first.")
+    if not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer", "user": _user_dict(user)}
