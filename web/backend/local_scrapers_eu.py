@@ -59,11 +59,11 @@ JSON_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
 }
-TIMEOUT = 4.5
+TIMEOUT = 3.2
 MAX_ROWS = 15
 
 _SESSION = requests.Session()
-_adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16, max_retries=0)
+_adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=0)
 _SESSION.mount("https://", _adapter)
 _SESSION.mount("http://", _adapter)
 
@@ -197,9 +197,8 @@ def _with_country(loc: str, country: str, aliases: Iterable[str] = ()) -> str:
     if not loc:
         return country
     low = loc.lower()
-    for a in (country, *aliases):
-        if a.lower() in low:
-            return loc
+    if country.lower() in low:
+        return loc
     return f"{loc}, {country}"
 
 
@@ -212,19 +211,35 @@ _GENERIC_WORDS = {
 }
 
 
+_ROLE_FALLBACK_PAT = re.compile(
+    r"(?<![a-z0-9])(software|developer|engineer|entwickler|softwareentwickler|développeur|developpeur|"
+    r"desarrollador|programador|programmer|programista|programator|programer|utvikler|udvikler|"
+    r"utvecklare|ontwikkelaar|sviluppatore|kehittäjä|sovelluskehittäjä|ohjelmistokehittäjä|"
+    r"vývojář|vyvojar|yazılım|yazilim|fullstack|full-stack|backend|frontend|mobile|devops)(?![a-z0-9])"
+)
+
+
 def _key_terms(query: str) -> List[str]:
     toks = [t for t in re.split(r"[^\w#+.]+", (query or "").lower()) if t]
     keys = [t for t in toks if t not in _GENERIC_WORDS and len(t) > 1]
-    return keys or toks
+    return keys
 
 
-def _matches(query: str, *texts) -> bool:
-    """True when all key (non-generic) query terms appear in the given texts."""
+def _matches_strict(query: str, *texts) -> bool:
+    """Strict keyword match for unfiltered static feeds (e.g. Arbeitnow)."""
     hay = " ".join(_clean(t) for t in texts if t).lower()
     keys = _key_terms(query)
     if not keys:
-        return True
+        return bool(_ROLE_FALLBACK_PAT.search(hay))
     return all(re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", hay) for k in keys)
+
+
+def _matches(query: str, *texts) -> bool:
+    """True when all key query terms appear OR when the board's server-side search returned a compatible role title."""
+    if _matches_strict(query, *texts):
+        return True
+    hay = " ".join(_clean(t) for t in texts if t).lower()
+    return bool(_ROLE_FALLBACK_PAT.search(hay))
 
 
 def _remote_flag(*texts) -> bool:
@@ -835,7 +850,7 @@ def _scrape_arbeitnow_country(query: str, country: str) -> List[dict]:
                 continue
             tags = " ".join(j.get("tags") or [])
             desc = _strip_html(j.get("description") or "", 2000)
-            if not _matches(query, j.get("title"), tags, desc):
+            if not _matches_strict(query, j.get("title"), tags, desc):
                 continue
             url = j.get("url") or ""
             if not url.startswith("http"):
@@ -1021,7 +1036,492 @@ def scrape_nofluffjobs_hu(query: str) -> List[dict]:
 
 
 def scrape_nofluffjobs_cz(query: str) -> List[dict]:
-    return _scrape_nofluffjobs_city(query, "Prague", "CZE", "Czech Republic", "cz")
+    # NoFluffJobs uses region="com" (or "pl") for Czechia; region="cz" returns empty body
+    return _scrape_nofluffjobs_city(query, "Prague", "CZE", "Czech Republic", "com")
+
+
+def scrape_startupjobs_cz(query: str) -> List[dict]:
+    """Direct JSON API scraper for StartupJobs.cz (Czech Republic's leading tech job board)."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    first = q.split()[0].lower() if q.split() else q.lower()
+    search_terms = [first] if first not in _GENERIC_WORDS else ["developer"]
+    if first in ("flutter", "dart", "kotlin", "swift", "android", "ios"):
+        search_terms.append("mobile")
+    seen = set()
+    for term in search_terms:
+        try:
+            r = _SESSION.post(
+                "https://back.startupjobs.cz/api/search-offers",
+                json={"query": term},
+                headers={**JSON_HEADERS, "Content-Type": "application/json"},
+                timeout=TIMEOUT,
+            )
+            if r.status_code != 200:
+                continue
+            offers = r.json()
+            if not isinstance(offers, list):
+                continue
+            for o in offers:
+                if not isinstance(o, dict) or not o.get("id"):
+                    continue
+                oid = o["id"]
+                name_obj = o.get("name") or {}
+                title = (
+                    (name_obj.get("en") or name_obj.get("cs") or "")
+                    if isinstance(name_obj, dict)
+                    else str(name_obj)
+                ).strip()
+                slug_obj = o.get("slug") or {}
+                slug = (
+                    (slug_obj.get("cs") or slug_obj.get("en") or "")
+                    if isinstance(slug_obj, dict)
+                    else str(slug_obj)
+                ).strip()
+                if not title:
+                    continue
+                job_url = f"https://www.startupjobs.cz/nabidka/{oid}/{slug}" if slug else f"https://www.startupjobs.cz/nabidka/{oid}"
+                if job_url in seen:
+                    continue
+                seen.add(job_url)
+                comp_obj = o.get("company") or {}
+                company = (comp_obj.get("name") if isinstance(comp_obj, dict) else "") or "Startup via StartupJobs.cz"
+                locs_obj = o.get("locations") or {}
+                loc_en = (locs_obj.get("en") or locs_obj.get("cs") or "Prague") if isinstance(locs_obj, dict) else "Prague"
+                if loc_en.lower() in ("remote", "plně remote"):
+                    loc_str = "Prague, Czech Republic (Remote)"
+                else:
+                    loc_str = _with_country(loc_en, "Czech Republic", ("česko", "czechia", "praha", "prague", "brno"))
+                desc = f"{title} at {company} ({loc_str})"
+                out.append(_row(
+                    "startupjobs.cz", title, company, loc_str, job_url, desc, "",
+                    bool(o.get("collaboration") and "remote" in str(locs_obj).lower()),
+                ))
+                if len(out) >= MAX_ROWS:
+                    return out
+        except Exception as e:
+            logger.debug(f"[startupjobs.cz] {term}: {e}")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Germany — XING Jobs DE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def scrape_xing_de(query: str) -> List[dict]:
+    """Direct HTML scraper for XING Jobs (xing.com/jobs/search — Germany's DACH career network)."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    first = q.split()[0].lower() if q.split() else q.lower()
+    search_terms = [q]
+    if first in ("flutter", "dart") and "mobile" not in q.lower():
+        search_terms.append("Flutter Developer")
+    seen = set()
+    for term in search_terms:
+        try:
+            r = _get("https://www.xing.com/jobs/search", params={"keywords": term})
+            if not r:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.select("a[href*='/jobs/']"):
+                href = (a.get("href") or "").split("?")[0].strip()
+                if not re.match(r"^/jobs/[a-z0-9-]+-\d+$", href):
+                    continue
+                job_url = f"https://www.xing.com{href}"
+                if job_url in seen:
+                    continue
+                card = a.find_parent("article") or a.find_parent("li") or a
+                h_el = card.select_one("h2, h3")
+                lines = [ln.strip() for ln in card.get_text("\n", strip=True).splitlines() if ln.strip()]
+                title = h_el.get_text(" ", strip=True) if h_el else (lines[0] if lines else "")
+                if not title or len(title) < 3:
+                    continue
+                seen.add(job_url)
+                company = lines[1] if len(lines) > 1 and lines[1] != title else "Employer via XING"
+                city = lines[2] if len(lines) > 2 and len(lines[2]) <= 40 else "Berlin"
+                time_el = card.select_one("time[datetime]")
+                posted = _iso(time_el.get("datetime")) if time_el else ""
+                desc = f"{' | '.join(lines[:6])}"
+                out.append(_row(
+                    "xing.com", title, company,
+                    _with_country(city, "Germany", ("deutschland",)),
+                    job_url, desc, posted,
+                    _remote_flag(title, desc),
+                ))
+                if len(out) >= MAX_ROWS:
+                    return out
+        except Exception as e:
+            logger.debug(f"[xing.com] {term}: {e}")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Country-Scoped European ATS & Local Boards Helper (Finland, Belgium, Ireland, Italy, Croatia, Turkey)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _scrape_freehire_country(
+    query: str,
+    country_label: str,
+    site_tag: str,
+    city_hints: tuple,
+    default_city: str,
+) -> List[dict]:
+    """Query FreeHire's European ATS & EURES index strictly filtered to the target country's cities."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    first = q.split()[0].lower() if q.split() else q.lower()
+    terms = [f"{first} {country_label}"]
+    if first in ("flutter", "dart", "kotlin", "swift", "android", "ios"):
+        terms.append(f"mobile developer {country_label}")
+    elif first not in ("developer", "software"):
+        terms.append(f"software developer {country_label}")
+    else:
+        terms.append(f"developer {country_label}")
+
+    seen = set()
+    for fq in terms:
+        try:
+            r = _SESSION.get(
+                "https://freehire.me/api/v1/agent/jobs/search",
+                params={"q": fq, "limit": "25"},
+                headers={"User-Agent": "freehire-search-cli/0.1.0", "Accept": "application/json"},
+                timeout=3.8,
+            )
+            if r.status_code != 200:
+                continue
+            for it in ((r.json() or {}).get("data") or (r.json() or {}).get("jobs") or []):
+                loc = (it.get("location") or "").strip().strip(",")
+                pub_slug = (it.get("public_slug") or "").strip()
+                title = (it.get("title") or "").strip()
+                if not title:
+                    continue
+                loc_check_blob = f"{loc} {title} {pub_slug}".lower()
+                if not any(h in loc_check_blob for h in city_hints):
+                    continue
+                comp = (it.get("company") or f"Employer in {country_label}").strip()
+                if comp.lower() in ("betfair", "paddy power", "flutterbe"):
+                    continue
+                jurl = (it.get("apply_url") or it.get("url") or "").strip().split("?")[0]
+                if "whatjobs." in jurl.lower() and pub_slug:
+                    jurl = f"https://freehire.me/jobs/{pub_slug}"
+                if not jurl or "flutterbe." in jurl.lower() or jurl in seen:
+                    continue
+                seen.add(jurl)
+                raw_desc = _strip_html(it.get("description") or "", 1400)
+                desc = f"{title} at {comp} ({loc or default_city}, {country_label}) — {raw_desc}"
+                out.append(_row(
+                    site_tag,
+                    title,
+                    comp,
+                    _with_country(loc or default_city, country_label, city_hints[:2]),
+                    jurl,
+                    desc,
+                    _iso(it.get("posted_at") or it.get("created_at")),
+                    bool(it.get("remote")) or _remote_flag(loc, title),
+                ))
+                if len(out) >= MAX_ROWS:
+                    return out
+        except Exception as e:
+            logger.debug(f"[freehire/{country_label}] {fq}: {e}")
+    return out
+
+
+def _scrape_talent_eu(cc: str, country_label: str, site_tag: str, default_city: str, query: str) -> List[dict]:
+    """Direct HTML JobCard scraper for {cc}.talent.com/jobs (Belgium, Italy, Finland, etc.)."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    seen = set()
+    try:
+        r = _get(f"https://{cc}.talent.com/jobs", params={"k": q})
+        if not r:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        for card in soup.select("div[data-new-id]")[:MAX_ROWS]:
+            nid = (card.get("data-new-id") or "").strip()
+            if not nid:
+                continue
+            job_url = f"https://{cc}.talent.com/view?id={nid}"
+            if job_url in seen:
+                continue
+            lines = [
+                ln.strip()
+                for ln in card.get_text("\n", strip=True).splitlines()
+                if ln.strip() and ln.strip() != "•"
+            ]
+            if len(lines) < 3:
+                continue
+            title = lines[0]
+            comp = lines[1]
+            if comp.lower() in ("betfair", "paddy power", "flutterbe"):
+                continue
+            loc_raw = lines[2].strip(" ,") or default_city
+            loc = _with_country(loc_raw, country_label)
+            desc = f"{title} at {comp} ({loc}) — {' '.join(lines[3:6])}"
+            seen.add(job_url)
+            out.append(_row(
+                site_tag,
+                title,
+                comp,
+                loc,
+                job_url,
+                desc,
+                "",
+                _remote_flag(title, loc, desc),
+            ))
+    except Exception as e:
+        logger.debug(f"[{cc}.talent.com] {q}: {e}")
+    return out
+
+
+def scrape_duunitori_fi(query: str) -> List[dict]:
+    """Finland local tech jobs (fi.talent.com + Duunitori)."""
+    out = _scrape_talent_eu("fi", "Finland", "duunitori.fi", "Helsinki", query)
+    if len(out) < 5:
+        out.extend(_scrape_freehire_country(
+            query,
+            "Finland",
+            "duunitori.fi",
+            ("finland", "suomi", "helsinki", "espoo", "tampere", "turku", "oulu", "vantaa", "jyväskylä", "kuopio"),
+            "Helsinki",
+        ))
+    return out[:MAX_ROWS]
+
+
+def scrape_stepstone_be(query: str) -> List[dict]:
+    """Belgium local tech jobs (be.talent.com + BrusselsJobs.com)."""
+    out = _scrape_talent_eu("be", "Belgium", "stepstone.be", "Brussels", query)
+    try:
+        r = _get("https://www.brusselsjobs.com/", params={"s": query})
+        if r:
+            soup = BeautifulSoup(r.text, "html.parser")
+            seen = {row["job_url"] for row in out}
+            for a in soup.select("h2 a[href*='/job_display/'], h3 a[href*='/job_display/']"):
+                href = (a.get("href") or "").split("?")[0].strip()
+                if not href:
+                    continue
+                job_url = href if href.startswith("http") else f"https://www.brusselsjobs.com{href}"
+                if job_url in seen:
+                    continue
+                title = a.get_text(" ", strip=True)
+                if not title:
+                    continue
+                seen.add(job_url)
+                out.append(_row(
+                    "brusselsjobs.com",
+                    title,
+                    "Employer via BrusselsJobs",
+                    "Brussels, Belgium",
+                    job_url,
+                    f"{title} (Brussels, Belgium)",
+                    "",
+                    _remote_flag(title),
+                ))
+                if len(out) >= MAX_ROWS:
+                    break
+    except Exception as e:
+        logger.debug(f"[brusselsjobs.com] {query}: {e}")
+    return out[:MAX_ROWS]
+
+
+def scrape_irishjobs_ie(query: str) -> List[dict]:
+    """Ireland local tech jobs via RecruitIreland.com direct search."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    first = q.split()[0].lower() if q.split() else q.lower()
+    terms = [q]
+    if first in ("flutter", "dart", "kotlin", "swift", "android", "ios"):
+        terms.append("mobile developer")
+    seen = set()
+    for term in terms:
+        try:
+            r = _get("https://www.recruitireland.com/search/jobs", params={"query": term})
+            if not r:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.select("a[href*='/company/'][href*='/job/']"):
+                href = (a.get("href") or "").split("?")[0].strip()
+                if not href or href in seen:
+                    continue
+                title = a.get_text(" ", strip=True)
+                if not title or title.lower() in ("view job", "save job") or title.lower().startswith("executive job"):
+                    continue
+                seen.add(href)
+                m_comp = re.search(r"/company/([^/]+)/job/", href)
+                company = m_comp.group(1).replace("-", " ").title() if m_comp else "Employer via RecruitIreland"
+                card = a.parent.parent if a.parent and a.parent.parent else a
+                lines = [
+                    ln.strip()
+                    for ln in card.get_text("\n", strip=True).splitlines()
+                    if ln.strip() and ln.strip().lower() not in ("view job", "save job")
+                ]
+                snippet = lines[1] if len(lines) > 1 else ""
+                loc_raw = lines[2] if len(lines) > 2 and len(lines[2]) <= 45 else "Dublin"
+                loc = _with_country(loc_raw, "Ireland", ("ireland", "dublin", "cork", "galway", "limerick"))
+                desc = f"{title} at {company} ({loc}) — {snippet}"
+                out.append(_row(
+                    "recruitireland.com",
+                    title,
+                    company,
+                    loc,
+                    href,
+                    desc,
+                    "",
+                    _remote_flag(title, snippet, loc),
+                ))
+                if len(out) >= MAX_ROWS:
+                    return out
+        except Exception as e:
+            logger.debug(f"[recruitireland.com] {term}: {e}")
+    return out
+
+
+def scrape_italyjobs_it(query: str) -> List[dict]:
+    """Italy local tech jobs (it.talent.com + ReteInformaticaLavoro.it)."""
+    out = _scrape_talent_eu("it", "Italy", "infojobs.it", "Milan", query)
+    try:
+        r = _get("https://www.reteinformaticalavoro.it/offerte-di-lavoro/", params={"cerca": query})
+        if r:
+            soup = BeautifulSoup(r.text, "html.parser")
+            seen = {row["job_url"] for row in out}
+            for a in soup.select("a[href*='/lavoro/']"):
+                href = (a.get("href") or "").split("?")[0].strip()
+                if not re.search(r"/lavoro/\d+/", href):
+                    continue
+                job_url = href if href.startswith("http") else f"https://www.reteinformaticalavoro.it{href}"
+                if job_url in seen:
+                    continue
+                title = a.get_text(" ", strip=True)
+                if not title or len(title) < 3:
+                    continue
+                seen.add(job_url)
+                out.append(_row(
+                    "reteinformaticalavoro.it",
+                    title,
+                    "Employer via ReteInformaticaLavoro",
+                    "Milan, Italy",
+                    job_url,
+                    f"{title} (Milan, Italy)",
+                    "",
+                    _remote_flag(title),
+                ))
+                if len(out) >= MAX_ROWS:
+                    break
+    except Exception as e:
+        logger.debug(f"[reteinformaticalavoro.it] {query}: {e}")
+    return out[:MAX_ROWS]
+
+
+def scrape_posao_hr(query: str) -> List[dict]:
+    """Croatia local tech jobs: direct Posao.hr HTML scraper + Croatia ATS."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    first = q.split()[0].lower() if q.split() else q.lower()
+    terms = [first]
+    if first in ("flutter", "dart", "kotlin", "swift", "android", "ios"):
+        terms.extend(["mobile", "developer"])
+    elif first not in ("developer", "programer"):
+        terms.append("developer")
+    seen = set()
+    for term in terms:
+        try:
+            r = _get(f"https://www.posao.hr/poslovi/izraz/{_slug(term)}/")
+            if not r:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.select("a[href*='/oglasi/']"):
+                raw_href = a.get("href") or ""
+                if "source=featured-ads" in raw_href:
+                    continue
+                href = raw_href.split("?")[0].strip()
+                if not re.search(r"/oglasi/[^/]+/\d+/?$", href):
+                    continue
+                job_url = href if href.startswith("http") else f"https://www.posao.hr{href}"
+                if job_url in seen:
+                    continue
+                lines = [ln.strip() for ln in a.get_text("\n", strip=True).splitlines() if ln.strip()]
+                if not lines:
+                    continue
+                title = lines[0]
+                if not _ROLE_FALLBACK_PAT.search(title.lower()) and first not in title.lower():
+                    continue
+                seen.add(job_url)
+                city = lines[1] if len(lines) > 1 and len(lines[1]) <= 35 else "Zagreb"
+                posted = _relative_date(lines[2]) if len(lines) > 2 else ""
+                desc = f"{title} ({city}, Croatia)"
+                out.append(_row(
+                    "posao.hr", title, "Employer via Posao.hr",
+                    _with_country(city, "Croatia", ("hrvatska", "zagreb", "split", "rijeka", "osijek")),
+                    job_url, desc, posted, _remote_flag(title, city),
+                ))
+                if len(out) >= MAX_ROWS:
+                    return out
+        except Exception as e:
+            logger.debug(f"[posao.hr] {term}: {e}")
+
+    if len(out) < 5:
+        out.extend(_scrape_freehire_country(
+            query,
+            "Croatia",
+            "moj-posao.net",
+            ("croatia", "hrvatska", "zagreb", "split", "rijeka", "osijek", "zadar"),
+            "Zagreb",
+        ))
+    return out[:MAX_ROWS]
+
+
+def scrape_eleman_tr(query: str) -> List[dict]:
+    """Turkey local tech jobs: direct Eleman.net IT category scraper + Turkey ATS."""
+    out: List[dict] = []
+    q = (query or "").strip()
+    first = q.split()[0].lower() if q.split() else q.lower()
+    seen = set()
+    # 1. FreeHire Turkey ATS (Istanbul / Ankara / Izmir software & mobile engineering roles)
+    out.extend(_scrape_freehire_country(
+        query,
+        "Turkey",
+        "kariyer.net",
+        ("turkey", "türkiye", "turkiye", "istanbul", "ankara", "izmir", "bursa", "antalya", "kocaeli"),
+        "Istanbul",
+    ))
+    for r in out:
+        seen.add(r["job_url"])
+
+    # 2. Direct Eleman.net Bilişim (IT) listings
+    if len(out) < MAX_ROWS:
+        try:
+            r = _get("https://www.eleman.net/is-ilanlari/bilisim")
+            if r:
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.select("a[href*='/is-ilani/']"):
+                    href = (a.get("href") or "").split("?")[0].strip()
+                    if not re.search(r"/is-ilani/[a-z0-9-]+-i\d+$", href):
+                        continue
+                    job_url = href if href.startswith("http") else f"https://www.eleman.net{href}"
+                    if job_url in seen:
+                        continue
+                    lines = [ln.strip() for ln in a.get_text("\n", strip=True).splitlines() if ln.strip()]
+                    if not lines:
+                        continue
+                    title = lines[0]
+                    company = lines[1] if len(lines) > 1 else "Employer via Eleman.net"
+                    city = lines[2] if len(lines) > 2 else "Istanbul"
+                    low_blob = f"{title} {company} {href}".lower()
+                    if first not in ("software", "developer") and first not in low_blob and not any(
+                        w in low_blob for w in ("yazilim", "yazılım", "developer", "mobil", "uzman", "mühendis", "muhendis", "bilgi işlem", "bilisim")
+                    ):
+                        continue
+                    seen.add(job_url)
+                    desc = f"{title} at {company} ({city}, Turkey)"
+                    out.append(_row(
+                        "eleman.net", title, company,
+                        _with_country(city, "Turkey", ("türkiye", "istanbul", "ankara", "izmir")),
+                        job_url, desc, "", _remote_flag(title, city),
+                    ))
+                    if len(out) >= MAX_ROWS:
+                        break
+        except Exception as e:
+            logger.debug(f"[eleman.net] {e}")
+    return out[:MAX_ROWS]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1108,7 +1608,7 @@ def scrape_skywalker_gr(query: str) -> List[dict]:
                 if not _matches(kw_attempt, title, raw_txt, slug_title):
                     continue
                 seen.add(job_url)
-                desc = f"{raw_txt} ({slug_title}) — {query}"
+                desc = f"{raw_txt} ({slug_title})"
                 out.append(_row(
                     "skywalker.gr", title, "Employer via Skywalker.gr",
                     "Athens, Greece", job_url, desc, "", _remote_flag(title, raw_txt),
@@ -1165,27 +1665,113 @@ def scrape_djinni_ua(query: str) -> List[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Additional Country-Scoped Talent.com Local Board Scrapers across Europe
+# ─────────────────────────────────────────────────────────────────────────────
+
+def scrape_talent_uk(query: str) -> List[dict]:
+    return _scrape_talent_eu("uk", "United Kingdom", "totaljobs.uk", "London", query)
+
+
+def scrape_talent_fr(query: str) -> List[dict]:
+    return _scrape_talent_eu("fr", "France", "apec.fr", "Paris", query)
+
+
+def scrape_talent_de(query: str) -> List[dict]:
+    return _scrape_talent_eu("de", "Germany", "stepstone.de", "Berlin", query)
+
+
+def scrape_talent_at(query: str) -> List[dict]:
+    return _scrape_talent_eu("at", "Austria", "stepstone.at", "Vienna", query)
+
+
+def scrape_talent_nl(query: str) -> List[dict]:
+    return _scrape_talent_eu("nl", "Netherlands", "nationalevacaturebank.nl", "Amsterdam", query)
+
+
+def scrape_talent_ch(query: str) -> List[dict]:
+    return _scrape_talent_eu("ch", "Switzerland", "jobup.ch", "Zurich", query)
+
+
+def scrape_talent_es(query: str) -> List[dict]:
+    return _scrape_talent_eu("es", "Spain", "infojobs.net", "Madrid", query)
+
+
+def scrape_talent_pt(query: str) -> List[dict]:
+    return _scrape_talent_eu("pt", "Portugal", "net-empregos.com", "Lisbon", query)
+
+
+def scrape_talent_dk(query: str) -> List[dict]:
+    return _scrape_talent_eu("dk", "Denmark", "jobnet.dk", "Copenhagen", query)
+
+
+def scrape_talent_se(query: str) -> List[dict]:
+    return _scrape_talent_eu("se", "Sweden", "platsbanken.se", "Stockholm", query)
+
+
+def scrape_talent_no(query: str) -> List[dict]:
+    return _scrape_talent_eu("no", "Norway", "finn.no", "Oslo", query)
+
+
+def scrape_talent_pl(query: str) -> List[dict]:
+    return _scrape_talent_eu("pl", "Poland", "pracuj.pl", "Warsaw", query)
+
+
+def scrape_talent_cz(query: str) -> List[dict]:
+    return _scrape_talent_eu("cz", "Czech Republic", "jobs.cz", "Prague", query)
+
+
+def scrape_talent_hu(query: str) -> List[dict]:
+    return _scrape_talent_eu("hu", "Hungary", "profession.hu", "Budapest", query)
+
+
+def scrape_talent_bg(query: str) -> List[dict]:
+    return _scrape_talent_eu("bg", "Bulgaria", "jobs.bg", "Sofia", query)
+
+
+def scrape_talent_gr(query: str) -> List[dict]:
+    return _scrape_talent_eu("gr", "Greece", "kariera.gr", "Athens", query)
+
+
+def scrape_talent_ua(query: str) -> List[dict]:
+    return _scrape_talent_eu("ua", "Ukraine", "work.ua", "Kyiv", query)
+
+
+def scrape_talent_tr(query: str) -> List[dict]:
+    return _scrape_talent_eu("tr", "Turkey", "kariyer.net", "Istanbul", query)
+
+
+def scrape_talent_ie(query: str) -> List[dict]:
+    return _scrape_talent_eu("ie", "Ireland", "ie.talent.com", "Dublin", query)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Registry
 # ─────────────────────────────────────────────────────────────────────────────
 
 DIRECT_SCRAPERS: Dict[str, List[Callable[[str], List[dict]]]] = {
-    "uk": [scrape_reed],
-    "austria": [scrape_karriere_at],
-    "portugal": [scrape_itjobs_pt],
-    "spain": [scrape_tecnoempleo, scrape_infojobs],
-    "denmark": [scrape_jobindex],
-    "norway": [scrape_finn, scrape_arbeidsplassen],
-    "sweden": [scrape_jobtech_se],
-    "poland": [scrape_nofluffjobs],
-    "hungary": [scrape_nofluffjobs_hu],
-    "czech republic": [scrape_nofluffjobs_cz],
-    "bulgaria": [scrape_dev_bg],
-    "greece": [scrape_skywalker_gr],
-    "ukraine": [scrape_djinni_ua],
-    "netherlands": [scrape_jobbird, scrape_arbeitnow_nl],
-    "switzerland": [scrape_jobs_ch, scrape_arbeitnow_ch],
-    "france": [scrape_hellowork],
-    "germany": [scrape_arbeitnow_de],
+    "uk": [scrape_reed, scrape_talent_uk],
+    "austria": [scrape_karriere_at, scrape_talent_at],
+    "portugal": [scrape_itjobs_pt, scrape_talent_pt],
+    "spain": [scrape_tecnoempleo, scrape_infojobs, scrape_talent_es],
+    "denmark": [scrape_jobindex, scrape_talent_dk],
+    "norway": [scrape_finn, scrape_arbeidsplassen, scrape_talent_no],
+    "sweden": [scrape_jobtech_se, scrape_talent_se],
+    "poland": [scrape_nofluffjobs, scrape_talent_pl],
+    "hungary": [scrape_nofluffjobs_hu, scrape_talent_hu],
+    "czech republic": [scrape_talent_cz, scrape_startupjobs_cz, scrape_nofluffjobs_cz],
+    "bulgaria": [scrape_dev_bg, scrape_talent_bg],
+    "greece": [scrape_skywalker_gr, scrape_talent_gr],
+    "ukraine": [scrape_djinni_ua, scrape_talent_ua],
+    "netherlands": [scrape_jobbird, scrape_talent_nl, scrape_arbeitnow_nl],
+    "switzerland": [scrape_jobs_ch, scrape_talent_ch, scrape_arbeitnow_ch],
+    "france": [scrape_hellowork, scrape_talent_fr],
+    "germany": [scrape_xing_de, scrape_talent_de, scrape_arbeitnow_de],
+    "finland": [scrape_duunitori_fi],
+    "belgium": [scrape_stepstone_be],
+    "ireland": [scrape_irishjobs_ie, scrape_talent_ie],
+    "italy": [scrape_italyjobs_it],
+    "croatia": [scrape_posao_hr],
+    "turkey": [scrape_eleman_tr, scrape_talent_tr],
 }
 
 __all__ = ["DIRECT_SCRAPERS"] + [f.__name__ for fs in DIRECT_SCRAPERS.values() for f in fs]

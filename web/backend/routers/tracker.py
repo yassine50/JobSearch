@@ -154,8 +154,6 @@ def get_all(db: Session = Depends(get_db),
     if now_ts - _LAST_TRACKER_MAINT.get(current_user.id, 0.0) > 300.0:
         _LAST_TRACKER_MAINT[current_user.id] = now_ts
         try:
-            from ..utils import purge_blacklisted_applications
-            purge_blacklisted_applications(db, user_id=current_user.id)
             from ..auto_dispatcher import auto_reject_unresponsive_follow_ups
             auto_reject_unresponsive_follow_ups(db, current_user.id, days_threshold=3)
         except Exception as e:

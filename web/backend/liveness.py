@@ -236,7 +236,8 @@ def _check_linkedin(url: str):
 
 
 def _check_page(url: str) -> dict:
-    r = _LIVE_SESSION.get(url, headers=HEADERS, timeout=12, allow_redirects=True)
+    from .utils import safe_http_get
+    r = safe_http_get(_LIVE_SESSION, url, headers=HEADERS, timeout=12)
     html_text = decode_page(r.content, r.headers.get("Content-Type"))
     body, controls = "", []
     try:
@@ -257,6 +258,9 @@ def check_liveness(url: str) -> dict:
     url = (url or "").strip()
     if not url.startswith("http"):
         return {"url": url, "result": "uncertain", "code": "bad_url", "reason": "not an http(s) URL"}
+    from .utils import is_safe_public_url
+    if not is_safe_public_url(url):
+        return {"url": url, "result": "uncertain", "code": "blocked_url", "reason": "disallowed private or internal URL"}
     now = time.time()
     with _lock:
         hit = _cache.get(url)

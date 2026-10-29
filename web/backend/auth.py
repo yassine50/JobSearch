@@ -103,9 +103,7 @@ def get_optional_user(
 
 DEFAULT_ADMIN_EMAILS = (
     "yassineyoussefwx@gmail.com,"
-    "yassine@test.com,"
     "yassineyoussef@gmail.com,"
-    "yassine.demo@cvtomatch.com,"
     "cvtomatch1@gmail.com"
 )
 

@@ -258,7 +258,7 @@ def _open_direct_smtp(settings, timeout: int = 5):
     for h, p, use_ssl in attempts:
         conn = None
         try:
-            ssl_ctx = ssl._create_unverified_context()
+            ssl_ctx = ssl.create_default_context()
             if use_ssl:
                 conn = _IPv4SMTP_SSL(h, p, timeout=timeout, context=ssl_ctx)
                 conn.ehlo()
@@ -303,9 +303,15 @@ def _dispatch_via_https_relay(settings, messages_payload: List[dict]) -> List[di
     if not clean_pwd:
         raise SmtpFatalError("Gmail App Password is missing. Go to Settings → Email Setup.")
 
+    ts_sec = str(int(time.time()))
     sig = hmac.new(
         _RELAY_SECRET.encode("utf-8"),
         b"cvtomatch-smtp-dispatch",
+        hashlib.sha256,
+    ).hexdigest()
+    ts_sig = hmac.new(
+        _RELAY_SECRET.encode("utf-8"),
+        f"cvtomatch-smtp-dispatch:{ts_sec}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
 
@@ -315,6 +321,8 @@ def _dispatch_via_https_relay(settings, messages_payload: List[dict]) -> List[di
             headers={
                 "Content-Type": "application/json",
                 "X-Relay-Key": sig,
+                "X-Relay-Timestamp": ts_sec,
+                "X-Relay-Signature": ts_sig,
             },
             json={
                 "smtp_host": settings.smtp_host or "smtp.gmail.com",
@@ -1192,9 +1200,20 @@ def sync_bounces_endpoint(req: SyncBouncesRequest = SyncBouncesRequest(),
 @router.get("/blacklist")
 def get_blacklist(db: Session = Depends(get_db),
                   current_user: models.User = Depends(get_current_user)):
-    """Retrieves all blacklisted / bounced emails across the platform (community protection)."""
-    items = db.query(models.EmailBlacklist)\
-              .order_by(models.EmailBlacklist.created_at.desc()).all()
+    """Retrieves blacklisted / bounced emails applicable to this user (global bounces + user's own entries)."""
+    from sqlalchemy import or_
+    items = (
+        db.query(models.EmailBlacklist)
+        .filter(
+            or_(
+                models.EmailBlacklist.user_id == current_user.id,
+                models.EmailBlacklist.user_id.is_(None),
+                models.EmailBlacklist.source != "manual",
+            )
+        )
+        .order_by(models.EmailBlacklist.created_at.desc())
+        .all()
+    )
     return [{"id": b.id, "email": b.email, "reason": b.reason,
              "source": b.source, "created_at": str(b.created_at),
              "is_mine": b.user_id == current_user.id} for b in items]
@@ -1203,21 +1222,27 @@ def get_blacklist(db: Session = Depends(get_db),
 def add_to_blacklist(req: BlacklistCreateRequest,
                      db: Session = Depends(get_db),
                      current_user: models.User = Depends(get_current_user)):
-    """Manually adds an email to the persistent global blacklist for all users."""
+    """Manually adds an email to the user's blacklist (or global if admin)."""
+    from sqlalchemy import or_
+    from ..auth import is_admin
     clean_email = req.email.strip().lower()
     if not clean_email or "@" not in clean_email:
         raise HTTPException(400, "Invalid email address")
-    # Global check across all users
     existing = db.query(models.EmailBlacklist).filter(
-        models.EmailBlacklist.email == clean_email
+        models.EmailBlacklist.email == clean_email,
+        or_(
+            models.EmailBlacklist.user_id == current_user.id,
+            models.EmailBlacklist.user_id.is_(None),
+            models.EmailBlacklist.source != "manual",
+        ),
     ).first()
     if existing:
-        return {"message": "Email is already blacklisted globally", "id": existing.id}
+        return {"message": "Email is already blacklisted", "id": existing.id}
     entry = models.EmailBlacklist(
-        user_id=current_user.id,
+        user_id=None if is_admin(current_user) else current_user.id,
         email=clean_email,
         reason=req.reason or "Manual entry",
-        source="manual",
+        source="admin_backoffice" if is_admin(current_user) else "manual",
         created_at=datetime.utcnow()
     )
     db.add(entry)

@@ -144,7 +144,24 @@ def backup_sqlite_database(db_path: str = DB_PATH, max_backups: int = 14) -> str
 
 
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-    _ensure_healthy_sqlite_db(DB_PATH)
+    # Acquire an OS file lock before running startup WAL/B-tree recovery so concurrent
+    # uvicorn workers (--workers N) never race to delete or rebuild -wal/-shm sidecars.
+    _rec_lock_fh = None
+    try:
+        import fcntl as _fcntl
+        import tempfile as _tempfile
+        _rec_lock_fh = open(os.path.join(_tempfile.gettempdir(), "cvtomatch_sqlite_recovery.lock"), "w")
+        _fcntl.flock(_rec_lock_fh, _fcntl.LOCK_EX)
+    except Exception:
+        _rec_lock_fh = None
+    try:
+        _ensure_healthy_sqlite_db(DB_PATH)
+    finally:
+        if _rec_lock_fh:
+            try:
+                _rec_lock_fh.close()
+            except Exception:
+                pass
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
         connect_args={"check_same_thread": False, "timeout": 30},
@@ -159,6 +176,7 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.execute("PRAGMA cache_size=-64000")
         cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 else:
     # Production PostgreSQL engine with connection pooling
@@ -240,11 +258,25 @@ def _init_db_locked():
         from . import models
         db = SessionLocal()
         try:
-            # Purge any anonymous / blank-email user records
-            anon_deleted = db.query(models.User).filter(
-                (models.User.email == "") | (models.User.email.is_(None)) | (models.User.name == "")
-            ).delete(synchronize_session=False)
-            if anon_deleted:
+            # Purge any anonymous / blank-email user records and their child records cleanly
+            anon_ids = [
+                r[0] for r in db.query(models.User.id).filter(
+                    (models.User.email == "") | (models.User.email.is_(None)) | (models.User.name == "")
+                ).all()
+            ]
+            if anon_ids:
+                for child_model in (
+                    models.EmailLog,
+                    models.Application,
+                    models.SavedJob,
+                    models.CvUpload,
+                    models.EmailSettings,
+                    models.CustomTemplate,
+                    models.SavedWatchlist,
+                    models.EmailBlacklist,
+                ):
+                    db.query(child_model).filter(child_model.user_id.in_(anon_ids)).delete(synchronize_session=False)
+                anon_deleted = db.query(models.User).filter(models.User.id.in_(anon_ids)).delete(synchronize_session=False)
                 db.commit()
                 logger.info(f"[init_db] Purged {anon_deleted} anonymous/empty user account(s)")
 

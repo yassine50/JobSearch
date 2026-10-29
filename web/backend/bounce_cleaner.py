@@ -632,7 +632,18 @@ def sync_gmail_bounces(db: Session, user_id: int, delete_from_gmail: bool = True
         raise e
 
 def get_blacklisted_emails(db: Session, user_id: Optional[int] = None) -> Set[str]:
-    """Returns a set of lowercased blacklisted emails across the entire platform."""
-    # All dead and blocked emails protect every user globally
-    q = db.query(models.EmailBlacklist.email)
-    return {row[0].strip().lower() for row in q.all() if row[0]}
+    """Returns a set of lowercased blacklisted emails (global bounces + user's own manual blocks)."""
+    rows = db.query(
+        models.EmailBlacklist.email,
+        models.EmailBlacklist.source,
+        models.EmailBlacklist.created_by_user_id,
+    ).all()
+    result = set()
+    for email_addr, source, created_by in rows:
+        if not email_addr:
+            continue
+        if (source or "").strip().lower() == "manual" and created_by is not None:
+            if user_id is None or created_by != user_id:
+                continue
+        result.add(email_addr.strip().lower())
+    return result

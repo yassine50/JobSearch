@@ -104,6 +104,9 @@ def google_auth(req: GoogleAuthRequest, db: Session = Depends(get_db)):
     email = (info.get("email") or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Google account did not provide a valid email address")
+    email_verified = info.get("email_verified")
+    if email_verified not in (True, "true", "1", 1):
+        raise HTTPException(status_code=401, detail="Google account email address is not verified")
 
     raw_name = (info.get("name") or info.get("given_name") or "").strip()
     if not raw_name or len(raw_name) < 2:
@@ -210,6 +213,7 @@ from urllib.parse import quote
 from ..auth import SECRET_KEY
 
 _RESET_ATTEMPTS: dict = {}
+_FORGOT_COOLDOWN: dict = {}
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -313,12 +317,32 @@ def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
 
+    now_ts = _time.time()
+    cd = _FORGOT_COOLDOWN.get(email)
+    if cd:
+        if now_ts - cd["last_ts"] < 60:
+            raise HTTPException(
+                status_code=429,
+                detail="Please wait at least 60 seconds before requesting another password reset code.",
+            )
+        if now_ts - cd["window_ts"] < 900 and cd["count"] >= 4:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many password reset requests for this email. Please try again in 15 minutes.",
+            )
+
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
         raise HTTPException(
             status_code=404,
             detail="No account found with this email address. Please check for typos or create a new account.",
         )
+
+    if not cd or now_ts - cd["window_ts"] >= 900:
+        _FORGOT_COOLDOWN[email] = {"window_ts": now_ts, "last_ts": now_ts, "count": 1}
+    else:
+        cd["last_ts"] = now_ts
+        cd["count"] += 1
 
     now_bucket = int(_time.time() // 300)
     code = _generate_reset_code(user, now_bucket)

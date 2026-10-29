@@ -125,14 +125,31 @@ function createSmtpProtocol(socket, timeoutMs = 15000) {
   return { readResponse, sendCommand, sendRawData }
 }
 
+const ALLOWED_SMTP_PORTS = new Set([465, 587, 2525])
+const PRIVATE_HOST_RE = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|\[?::1\]?|\[?fe80:|\[?fc00:|\[?fd00:)/i
+
+function isAllowedSmtpHost(host) {
+  const h = String(host || '').trim().toLowerCase()
+  if (!h || h.length > 253 || !h.includes('.')) return false
+  if (PRIVATE_HOST_RE.test(h) || h.endsWith('.local') || h.endsWith('.internal')) return false
+  return /^[a-z0-9.-]+$/.test(h)
+}
+
 async function openAuthenticatedSmtp({ host, port, user, password }) {
   const cleanHost = String(host || 'smtp.gmail.com').trim()
+  const numPort = Number(port) || 587
+  if (!isAllowedSmtpHost(cleanHost)) {
+    throw new Error('Invalid or disallowed SMTP host')
+  }
+  if (!ALLOWED_SMTP_PORTS.has(numPort)) {
+    throw new Error('Disallowed SMTP port (allowed: 465, 587, 2525)')
+  }
   const cleanUser = extractAddress(user)
   const cleanPwd = String(password || '').replace(/\s+/g, '')
 
   // Connect via implicit TLS on 465 first (fastest & most reliable for Gmail),
   // or STARTTLS if a custom port != 465 && cleanHost != 'smtp.gmail.com' is used
-  const useImplicitTls = cleanHost === 'smtp.gmail.com' || Number(port) === 465
+  const useImplicitTls = cleanHost === 'smtp.gmail.com' || numPort === 465
 
   let socket
   let proto
@@ -146,7 +163,7 @@ async function openAuthenticatedSmtp({ host, port, user, password }) {
           port: 465,
           servername: cleanHost,
           family: 4,
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
         },
         () => {
           clearTimeout(t)
@@ -170,7 +187,7 @@ async function openAuthenticatedSmtp({ host, port, user, password }) {
       const s = net.connect(
         {
           host: cleanHost,
-          port: Number(port) || 587,
+          port: numPort,
           family: 4,
         },
         () => {
@@ -200,6 +217,7 @@ async function openAuthenticatedSmtp({ host, port, user, password }) {
         {
           socket: rawSocket,
           servername: cleanHost,
+          rejectUnauthorized: true,
         },
         () => {
           clearTimeout(t)
@@ -232,11 +250,18 @@ async function openAuthenticatedSmtp({ host, port, user, password }) {
   return { socket, proto, cleanUser }
 }
 
+function safeCompareHex(a, b) {
+  const bufA = Buffer.from(String(a || ''), 'utf8')
+  const bufB = Buffer.from(String(b || ''), 'utf8')
+  if (bufA.length !== bufB.length || bufA.length === 0) return false
+  return crypto.timingSafeEqual(bufA, bufB)
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Relay-Key')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Relay-Key, X-Relay-Timestamp, X-Relay-Signature')
     return res.status(200).end()
   }
 
@@ -244,13 +269,30 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: 'Method not allowed' })
   }
 
-  const providedKey = req.headers['x-relay-key'] || ''
+  const providedKey = String(req.headers['x-relay-key'] || '')
+  const tsHeader = String(req.headers['x-relay-timestamp'] || '')
+  const sigHeader = String(req.headers['x-relay-signature'] || '')
   const expectedKey = crypto
     .createHmac('sha256', RELAY_SECRET)
     .update('cvtomatch-smtp-dispatch')
     .digest('hex')
 
-  if (providedKey !== expectedKey && providedKey !== RELAY_SECRET) {
+  let authorized = false
+  if (tsHeader && sigHeader) {
+    const tsSec = parseInt(tsHeader, 10)
+    const nowSec = Math.floor(Date.now() / 1000)
+    if (!Number.isNaN(tsSec) && Math.abs(nowSec - tsSec) <= 300) {
+      const expectedTsSig = crypto
+        .createHmac('sha256', RELAY_SECRET)
+        .update(`cvtomatch-smtp-dispatch:${tsSec}`)
+        .digest('hex')
+      authorized = safeCompareHex(sigHeader, expectedTsSig)
+    }
+  } else if (providedKey) {
+    authorized = safeCompareHex(providedKey, expectedKey)
+  }
+
+  if (!authorized) {
     return res.status(401).json({ ok: false, error: 'Unauthorized relay request' })
   }
 

@@ -10,10 +10,10 @@ import json
 import logging
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as _fast_wait
 
 logger = logging.getLogger("jobsearcher.jobs")
-_JOBS_POOL = ThreadPoolExecutor(max_workers=20)
+_JOBS_POOL = ThreadPoolExecutor(max_workers=40)
 
 def _compute_job_age_hours(date_val: Any) -> Optional[float]:
     if not date_val:
@@ -545,7 +545,7 @@ _search_cache_lock = _threading.Lock()
 
 
 def _search_cache_key(req, countries, sites, hours) -> str:
-    return json.dumps({
+    return "v3|" + json.dumps({
         "t": (req.title or "").strip().lower(), "l": (req.location or "").strip().lower(),
         "c": sorted(c.lower() for c in countries), "s": sorted(sites), "h": hours,
         "r": bool(req.is_remote), "e": bool(req.easy_apply), "i": bool(req.international_only),
@@ -563,8 +563,11 @@ def _search_cache_get(key: str):
     return None
 
 
-def _search_cache_put(key: str, df, per_site: dict):
+def _search_cache_put(key: str, df, per_site: dict, sites_searched=()):
     import time as _t
+    # Never cache a partial scrape where local_boards was requested for a country but returned 0
+    if "local_boards" in (sites_searched or ()) and not per_site.get("local_boards"):
+        return
     with _search_cache_lock:
         if len(_search_cache) > 30:
             for k in sorted(_search_cache, key=lambda k: _search_cache[k][0])[:10]:
@@ -598,12 +601,10 @@ def _fetch_serper_google_jobs(
     hours_old: Optional[int] = None,
 ) -> List[dict]:
     """
-    Fetches verified individual job postings via Serper API (never job-board search/category pages).
-    Targets direct employer ATS postings and LinkedIn single-job views, extracting accurate
-    company names, titles, locations, and real posting dates.
+    Fetches verified individual job postings via Serper API (or Yahoo/ddgs fallback when Serper
+    is unconfigured or out of credits). Targets direct employer ATS postings and LinkedIn
+    single-job views, extracting accurate company names, titles, locations, and real posting dates.
     """
-    if not api_key:
-        return []
     try:
         from concurrent.futures import ThreadPoolExecutor
         from urllib.parse import urlparse, unquote
@@ -662,24 +663,35 @@ def _fetch_serper_google_jobs(
             tbs = "qdr:m3"
 
         def _run_serper_q(q_str: str):
+            import time as _t
+            from .. import local_boards as _lb
+            if not api_key or _t.time() < getattr(_lb, "_serper_off_until", 0.0):
+                return []
             payload = {"q": q_str, "gl": gl, "hl": "en", "num": 10, "tbs": tbs}
             try:
-                resp = _JOBS_SESSION.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=4.2)
+                resp = _JOBS_SESSION.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=3.2)
                 if resp.status_code == 200:
                     return resp.json().get("organic", [])
+                if resp.status_code in (400, 401, 403):
+                    _lb._serper_off_until = _t.time() + 1800.0
             except Exception:
                 pass
             return []
 
         organic_items = []
         seen_links = set()
-        with ThreadPoolExecutor(max_workers=3) as q_pool:
-            for items in q_pool.map(_run_serper_q, queries):
-                for it in items:
-                    lk = (it.get("link") or "").strip().split("?")[0]
-                    if lk and lk not in seen_links:
-                        seen_links.add(lk)
-                        organic_items.append(it)
+        import time as _t
+        from .. import local_boards as _lb
+        if api_key and _t.time() >= getattr(_lb, "_serper_off_until", 0.0):
+            with ThreadPoolExecutor(max_workers=3) as q_pool:
+                for items in q_pool.map(_run_serper_q, queries):
+                    for it in items:
+                        lk = (it.get("link") or "").strip().split("?")[0]
+                        if lk and lk not in seen_links:
+                            seen_links.add(lk)
+                            organic_items.append(it)
+        if not organic_items:
+            return []
 
         def _verify_item(item: dict) -> Optional[dict]:
             raw_title = (item.get("title") or "").strip()
@@ -1033,9 +1045,10 @@ def _enrich_job_description(job: dict) -> dict:
     # Universal JSON-LD & HTML enrichment for local job boards & ATS pages
     if url.startswith("http"):
         try:
-            from ..utils import is_safe_public_url
+            from ..utils import is_safe_public_url, safe_http_get
             if is_safe_public_url(url):
-                resp = _JOBS_SESSION.get(
+                resp = safe_http_get(
+                    _JOBS_SESSION,
                     url,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -1328,9 +1341,9 @@ def search_jobs(req: SearchRequest,
     from concurrent.futures import wait as _wait, FIRST_COMPLETED
 
     t_start = _time.time()
-    SCRAPE_BUDGET_S = 10.0    # generous wall-clock budget so multi-board/multi-country scrapes complete
-    # How many phrasings of the role each board is queried with
-    SITE_VARIANT_LIMIT = {"indeed": 2, "linkedin": 2, "job_bank": 1, "glassdoor": 1, "google": 1}
+    SCRAPE_BUDGET_S = 4.8    # fast wall-clock budget (single-flight cache shares local_boards + ats with wave 1)
+    # 1 variant per major board avoids duplicate multi-page pagination & halves latency
+    SITE_VARIANT_LIMIT = {"indeed": 1, "linkedin": 1, "job_bank": 1, "glassdoor": 1, "google": 1}
     stats = {"tasks": 0, "tasks_ok": 0, "tasks_failed": 0, "tasks_timed_out": 0,
              "raw": 0, "after_dedup": 0, "after_relevance": 0, "spam_removed": 0,
              "per_site": {}, "queries": {}, "timings": {}}
@@ -1381,6 +1394,10 @@ def search_jobs(req: SearchRequest,
                 continue
             for vi, q in enumerate(variants[: SITE_VARIANT_LIMIT.get(site, 1)]):
                 want = per_country if vi == 0 else max(10, per_country // 2)
+                if site == "linkedin":
+                    want = min(want, 25)
+                elif site == "indeed":
+                    want = min(want, 35)
                 tasks.append((country_name, norm_key, site, q, want, indeed_c, loc))
     stats["tasks"] = len(tasks)
     stats["sites_searched"] = sorted({t[2] for t in tasks})
@@ -1396,6 +1413,9 @@ def search_jobs(req: SearchRequest,
                 site, list(q), country=search_country, location=req.location.strip(),
                 hours_old=hours_filter,
                 serper_key=os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", ""),
+                # Local boards share in-flight calls with the fast wave (single-flight cache), so the deep
+                # wave can afford a full 3.8s wait without re-scraping anything.
+                budget_s=3.8 if site == "local_boards" else None,
             )
             if not rows:
                 return None
@@ -1409,10 +1429,12 @@ def search_jobs(req: SearchRequest,
         if site == "indeed" and str(loc).strip().lower() in ("worldwide", "global", "all"):
             site_loc = "Remote" if req.is_remote else ""
 
-        # High-precision Google Jobs integration via Serper API if key is set
+        # High-precision Google Jobs integration via Serper API if key is set and active
+        proxy = os.getenv("SCRAPER_PROXY") or os.getenv("GLASSDOOR_PROXY") or _get_scraper_config().get("scraper_proxy", "")
         if site == "google":
+            from .. import local_boards as _lb
             serper_key = os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")
-            if serper_key:
+            if serper_key and _time.time() >= getattr(_lb, "_serper_off_until", 0.0):
                 g_jobs = _fetch_serper_google_jobs(
                     q, location=loc, country=indeed_c, results_wanted=want,
                     api_key=serper_key, hours_old=hours_filter,
@@ -1422,6 +1444,8 @@ def search_jobs(req: SearchRequest,
                     df_g["_search_country"] = search_country
                     df_g["_query"] = q
                     return df_g
+            if not proxy:
+                return None
 
         kwargs = dict(
             site_name=[site],
@@ -1436,7 +1460,6 @@ def search_jobs(req: SearchRequest,
             linkedin_fetch_description=False,
         )
         # Pass proxy if configured for Glassdoor / Cloudflare-protected boards
-        proxy = os.getenv("SCRAPER_PROXY") or os.getenv("GLASSDOOR_PROXY") or _get_scraper_config().get("scraper_proxy", "")
         if proxy and site in ("glassdoor", "google"):
             kwargs["proxies"] = [proxy]
 
@@ -1465,6 +1488,9 @@ def search_jobs(req: SearchRequest,
             fut_map = {_JOBS_POOL.submit(scrape_task, t): t for t in tasks}
             pending = set(fut_map)
             deadline = t_start + SCRAPE_BUDGET_S
+            want_local = "local_boards" in stats["sites_searched"]
+            completed_sites = set()
+            total_rows_collected = 0
             while pending:
                 remaining = deadline - _time.time()
                 if remaining <= 0:
@@ -1472,15 +1498,22 @@ def search_jobs(req: SearchRequest,
                 done, pending = _wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
                 for fut in done:
                     t = fut_map[fut]
+                    completed_sites.add(t[2])
                     try:
                         res_df = fut.result()
                         stats["tasks_ok"] += 1
                         if res_df is not None and not res_df.empty:
                             all_dfs.append(res_df)
+                            total_rows_collected += len(res_df)
                             stats["per_site"][t[2]] = stats["per_site"].get(t[2], 0) + len(res_df)
                     except Exception as err:
                         stats["tasks_failed"] += 1
                         logger.warning(f"[Scraper] {t[2]} / '{t[3]}' / {t[0]} failed: {err}")
+                # Smart early exit: once local_boards (with rows, if requested) + a primary board (indeed/linkedin)
+                # have finished and we have >= 15 rows, give remaining stragglers at most 0.45s before returning
+                local_ready = (not want_local) or (stats["per_site"].get("local_boards", 0) > 0)
+                if local_ready and (completed_sites & {"indeed", "linkedin"}) and total_rows_collected >= 15:
+                    deadline = min(deadline, _time.time() + 0.45)
             stats["tasks_timed_out"] = len(pending)
             for fut in pending:
                 fut.cancel()
@@ -1488,7 +1521,7 @@ def search_jobs(req: SearchRequest,
                 logger.info(f"[Scraper] {len(pending)} scrape tasks exceeded the {SCRAPE_BUDGET_S}s budget; returning partial results")
             if all_dfs:
                 combined = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
-                _search_cache_put(cache_key, combined, stats["per_site"])
+                _search_cache_put(cache_key, combined, stats["per_site"], stats["sites_searched"])
                 all_dfs = [combined]
         stats["timings"]["scrape_s"] = round(_time.time() - t_start, 2)
 
@@ -1676,22 +1709,23 @@ def search_jobs(req: SearchRequest,
         # so we never burst-hammer LinkedIn's guest API and trigger HTTP 429 on the user's IP.
         t_enrich = _time.time()
         try:
-            missing_desc_indices = []
-            li_enrich_count = 0
-            for idx, j in enumerate(raw_jobs[:25]):
-                if len(j.get("description") or "") >= 80:
-                    continue
-                is_li = "linkedin" in (j.get("site") or "").lower() or "linkedin.com" in (j.get("url") or "").lower()
-                if is_li:
-                    if li_enrich_count >= 2:
+            if len(raw_jobs) < 12:
+                missing_desc_indices = []
+                li_enrich_count = 0
+                for idx, j in enumerate(raw_jobs[:12]):
+                    if len(j.get("description") or "") >= 80:
                         continue
-                    li_enrich_count += 1
-                missing_desc_indices.append(idx)
-            if missing_desc_indices:
-                def _enrich_idx(idx: int):
-                    raw_jobs[idx] = _enrich_job_description(raw_jobs[idx])
-                    return raw_jobs[idx]
-                _bounded_map(_enrich_idx, missing_desc_indices[:10], 2.5)
+                    is_li = "linkedin" in (j.get("site") or "").lower() or "linkedin.com" in (j.get("url") or "").lower()
+                    if is_li:
+                        if li_enrich_count >= 1:
+                            continue
+                        li_enrich_count += 1
+                    missing_desc_indices.append(idx)
+                if missing_desc_indices:
+                    def _enrich_idx(idx: int):
+                        raw_jobs[idx] = _enrich_job_description(raw_jobs[idx])
+                        return raw_jobs[idx]
+                    _bounded_map(_enrich_idx, missing_desc_indices[:4], 0.8)
         except Exception as desc_err:
             logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
         stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 2)
@@ -1734,8 +1768,8 @@ def search_jobs(req: SearchRequest,
             except Exception:
                 pass
 
-        # Deep hunt only on up to 3 top-ranked jobs that don't yet have an email
-        deep_indices = [idx for idx, j in enumerate(raw_jobs[:8]) if not j.get("emails")][:3]
+        # Deep hunt only on up to 2 top-ranked jobs that don't yet have an email (capped at 0.5s)
+        deep_indices = [idx for idx, j in enumerate(raw_jobs[:6]) if not j.get("emails")][:2]
         if deep_indices:
             def _deep_hunt(idx: int):
                 j = raw_jobs[idx]
@@ -1744,7 +1778,7 @@ def search_jobs(req: SearchRequest,
                 except Exception:
                     pass
                 return j
-            _bounded_map(_deep_hunt, deep_indices, 1.2)
+            _bounded_map(_deep_hunt, deep_indices, 0.5)
 
         # Drop any postings confirmed closed on LinkedIn's topcard banner during enrichment
         closed_before = len(raw_jobs)
@@ -1922,10 +1956,10 @@ def search_jobs(req: SearchRequest,
                 is_app = True
             elif j_nc and j_nt and j_nc in applied_company_to_titles:
                 for at in applied_company_to_titles[j_nc]:
-                    if j_nt in at or at in j_nt:
+                    if j_nt == at:
                         is_app = True
                         break
-            if not is_app and applied_emails:
+            if not is_app and applied_emails and j_nc in applied_company_to_titles and j_nt in applied_company_to_titles.get(j_nc, set()):
                 j_emails = {((e.get("email") or "") if isinstance(e, dict) else str(e or "")).strip().lower()
                             for e in (j.get("emails") or [])}
                 j_emails.discard("")
@@ -1998,7 +2032,7 @@ def fetch_job_description(req: JobDescriptionRequest,
         job_url_direct = li_res.get("job_url_direct") or ""
 
     if not desc and url.startswith("http") and "linkedin.com" not in url.lower():
-        from ..utils import is_safe_public_url
+        from ..utils import is_safe_public_url, safe_http_get
         if not is_safe_public_url(url):
             raise HTTPException(400, "This URL is not allowed.")
         try:
@@ -2008,7 +2042,7 @@ def fetch_job_description(req: JobDescriptionRequest,
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Accept-Language": "en-US,en;q=0.9",
             }
-            resp = _JOBS_SESSION.get(url, headers=headers, timeout=6)
+            resp = safe_http_get(_JOBS_SESSION, url, headers=headers, timeout=6)
             if resp.status_code == 200:
                 html_text = decode_page(resp.content, resp.headers.get("Content-Type"))
                 jld = _extract_jsonld_job_posting(html_text)
@@ -2684,16 +2718,33 @@ def search_jobs_fast_wave(
     raw_rows = []
     serper_key = os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")
     fast_sites = ("remote_boards", "ats") if is_ww else ("local_boards", "ats")
+    FAST_BUDGET_S = 2.4
+    # Fan out every fast source (and every selected country's local boards) in parallel with one shared
+    # wall-clock budget. Local-board calls started here are single-flight cached, so the deep wave that
+    # the UI fires at the same time re-uses them instead of scraping the same boards twice.
+    fast_tasks = []
     for site_id in fast_sites:
-        try:
-            rows = fetch_open_source(
-                site_id, variants, country=country, location=(req.location or "").strip(),
-                hours_old=hours_filter, serper_key=serper_key,
-            )
-            if rows:
-                raw_rows.extend(rows)
-        except Exception:
-            pass
+        targets = countries_list if (site_id == "local_boards" and not is_ww) else [country]
+        for c_name in targets[:6]:
+            c_variants = variants if c_name == country else (expand_queries(query_title, c_name.lower(), max_variants=2) or [query_title])
+            fast_tasks.append(_JOBS_POOL.submit(
+                fetch_open_source, site_id, c_variants, country=c_name, location=(req.location or "").strip(),
+                hours_old=hours_filter, serper_key=serper_key, budget_s=FAST_BUDGET_S,
+            ))
+    import time as _ft
+    from concurrent.futures import FIRST_COMPLETED as _FC
+    f_pending = set(fast_tasks)
+    f_deadline = _ft.time() + FAST_BUDGET_S + 0.5
+    while f_pending:
+        f_rem = f_deadline - _ft.time()
+        if f_rem <= 0:
+            break
+        f_done, f_pending = _fast_wait(f_pending, timeout=f_rem, return_when=_FC)
+        for f in f_done:
+            if not f.cancelled() and not f.exception():
+                raw_rows.extend(f.result() or [])
+        if len(raw_rows) >= 4:
+            f_deadline = min(f_deadline, _ft.time() + 0.25)
 
     if not raw_rows:
         return {"jobs": [], "wave": "fast"}
@@ -2780,3 +2831,10 @@ def search_jobs_fast_wave(
 
     fast_jobs.sort(key=lambda j: -(j.get("score") or j.get("relevance") or 50))
     return {"jobs": fast_jobs, "wave": "fast"}
+
+
+@router.get("/local-boards/health")
+def local_boards_health_route():
+    """Per-country local-board scraper health (latency, hit-rate, breaker state, cache size) for the back office."""
+    from ..local_boards import local_boards_health
+    return local_boards_health()

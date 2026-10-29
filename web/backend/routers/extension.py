@@ -315,83 +315,50 @@ def _answer_custom_question(
                 if any(w in o.lower() for w in ["linkedin", "job board", "website", "career", "other"]):
                     return o
 
-    # Years of experience questions
-    has_ble = bool(re.search(r"\b(ble|bluetooth\s*low\s*energy|bluetooth)\b", label_l))
-    has_iot = bool(re.search(r"\b(iot|internet\s*of\s*things|connected\s*devices?|smart\s*devices?|mqtt)\b", label_l))
+    # Years of experience & project history questions grounded strictly in the candidate's profile
     exps = profile.get("experiences") or []
-    exp0 = next((e for e in exps if re.search(r"developer|engineer|architect|lead", e.get("title", ""), re.I)), exps[0] if exps else {})
-    exp_role = exp0.get("title") or profile.get("current_title") or "Mobile Developer"
-    exp_comp = exp0.get("company") or "Xo Space"
+    exp0 = next((e for e in exps if re.search(r"developer|engineer|architect|lead|scientist|analyst|manager|designer", e.get("title", ""), re.I)), exps[0] if exps else {})
+    exp_role = (exp0.get("title") or profile.get("current_title") or "Software Engineer").strip()
+    exp_comp = (exp0.get("company") or profile.get("current_company") or "").strip()
+    at_comp_clause = f" at {exp_comp}" if exp_comp else ""
     comp_clean = comp_str if comp_str.lower() != role_str.lower() and comp_str.lower() not in ("the hiring team", "company") else "your engineering team"
 
     if re.search(r"\b(when\s+was\s+the\s+last\s+time|when\s+did\s+you\s+last|last\s+time\s+you\s+worked|how\s+recently)\b", label_l):
-        if has_ble and has_iot:
-            return (
-                f"I most recently worked on both BLE and IoT in 2024 (referring to both BLE and IoT). "
-                f"During my work as a {exp_role}, I built cross-platform Flutter and Dart mobile features for "
-                f"Bluetooth Low Energy (BLE) peripheral discovery, GATT service/characteristic read-write streams, "
-                f"and real-time IoT device state synchronization using BLoC and Riverpod."
-            )
-        if has_ble:
-            return (
-                f"I most recently worked on a BLE (Bluetooth Low Energy) project in 2024 as a {exp_role}, "
-                f"building cross-platform Flutter and Dart mobile modules for peripheral scanning, pairing, "
-                f"and real-time GATT characteristic data streaming."
-            )
-        if has_iot:
-            return (
-                f"I most recently worked on an IoT-connected mobile project in 2024 as a {exp_role}, "
-                f"developing cross-platform Flutter and Dart interfaces for smart-device onboarding, "
-                f"live sensor telemetry, and cloud synchronization."
-            )
         return (
-            f"I most recently worked on this in 2024 during my role as {exp_role} at {exp_comp}, "
-            f"where I delivered production mobile features using {skills_str}."
+            f"I most recently worked with these technologies during my role as {exp_role}{at_comp_clause}, "
+            f"where I designed and delivered production features using {skills_str}."
         )
 
     if any(k in label_l for k in ["how many years", "years of experience", "years experience"]):
-        sub_years = max(2, min(3, int(years))) if (has_ble or has_iot) else years
         if q.field_type in ("number", "text") or len(label_l) < 95:
-            return str(sub_years)
-        return f"{sub_years}+ years of hands-on experience."
+            return str(int(years))
+        return f"{years}+ years of hands-on experience."
 
     if re.search(r"\b(have\s+you\s+worked\s+on|have\s+you\s+ever\s+worked|share\s+an\s+example|including\s+your\s+role|key\s+technologies\s+used)\b", label_l):
-        if has_iot:
-            return (
-                f"Yes, I have worked on connected IoT systems before. Example: I worked on a cross-platform "
-                f"smart-device monitoring and control application that connected with hardware peripherals to display "
-                f"real-time sensor diagnostics, manage device configuration, and synchronize telemetry with cloud services. "
-                f"Role: {exp_role} (owned the mobile client architecture, device communication layer, and reactive state management). "
-                f"Key technologies used: Flutter, Dart, BLoC, Riverpod, Bluetooth Low Energy (BLE), REST APIs, WebSockets, and Firebase."
-            )
-        if has_ble:
-            return (
-                f"Yes, I have worked on BLE-enabled mobile products before. Example: I developed a cross-platform "
-                f"mobile companion module for discovering nearby Bluetooth Low Energy peripherals, handling resilient "
-                f"pairing/reconnection, and streaming real-time GATT characteristic packets. Role: {exp_role}. "
-                f"Key technologies used: Flutter, Dart, BLoC, Riverpod, BLE (GATT), MethodChannels, and REST APIs."
-            )
+        exp_desc = (exp0.get("description") or "").strip()
+        first_bullet = exp_desc.split("\n")[0].lstrip("• ").strip() if exp_desc else ""
+        example_clause = (
+            f"Example: {first_bullet.rstrip('.')}. "
+            if first_bullet
+            else f"Example: I engineered and maintained production systems{at_comp_clause} featuring clean modular architecture, reliable API integration, and automated testing. "
+        )
         return (
-            f"Yes, I have hands-on experience in this area. Example: At {exp_comp}, I engineered and maintained "
-            f"a production cross-platform mobile system for iOS and Android featuring modular clean architecture, "
-            f"real-time API synchronization, and automated testing. Role: {exp_role}. "
-            f"Key technologies used: {skills_str}."
+            f"Yes, I have hands-on experience in this area. {example_clause}"
+            f"Role: {exp_role}{at_comp_clause}. Key technologies used: {skills_str}."
         )
 
     if re.search(r"\b(briefly\s+describe|describe\s+(?:your\s+)?(?:most\s+recent\s+|a\s+recent\s+|a\s+)?project|recent\s+project\s+involving|project\s+involving)\b", label_l):
-        if has_ble:
+        exp_desc = (exp0.get("description") or "").strip()
+        first_bullet = exp_desc.split("\n")[0].lstrip("• ").strip() if exp_desc else ""
+        if first_bullet:
             return (
-                "In my most recent project involving BLE, I built a cross-platform Flutter (iOS & Android) mobile module "
-                "that scans and filters nearby Bluetooth Low Energy peripherals, manages secure pairing and automatic "
-                "reconnection, and subscribes to GATT notify/write characteristics to stream real-time device data "
-                "into a reactive BLoC/Riverpod state layer with local caching."
+                f"In my recent work as {exp_role}{at_comp_clause}, I {first_bullet[0].lower() + first_bullet[1:] if len(first_bullet) > 1 else first_bullet.rstrip('.')}. "
+                f"Key technologies used: {skills_str}."
             )
-        if has_iot:
-            return (
-                "In my most recent IoT project, I developed a cross-platform Flutter mobile dashboard and controller "
-                "that communicates with connected hardware over BLE and REST/WebSocket APIs to monitor live device telemetry, "
-                "trigger remote commands, and handle offline-first state synchronization."
-            )
+        return (
+            f"In my most recent project as {exp_role}{at_comp_clause}, I designed, implemented, and shipped "
+            f"production software workflows using {skills_str}, focusing on performance, reliability, and maintainability."
+        )
 
     # Salary / Compensation expectations
     if any(k in label_l for k in ["salary", "compensation", "pay expectation", "desired pay", "remuneration", "rate"]):
@@ -418,9 +385,7 @@ def _answer_custom_question(
         exp_desc = exp0.get("description") or ""
         first_bullet = exp_desc.split("\n")[0].lstrip("• ").strip() if exp_desc else ""
         base = (
-            f"As a {exp_role}"
-            + (f" at {exp_comp}" if exp_comp else "")
-            + f", I designed and delivered production workflows using {skills_str}. "
+            f"As a {exp_role}{at_comp_clause}, I designed and delivered production workflows using {skills_str}. "
         )
         if first_bullet:
             base += f"Specifically, I {first_bullet[0].lower() + first_bullet[1:] if len(first_bullet) > 1 else first_bullet}. "
@@ -430,7 +395,7 @@ def _answer_custom_question(
     # Default thoughtful professional summary answer
     return (
         f"With {years}+ years of hands-on experience as a {exp_role} "
-        f"working with {skills_str}, I have delivered production cross-platform mobile applications at {exp_comp} "
+        f"working with {skills_str}, I have delivered production software solutions{at_comp_clause} "
         f"and am ready to contribute immediately to {comp_clean} in the {role_str} role."
     )
 

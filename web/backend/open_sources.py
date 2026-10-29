@@ -817,9 +817,14 @@ def make_strict_matcher(queries: List[str]) -> Callable[[dict], bool]:
     return ok
 
 
+_os_cache: dict = {}
+_os_inflight: dict = {}
+_os_lock = threading.Lock()
+
+
 def fetch_open_source(site: str, queries: List[str], *,
                       country: str = "", location: str = "", hours_old: Optional[int] = None,
-                      serper_key: str = "") -> List[dict]:
+                      serper_key: str = "", budget_s: Optional[float] = None) -> List[dict]:
     """
     Fetch one of the open sources ('remote_boards' | 'ats' | 'hackernews') and keep only rows
     strictly relevant to the query (feeds would otherwise flood results with unrelated roles).
@@ -830,10 +835,31 @@ def fetch_open_source(site: str, queries: List[str], *,
     query = queries[0]
     relevant = make_strict_matcher(queries)
 
+    # Single-flight + 5-min TTL cache for ATS & remote boards so concurrent /search-fast and /search share 1 call
+    if site in ("ats", "remote_boards"):
+        ckey = (site, query.strip().lower(), (country or "").strip().lower(), (location or "").strip().lower(), hours_old)
+        now = time.time()
+        with _os_lock:
+            hit = _os_cache.get(ckey)
+            if hit and now - hit[0] < 300.0:
+                return [dict(r) for r in hit[1]]
+            fut = _os_inflight.get(ckey)
+            is_owner = fut is None
+            if is_owner:
+                from concurrent.futures import Future
+                fut = Future()
+                _os_inflight[ckey] = fut
+        if not is_owner:
+            try:
+                res = fut.result(timeout=budget_s or 3.5)
+                return [dict(r) for r in (res or [])]
+            except Exception:
+                return []
+
     rows: List[dict] = []
     if site == "remote_boards":
         futs = {_OPEN_POOL.submit(fn, query): name for name, fn in REMOTE_FETCHERS.items()}
-        wait(futs, timeout=4.2)
+        wait(futs, timeout=2.8)
         for f, name in futs.items():
             if f.done() and not f.exception():
                 rows.extend(f.result())
@@ -842,6 +868,8 @@ def fetch_open_source(site: str, queries: List[str], *,
     elif site == "hackernews":
         rows = _hackernews(query)
     elif site == "ats":
+        from . import local_boards as _lb
+        serper_alive = bool(serper_key) and time.time() >= getattr(_lb, "_serper_off_until", 0.0)
         ats_futs = [
             _OPEN_POOL.submit(_freehire_ats, query, country, location, hours_old, relevant),
             _OPEN_POOL.submit(_ats_direct, query, relevant),
@@ -849,9 +877,9 @@ def fetch_open_source(site: str, queries: List[str], *,
         ]
         if len(queries) > 1:
             ats_futs.append(_OPEN_POOL.submit(_freehire_ats, queries[1], country, location, hours_old, relevant))
-        if serper_key:
+        if serper_alive:
             ats_futs.append(_OPEN_POOL.submit(_serper_ats_discovery, query, location or country, serper_key, hours_old))
-        wait(ats_futs, timeout=5.5)
+        wait(ats_futs, timeout=min(2.8, budget_s) if budget_s else 2.8)
         for af in ats_futs:
             if af.done() and not af.exception():
                 rows.extend(af.result() or [])
@@ -860,18 +888,19 @@ def fetch_open_source(site: str, queries: List[str], *,
         rows = fetch_official(query, country=country, location=location, hours_old=hours_old)
     elif site == "local_boards":
         from .local_boards import fetch_country_local_boards
-        rows = fetch_country_local_boards(queries, country=country, hours_old=hours_old, serper_key=serper_key)
+        rows = fetch_country_local_boards(queries, country=country, hours_old=hours_old, serper_key=serper_key,
+                                          budget_s=budget_s)
     else:
         return []
 
-    from .search_engine import is_aggregator_or_non_posting
+    from .search_engine import is_aggregator_or_non_posting, canonical_url
     out, seen = [], set()
     for r in rows:
         if (site != "local_boards" and not relevant(r)) or not _location_ok(r, country):
             continue
         if is_aggregator_or_non_posting(r.get("title", ""), r.get("job_url", ""), r.get("company", "")):
             continue
-        key = (r["job_url"] or "").split("?")[0].rstrip("/").lower()
+        key = canonical_url(r.get("job_url") or "") or (r.get("job_url") or "").rstrip("/").lower()
         if key in seen:
             continue
         seen.add(key)
@@ -881,4 +910,10 @@ def fetch_open_source(site: str, queries: List[str], *,
             if nums:
                 r_copy["min_amount"], r_copy["max_amount"] = min(nums), max(nums)
         out.append(r_copy)
+    if site in ("ats", "remote_boards"):
+        with _os_lock:
+            _os_cache[ckey] = (time.time(), out)
+            inflight_fut = _os_inflight.pop(ckey, None)
+            if inflight_fut and not inflight_fut.done():
+                inflight_fut.set_result(out)
     return out

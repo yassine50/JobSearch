@@ -36,6 +36,9 @@ def is_safe_public_url(url: str) -> bool:
         parsed = urlparse((url or "").strip())
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return False
+        host_low = parsed.hostname.strip().lower()
+        if host_low in ("localhost", "0.0.0.0") or host_low.endswith((".local", ".internal", ".localhost")):
+            return False
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
         if not infos:
@@ -48,6 +51,30 @@ def is_safe_public_url(url: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def safe_http_get(session, url: str, max_redirects: int = 5, **kwargs):
+    """
+    SSRF-safe HTTP GET wrapper that validates `is_safe_public_url` on the initial URL
+    and on every 301/302/303/307/308 redirect hop before following it.
+    """
+    from urllib.parse import urljoin
+    current_url = (url or "").strip()
+    kwargs = dict(kwargs)
+    kwargs["allow_redirects"] = False
+    for _ in range(max_redirects + 1):
+        if not is_safe_public_url(current_url):
+            raise ValueError(f"Blocked unsafe or private URL: {current_url}")
+        resp = session.get(current_url, **kwargs)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = (resp.headers.get("Location") or "").strip()
+            if not loc:
+                return resp
+            current_url = urljoin(current_url, loc)
+            continue
+        resp.url = current_url
+        return resp
+    raise ValueError("Too many redirects")
 
 
 def extract_emails(text: str) -> List[str]:
@@ -69,31 +96,58 @@ def purge_blacklisted_applications(db: Session, user_id: Optional[int] = None) -
     """
     Safely marks EmailLogs to blacklisted addresses as 'bounced' and removes
     dead applications that explicitly reference a blacklisted email address
-    (without dangerous fuzzy company-name substring deletions).
+    (scoped so user-created manual blacklist entries only affect their own account).
     """
+    from sqlalchemy import or_
     from . import models
 
-    bl_rows = db.query(models.EmailBlacklist.email).all()
-    full_blacklist = {r[0].strip().lower() for r in bl_rows if r and r[0]}
-    if not full_blacklist:
+    bl_q = db.query(models.EmailBlacklist.email, models.EmailBlacklist.user_id, models.EmailBlacklist.source)
+    if user_id is not None:
+        bl_q = bl_q.filter(
+            or_(
+                models.EmailBlacklist.user_id == user_id,
+                models.EmailBlacklist.user_id.is_(None),
+                models.EmailBlacklist.source != "manual",
+            )
+        )
+    bl_rows = bl_q.all()
+    if not bl_rows:
         return 0
 
-    bl_list = list(full_blacklist)
+    global_blacklist = {
+        r[0].strip().lower()
+        for r in bl_rows
+        if r and r[0] and (r[1] is None or (r[2] and r[2] != "manual"))
+    }
+    by_user_blacklist: dict[int, set[str]] = {}
+    for em_val, uid_val, src_val in bl_rows:
+        if em_val and uid_val is not None:
+            by_user_blacklist.setdefault(uid_val, set()).add(em_val.strip().lower())
+
+    effective_for_user = (
+        global_blacklist | by_user_blacklist.get(user_id, set())
+        if user_id is not None
+        else global_blacklist
+    )
+    if not effective_for_user and not by_user_blacklist:
+        return 0
 
     # Find linked application IDs before decoupling EmailLog
-    linked_q = db.query(models.EmailLog.application_id).filter(
-        models.EmailLog.application_id.isnot(None),
-        models.EmailLog.to_email.in_(bl_list),
-    )
-    if user_id is not None:
-        linked_q = linked_q.filter(models.EmailLog.user_id == user_id)
-    linked_log_ids = {r[0] for r in linked_q.all() if r and r[0]}
+    linked_log_ids = set()
+    if effective_for_user:
+        linked_q = db.query(models.EmailLog.application_id).filter(
+            models.EmailLog.application_id.isnot(None),
+            models.EmailLog.to_email.in_(list(effective_for_user)),
+        )
+        if user_id is not None:
+            linked_q = linked_q.filter(models.EmailLog.user_id == user_id)
+        linked_log_ids.update(r[0] for r in linked_q.all() if r and r[0])
 
-    # Mark matching EmailLog rows as bounced
-    update_q = db.query(models.EmailLog).filter(models.EmailLog.to_email.in_(bl_list))
-    if user_id is not None:
-        update_q = update_q.filter(models.EmailLog.user_id == user_id)
-    update_q.update({"status": "bounced", "application_id": None}, synchronize_session=False)
+        # Mark matching EmailLog rows as bounced
+        update_q = db.query(models.EmailLog).filter(models.EmailLog.to_email.in_(list(effective_for_user)))
+        if user_id is not None:
+            update_q = update_q.filter(models.EmailLog.user_id == user_id)
+        update_q.update({"status": "bounced", "application_id": None}, synchronize_session=False)
 
     app_q = db.query(models.Application)
     if user_id is not None:
@@ -101,12 +155,15 @@ def purge_blacklisted_applications(db: Session, user_id: Optional[int] = None) -
 
     purged_count = 0
     for app in app_q.all():
+        user_bl = global_blacklist | by_user_blacklist.get(app.user_id, set())
+        if not user_bl:
+            continue
         notes_emails = set(extract_emails(app.notes or ""))
         url_lower = (app.url or "").lower()
         is_dead = (
             (app.id in linked_log_ids)
-            or bool(notes_emails & full_blacklist)
-            or any(bl in url_lower for bl in full_blacklist)
+            or bool(notes_emails & user_bl)
+            or any(bl in url_lower for bl in user_bl)
         )
         if is_dead:
             db.query(models.EmailLog).filter(models.EmailLog.application_id == app.id).update(

@@ -943,8 +943,8 @@ def relevance_score(query: str, title: str, description: str = "", company: str 
                     return 0
                 return 35
             is_sw_dev_title = bool(
-                re.search(r"\b(developer|engineer|développeur|developpeur|ingénieur|ingenieur|desarrollador|desenvolvedor|programador|entwickler|programator|programista|mobile|fullstack|full-stack|frontend|front-end)\b", t_Check)
-                and not re.search(r"\b(data|qa|rpa|devops|security|cyber|cloud|network|system|support|test|analyst|sales|marketing|finance|legal|hr|compliance|dynamics)\b", t_Check)
+                _COMPAT_ROLE_RE.search(t_Check)
+                and not _FLUTTER_NON_APP_RE.search(t_Check)
             )
             if is_sw_dev_title and re.search(r"\b(flutter|dart)\b", d_low):
                 return 38
@@ -1002,6 +1002,74 @@ def relevance_score(query: str, title: str, description: str = "", company: str 
 
 def best_relevance(queries: Iterable[str], title: str, description: str = "", company: str = "") -> int:
     return max((relevance_score(q, title, description, company) for q in queries if q), default=0)
+
+
+_COMPAT_ROLE_RE = re.compile(
+    r"(?<![a-z0-9])(software|developer|developers|engineer|engineers|programmer|programator|programista|"
+    r"programer|développeur|developpeur|ingénieur|ingenieur|entwickler|softwareentwickler|desarrollador|"
+    r"desenvolvedor|programador|sviluppatore|utvikler|udvikler|utvecklare|ontwikkelaar|kehittäjä|"
+    r"vývojář|vyvojar|yazılım|yazilim|mobile|android|ios|frontend|front-end|backend|back-end|"
+    r"fullstack|full-stack|full\s+stack|devops|sre|cloud|platform|data|ml|ai|analyst|scientist|"
+    r"architect|qa|test|automation|cybersecurity|security)(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+_FLUTTER_NON_APP_RE = re.compile(
+    r"\b(data|rpa|devops|security|cyber|network|support|sales|marketing|finance|legal|hr|compliance|"
+    r"sap|abap|plc|embedded|firmware|hardware|website\s+building|wordpress|shopify|magento|drupal)\b",
+    re.IGNORECASE,
+)
+
+
+def enrich_board_search_context(title: str, description: str, query: str, company: str = "") -> str:
+    """
+    When a local job board's server-side search for `query` returns a card whose HTML only exposes
+    the title/company/location (or a truncated teaser before the skills section), tag `description`
+    with the searched skill ONLY if:
+      1. The title is a compatible software/engineering/target role, AND
+      2. The title does NOT contain a conflicting technology anchor (e.g. never tag 'PHP Developer'
+         or 'Java Developer' with 'flutter' or 'python').
+    """
+    desc = (description or "").strip()
+    q_clean = (query or "").strip()
+    if not title or not q_clean:
+        return desc
+    if relevance_score(q_clean, title, desc, company) >= 20:
+        return desc
+    comp_low = (company or "").lower()
+    if re.search(r"\b(flutter|betfair|fanduel|pokerstars|sportsbet|sisal|paddy\s*power)\b", comp_low):
+        return desc
+
+    t_low = title.lower()
+    q_core = core_tokens(q_clean)
+    if not q_core:
+        return desc
+
+    t_tokens = tokenize(title)
+    t_anchors = {_equiv(t) for t in t_tokens if t in TECH_ANCHOR_TOKENS}
+    q_anchors = {_equiv(t) for t in q_core if t in TECH_ANCHOR_TOKENS}
+
+    if "flutter" in q_clean.lower() or "dart" in q_clean.lower():
+        if _FLUTTER_NON_APP_RE.search(t_low):
+            return desc
+        mobile_allowed = {_equiv("flutter"), _equiv("dart"), _equiv("android"), _equiv("ios"), _equiv("kotlin"), _equiv("swift")}
+        if t_anchors - mobile_allowed:
+            return desc
+        if not _COMPAT_ROLE_RE.search(t_low):
+            return desc
+        return f"{desc} · Skills: {q_clean}".strip(" ·")
+
+    if q_anchors:
+        if t_anchors and not (t_anchors & q_anchors):
+            return desc
+        if not _COMPAT_ROLE_RE.search(t_low):
+            return desc
+        return f"{desc} · Skills: {q_clean}".strip(" ·")
+
+    # Non-anchor role query (e.g. "data analyst", "product manager", "accountant")
+    if not t_anchors:
+        return f"{desc} · Role: {q_clean}".strip(" ·")
+    return desc
 
 
 def is_spam(title: str, description: str = "", company: str = "") -> bool:
@@ -1134,6 +1202,9 @@ def canonical_url(url: str) -> str:
     m = re.search(r"finn\.no/job/[^/?#]+[?&]finnkode=(\d+)", u)
     if m:
         return f"finn:{m.group(1)}"
+    m = re.search(r"talent\.com/view\?id=([a-z0-9]+)", u)
+    if m:
+        return f"talent:{m.group(1)}"
     u = re.sub(r"^https?://(www\.)?", "", u.split("#")[0])
     u = u.split("?")[0].rstrip("/")
     u = re.sub(r";jsessionid=[^/?]*", "", u)
