@@ -1,1 +1,0 @@
-import{j as s}from"./vendor-motion-D-kjKnz2.js";function t({label:e="Loading..."}){return s.jsxs("div",{className:"flex items-center gap-3 text-slate-400 text-sm",children:[s.jsx("span",{className:"spinner"}),e]})}export{t as L};

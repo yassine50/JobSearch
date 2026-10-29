@@ -447,6 +447,24 @@ def batch_auto_apply_posts(req: BatchApplyRequest,
             custom_pdf_bytes = None
             custom_pdf_name = None
             effective_score = 75
+            if cv and (cv.text_content or ""):
+                try:
+                    from cv_matcher import compute_match
+                    s, _ = compute_match(cv.text_content, item.post_text or "", item.role_title or "")
+                    effective_score = int(round(s or 75))
+                except Exception:
+                    pass
+            if getattr(item, "customize_cv", False) and cv and len(items) <= 3:
+                try:
+                    from ..tailoring import honest_tailored_attachment
+                    custom_pdf_bytes, custom_pdf_name, orig_s, tailored_score = honest_tailored_attachment(
+                        cv, item.role_title, item.company, item.post_text or ""
+                    )
+                    if tailored_score:
+                        effective_score = max(effective_score, int(round(tailored_score)))
+                except Exception:
+                    custom_pdf_bytes = None
+                    custom_pdf_name = None
             r_name = item.recruiter_name or "Hiring Team"
 
             auto_subject, auto_body, _ = get_application_email(
@@ -580,10 +598,29 @@ def auto_apply_to_post(req: PostApplyRequest,
     sender_name = settings.sender_name or current_user.name
     r_name = req.recruiter_name or "Hiring Team"
 
-    # Automatic auto-apply strictly attaches authentic original CV
+    from .cv import _get_active_cv
+    cv = _get_active_cv(db, current_user.id)
     custom_pdf_bytes = None
     custom_pdf_name = None
     effective_score = 75
+    if cv and (cv.text_content or ""):
+        try:
+            from cv_matcher import compute_match
+            s, _ = compute_match(cv.text_content, req.post_text or "", req.role_title or "")
+            effective_score = int(round(s or 75))
+        except Exception:
+            pass
+    if req.customize_cv and cv:
+        try:
+            from ..tailoring import honest_tailored_attachment
+            custom_pdf_bytes, custom_pdf_name, orig_s, tailored_score = honest_tailored_attachment(
+                cv, req.role_title, req.company, req.post_text or ""
+            )
+            if tailored_score:
+                effective_score = max(effective_score, int(round(tailored_score)))
+        except Exception:
+            custom_pdf_bytes = None
+            custom_pdf_name = None
 
     auto_subj, auto_body, _ = get_application_email(
         role_title=req.role_title,

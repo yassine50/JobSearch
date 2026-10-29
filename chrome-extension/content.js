@@ -102,42 +102,111 @@
     return ATS_DOMAINS.some((d) => HOST.includes(d.trim().toLowerCase()));
   }
 
-  function hasApplicationFormOnPage() {
-    const fileInputs = querySelectorAllDeep('input[type="file"]');
-    const textInputs = querySelectorAllDeep(
-      'input[type="text"], input[type="email"], input[type="tel"], input:not([type]), textarea'
-    );
-    if (fileInputs.length >= 1 && textInputs.length >= 2) return true;
-    const pageText = (
-      document.title +
-      " " +
-      (document.body ? document.body.innerText.slice(0, 3000) : "")
-    ).toLowerCase();
-    const hasApplyKeywords =
-      pageText.includes("apply for this job") ||
-      pageText.includes("job application") ||
-      pageText.includes("submit application") ||
-      pageText.includes("upload resume") ||
-      pageText.includes("upload cv") ||
-      pageText.includes("basic info") ||
-      pageText.includes("personal information") ||
-      pageText.includes("easy apply") ||
-      pageText.includes("experience details") ||
-      pageText.includes("educational details");
-    return hasApplyKeywords && textInputs.length >= 2;
+  // ─── Pre-Apply Job Post Cache & Apply-Click State ──────────────────────────
+  const CAPTURED_JOB_TTL_MS = 45 * 60 * 1000; // 45 minutes
+  const APPLY_CLICK_TTL_MS = 10 * 60 * 1000; // 10 minutes
+  let cachedCapturedJobPost = null;
+  let userClickedApply = false;
+  let lastApplyClickTs = 0;
+
+  try {
+    const rawSavedJob = sessionStorage.getItem("cvtomatch_captured_job_post");
+    if (rawSavedJob) {
+      const parsed = JSON.parse(rawSavedJob);
+      if (parsed && parsed.timestamp && Date.now() - parsed.timestamp < CAPTURED_JOB_TTL_MS) {
+        cachedCapturedJobPost = parsed;
+      }
+    }
+    const rawApplyTs = Number(sessionStorage.getItem("cvtomatch_apply_clicked") || "0");
+    if (rawApplyTs && Date.now() - rawApplyTs < APPLY_CLICK_TTL_MS) {
+      lastApplyClickTs = rawApplyTs;
+      if (/\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "")) {
+        userClickedApply = true;
+      }
+    }
+  } catch (_) {}
+
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    try {
+      chrome.storage.local.get(["cvtomatch_captured_job_post", "cvtomatch_apply_clicked"], (res) => {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        const storedJob = res && res.cvtomatch_captured_job_post;
+        if (
+          storedJob &&
+          storedJob.timestamp &&
+          Date.now() - storedJob.timestamp < CAPTURED_JOB_TTL_MS &&
+          (!cachedCapturedJobPost || storedJob.timestamp >= cachedCapturedJobPost.timestamp)
+        ) {
+          cachedCapturedJobPost = storedJob;
+          refreshMountedWidgetJobMeta();
+        }
+        const storedClick = res && res.cvtomatch_apply_clicked;
+        if (storedClick && storedClick.timestamp && Date.now() - storedClick.timestamp < APPLY_CLICK_TTL_MS) {
+          if (storedClick.timestamp > lastApplyClickTs) lastApplyClickTs = storedClick.timestamp;
+          if (
+            /\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "") ||
+            Date.now() - storedClick.timestamp < 15000
+          ) {
+            userClickedApply = true;
+            mountFloatingWidget();
+          }
+        }
+      });
+      if (chrome.storage.onChanged) {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area === "local" && changes.cvtomatch_captured_job_post && changes.cvtomatch_captured_job_post.newValue) {
+            cachedCapturedJobPost = changes.cvtomatch_captured_job_post.newValue;
+            refreshMountedWidgetJobMeta();
+          }
+        });
+      }
+    } catch (_) {}
   }
 
-  // ─── 3. Page Metadata Extractor (Job Title, Company, Description) ──────────
-  function extractJobContext() {
+  function isGenuineJobDescription(text) {
+    if (!text || typeof text !== "string") return false;
+    const clean = text.trim();
+    if (clean.length < 140) return false;
+    if (/\b(afghan\s*\(afghanistan\)|albanian\s*\(albania\)|abkhaz|escolher\s*ficheiros?)\b/i.test(clean)) {
+      return false;
+    }
+    if (clean.includes("Cross-platform mobile & web engineering, Flutter, Dart, BLoC, Riverpod")) {
+      return false;
+    }
+    const signalMatches = clean.match(
+      /\b(responsibilities|requirements|qualifications|experience|skills|about\s+(the\s+role|us|the\s+job|you)|what\s+you('ll|\s+will)|who\s+you\s+are|we\s+are\s+looking|role|position|team|benefits|mission|duties|years|degree|bachelor|engineer|developer|software|design|build|maintain|collaborate|architecture)\b/gi
+    );
+    return Boolean(signalMatches && signalMatches.length >= 2);
+  }
+
+  function isGenericJobTitle(title) {
+    if (!title) return true;
+    const t = title.trim();
+    if (t.length < 3) return true;
+    return /^(basic\s*info|job\s*application|apply(\s*now|\s*for\s*this\s*job)?|application(\s*form)?|personal\s*information|candidate\s*profile|careers?|jobs?|submit\s*application|resume|cv)$/i.test(
+      t
+    );
+  }
+
+  function isGenericCompanyName(comp) {
+    if (!comp) return true;
+    const c = comp.trim();
+    if (c.length < 2) return true;
+    return /^(the\s+hiring\s+team|company|careers?|jobs?|apply|smartrecruiters|linkedin|indeed|workable|greenhouse|lever)$/i.test(
+      c
+    );
+  }
+
+  function scrapeRawJobContextFromPage() {
     let jobTitle = "";
     let company = "";
-    let description = "";
+    let rawDescription = "";
 
     const ghTitle = document.querySelector(
-      ".app-title, h1.section-header, .job-details-jobs-unified-top-card__job-title, .top-card-layout__title, .cw-jobheader-title"
+      ".app-title, h1.section-header, .job-details-jobs-unified-top-card__job-title, .top-card-layout__title, .cw-jobheader-title, [data-testid*='job-title' i], .job-title"
     );
     const ghCompany = document.querySelector(
-      ".company-name, .job-details-jobs-unified-top-card__company-name, .topcard__org-name-link"
+      ".company-name, .job-details-jobs-unified-top-card__company-name, .topcard__org-name-link, [data-testid*='company-name' i]"
     );
     const leverTitle = document.querySelector(".posting-headline h2");
     const ashbyTitle = document.querySelector("h1[class*='Heading'], h1, h2");
@@ -145,7 +214,7 @@
 
     if (h1 && h1.innerText) {
       const candidateTitle = h1.innerText.trim().split("\n")[0].slice(0, 120);
-      if (!/^(basic info|job application|apply now)$/i.test(candidateTitle)) {
+      if (!isGenericJobTitle(candidateTitle)) {
         jobTitle = candidateTitle;
       }
     }
@@ -156,7 +225,7 @@
 
     if (!company && HOST.includes("smartrecruiters.com")) {
       const pathParts = (window.location.pathname || "").split("/").filter(Boolean);
-      if (pathParts[0] && !/^(jobs|apply|app| candidate)$/i.test(pathParts[0])) {
+      if (pathParts[0] && !/^(jobs|apply|app|candidate)$/i.test(pathParts[0])) {
         company = pathParts[0].replace(/[-_]+/g, " ").trim();
       }
     }
@@ -165,7 +234,7 @@
       const titleParts = (document.title || "")
         .split(/\s*[\-|–|—|@|\|]\s*/)
         .map((s) => s.trim())
-        .filter((s) => s && !/^(smartrecruiters|easy\s*apply|careers?|jobs?|job\s*application)$/i.test(s));
+        .filter((s) => s && !isGenericJobTitle(s) && !/^(smartrecruiters|easy\s*apply)$/i.test(s));
       if (!jobTitle && titleParts[0]) jobTitle = titleParts[0];
       if (!company) {
         const compCand = titleParts.find(
@@ -179,26 +248,236 @@
       company = "";
     }
 
-    const descEl =
-      document.querySelector(
-        "#job-details, .jobs-description__content, .posting-page, [class*='job-description' i], [id*='job-description' i]"
-      ) ||
+    const explicitDescEl = document.querySelector(
+      "#job-details, .jobs-description__content, .jobs-box__html-content, .posting-page, [class*='job-description' i], [id*='job-description' i], [itemprop='description'], [data-testid*='job-description' i], .job-details-content, .description__text"
+    );
+    const fallbackDescEl =
       document.querySelector("#content, [class*='description'], [id*='description'], main, article") ||
       document.body;
+    const descEl = explicitDescEl || fallbackDescEl;
+
     if (descEl) {
       try {
         const clone = descEl.cloneNode(true);
         clone
           .querySelectorAll(
-            "form, select, option, input, textarea, button, label, .select2-container, nav, header, footer, script, style, #cvtomatch-autofill-host"
+            "form, select, option, input, textarea, button, label, .select2-container, nav, header, footer, script, style, #cvtomatch-autofill-host, .jobs-easy-apply-modal"
           )
           .forEach((n) => n.remove());
-        description = (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim().slice(0, 4500);
+        rawDescription = (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim().slice(0, 5000);
       } catch (_) {
-        description = (descEl.innerText || "").replace(/\s+/g, " ").trim().slice(0, 4500);
+        rawDescription = (descEl.innerText || "").replace(/\s+/g, " ").trim().slice(0, 5000);
       }
     }
-    if (!description || description.length < 90 || /\bafghan\s*\(afghanistan\)/i.test(description)) {
+
+    return {
+      jobTitle,
+      company,
+      rawDescription,
+      hasExplicitDescEl: Boolean(explicitDescEl)
+    };
+  }
+
+  function captureJobPostIfPresent(forceSave = false) {
+    try {
+      const raw = scrapeRawJobContextFromPage();
+      const isApplyUrl = /\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "");
+      const descIsGenuine = isGenuineJobDescription(raw.rawDescription);
+
+      if (!descIsGenuine && !(forceSave && !isApplyUrl && raw.rawDescription.length >= 100)) {
+        return cachedCapturedJobPost;
+      }
+
+      // Avoid overwriting a full job description captured before clicking Apply with shorter text on an /apply page
+      if (
+        isApplyUrl &&
+        !raw.hasExplicitDescEl &&
+        cachedCapturedJobPost &&
+        cachedCapturedJobPost.job_description &&
+        cachedCapturedJobPost.job_description.length >= raw.rawDescription.length
+      ) {
+        return cachedCapturedJobPost;
+      }
+
+      const record = {
+        job_title: !isGenericJobTitle(raw.jobTitle)
+          ? raw.jobTitle
+          : (cachedCapturedJobPost && cachedCapturedJobPost.job_title) || "",
+        company: !isGenericCompanyName(raw.company)
+          ? raw.company
+          : (cachedCapturedJobPost && cachedCapturedJobPost.company) || "",
+        job_description: raw.rawDescription,
+        job_url: window.location.href || HREF,
+        host: HOST,
+        timestamp: Date.now()
+      };
+
+      cachedCapturedJobPost = record;
+      try {
+        sessionStorage.setItem("cvtomatch_captured_job_post", JSON.stringify(record));
+      } catch (_) {}
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+        try {
+          chrome.storage.local.set({ cvtomatch_captured_job_post: record });
+        } catch (_) {}
+      }
+      return record;
+    } catch (_) {
+      return cachedCapturedJobPost;
+    }
+  }
+
+  function isNonApplicationSearchOrNavInput(el) {
+    if (!el) return true;
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    if (type === "search" || type === "password" || type === "hidden") return true;
+    const attrs = [
+      el.getAttribute("name") || "",
+      el.getAttribute("id") || "",
+      el.getAttribute("placeholder") || "",
+      el.getAttribute("aria-label") || "",
+      el.className && typeof el.className === "string" ? el.className : ""
+    ]
+      .join(" ")
+      .toLowerCase();
+    if (
+      /\b(search|keyword|job[\s_-]*title[\s_-]*or|location[\s_-]*search|filter|sort[\s_-]*by|newsletter|subscribe|alert|login|sign[\s_-]*in|cookie|captcha)\b/i.test(
+        attrs
+      )
+    ) {
+      return true;
+    }
+    if (
+      closestDeep(
+        el,
+        "nav, header, footer, [role='search'], [role='navigation'], .jobs-search-box, .search-bar, .cookie-banner, #onetrust-banner-sdk"
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function hasApplicationFormOnPage() {
+    // 1. Check if an explicit in-page application modal / drawer is open with inputs
+    const openApplyModal = document.querySelector(
+      ".jobs-easy-apply-modal, .jobs-easy-apply-content, [data-test-modal-id='easy-apply-modal'], spl-job-apply, [class*='apply-modal' i], [id*='apply-modal' i]"
+    );
+    if (openApplyModal) {
+      const rect = openApplyModal.getBoundingClientRect();
+      if (rect.width > 100 && rect.height > 100) {
+        const modalInputs = getEditableFormInputs(openApplyModal);
+        if (modalInputs.length >= 1) return true;
+      }
+    }
+
+    // 2. Count genuine candidate application inputs (excluding search bars, nav, login, filters)
+    const allEditable = getEditableFormInputs().filter((el) => !isNonApplicationSearchOrNavInput(el));
+    if (allEditable.length === 0) return false;
+
+    const fileInputs = querySelectorAllDeep('input[type="file"]').filter(
+      (el) => !closestDeep(el, "#cvtomatch-autofill-host")
+    );
+    const nonFileInputs = allEditable.filter(
+      (el) => (el.getAttribute("type") || "").toLowerCase() !== "file"
+    );
+
+    // A page with a Resume/CV file input + at least 2 visible candidate fields is an active application form
+    if (fileInputs.length >= 1 && nonFileInputs.length >= 2) return true;
+
+    // Dedicated /apply URL with visible form inputs
+    const isApplyUrl =
+      /\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "") ||
+      /[?&](apply|application)=/i.test(window.location.search || "");
+    if (isApplyUrl && nonFileInputs.length >= 2) return true;
+
+    // Otherwise require at least 3 visible candidate fields AND explicit candidate form signals (email/phone/resume/experience)
+    if (nonFileInputs.length >= 3) {
+      let candidateSignalCount = 0;
+      for (const el of nonFileInputs) {
+        const type = (el.getAttribute("type") || "").toLowerCase();
+        const sig = [
+          type,
+          el.getAttribute("name") || "",
+          el.getAttribute("id") || "",
+          el.getAttribute("placeholder") || "",
+          el.getAttribute("aria-label") || "",
+          el.getAttribute("autocomplete") || ""
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (
+          type === "email" ||
+          type === "tel" ||
+          /\b(first[\s_-]*name|last[\s_-]*name|full[\s_-]*name|candidate|email|phone|mobile|resume|cv|cover[\s_-]*letter|linkedin|nationality|experience|education|salary)\b/i.test(
+            sig
+          )
+        ) {
+          candidateSignalCount++;
+        }
+      }
+      if (candidateSignalCount >= 2) return true;
+    }
+
+    return false;
+  }
+
+  function shouldShowFloatingPopup() {
+    if (hasApplicationFormOnPage()) return true;
+    if (userClickedApply) {
+      const candidateInputs = getEditableFormInputs().filter((el) => !isNonApplicationSearchOrNavInput(el));
+      const isApplyUrl = /\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "");
+      if (candidateInputs.length >= 1 || isApplyUrl) return true;
+    }
+    return false;
+  }
+
+  // ─── 3. Page Metadata Extractor (Job Title, Company, Description) ──────────
+  function extractJobContext() {
+    // Capture current page job post if we are on a job description view
+    captureJobPostIfPresent(false);
+
+    const raw = scrapeRawJobContextFromPage();
+    const hasFreshCache =
+      cachedCapturedJobPost &&
+      cachedCapturedJobPost.timestamp &&
+      Date.now() - cachedCapturedJobPost.timestamp < CAPTURED_JOB_TTL_MS;
+
+    let jobTitle = !isGenericJobTitle(raw.jobTitle) ? raw.jobTitle : "";
+    let company = !isGenericCompanyName(raw.company) ? raw.company : "";
+    let description = "";
+
+    if (!jobTitle && hasFreshCache && cachedCapturedJobPost.job_title) {
+      jobTitle = cachedCapturedJobPost.job_title;
+    }
+    if (!company && hasFreshCache && cachedCapturedJobPost.company) {
+      company = cachedCapturedJobPost.company;
+    }
+
+    const isApplyUrl = /\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "");
+    const rawDescIsGenuine = isGenuineJobDescription(raw.rawDescription);
+
+    // Prefer the pre-Apply captured job description when on an /apply form page or when current page lacks the job description
+    if (
+      hasFreshCache &&
+      cachedCapturedJobPost.job_description &&
+      (!rawDescIsGenuine ||
+        (isApplyUrl &&
+          !raw.hasExplicitDescEl &&
+          cachedCapturedJobPost.job_description.length > raw.rawDescription.length))
+    ) {
+      description = cachedCapturedJobPost.job_description;
+    } else if (rawDescIsGenuine) {
+      description = raw.rawDescription;
+    } else if (hasFreshCache && cachedCapturedJobPost.job_description) {
+      description = cachedCapturedJobPost.job_description;
+    } else if (
+      raw.rawDescription &&
+      raw.rawDescription.length >= 90 &&
+      !/\bafghan\s*\(afghanistan\)/i.test(raw.rawDescription)
+    ) {
+      description = raw.rawDescription;
+    } else {
       description = `${jobTitle || "Flutter Developer"} — Cross-platform mobile & web engineering, Flutter, Dart, BLoC, Riverpod, REST APIs, Firebase, Git, CI/CD, and clean architecture.`;
     }
 
@@ -206,7 +485,7 @@
       job_title: jobTitle || "Software Engineer",
       company: company || "the hiring team",
       job_description: description,
-      job_url: window.location.href || HREF
+      job_url: (hasFreshCache && cachedCapturedJobPost.job_url) || window.location.href || HREF
     };
   }
 
@@ -715,6 +994,7 @@
     }
     rawCands.push(...querySelectorAllDeep(optSelector, document));
 
+    const elRect = el.getBoundingClientRect ? el.getBoundingClientRect() : { top: 0, bottom: 0 };
     const seen = new Set();
     const valid = [];
     for (const cand of rawCands) {
@@ -724,8 +1004,13 @@
       if (cand === el || containsDeep(cand, el) || containsDeep(el, cand)) continue;
       if (cand.tagName === "OPTION" || cand.tagName === "INPUT" || cand.tagName === "LABEL") continue;
       if (closestDeep(cand, "#cvtomatch-autofill-host")) continue;
-      const rect = cand.getBoundingClientRect ? cand.getBoundingClientRect() : { width: 0, height: 0 };
+      const rect = cand.getBoundingClientRect ? cand.getBoundingClientRect() : { width: 0, height: 0, top: 0, bottom: 0 };
       if (rect.width < 20 || rect.height < 12 || rect.height > 140) continue;
+      // Ensure the option is either inside acHost or visually close to `el` (prevents matching options from other fields)
+      const isInsideAcHost = Boolean(acHost && containsDeep(acHost, cand));
+      if (!isInsideAcHost && elRect.bottom > 0 && Math.abs(rect.top - elRect.bottom) > 340 && Math.abs(rect.bottom - elRect.top) > 340) {
+        continue;
+      }
       const style = window.getComputedStyle(cand);
       if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) {
         continue;
@@ -766,26 +1051,41 @@
     };
 
     if (fieldKind === "city" || fieldKind === "location") {
-      if (/^(romania|bucarest|bucharest|bucuresti|bucurești|bucarest,\s*romania)$/i.test(strVal) || /bucarest/i.test(strVal)) {
+      if (
+        /^(romania|bucarest|bucharest|bucuresti|bucurești|bucarest,\s*romania|bucharest,\s*romania)$/i.test(strVal) ||
+        /bucarest|bucharest|romania/i.test(strVal)
+      ) {
         addQ("Bucharest");
         addQ("Bucharest, Romania");
         addQ("Romania");
         addQ(strVal);
+      } else if (/monastir|tunisia|tunisie|tunis/i.test(strVal)) {
+        addQ("Monastir");
+        addQ("Monastir, Tunisia");
+        addQ("Tunis");
+        addQ("Tunisia");
+      } else if (/saudi|riyadh/i.test(strVal)) {
+        addQ("Riyadh");
+        addQ("Saudi Arabia");
+        addQ("Bucharest");
+      } else if (/remote|hybrid/i.test(strVal)) {
+        addQ("Bucharest");
       } else {
         if (strVal.includes(",")) addQ(strVal.split(",")[0].trim());
         addQ(strVal);
+        addQ("Bucharest");
       }
     } else if (fieldKind === "institution") {
-      addQ(strVal);
       if (/politehnica|bucharest|bucarest/i.test(strVal)) {
         addQ("Politehnica Bucharest");
         addQ("University Politehnica of Bucharest");
         addQ("University of Bucharest");
-      }
-      if (/monastir/i.test(strVal)) {
+        addQ("Bucharest");
+      } else if (/monastir/i.test(strVal)) {
         addQ("University of Monastir");
         addQ("Monastir");
       }
+      addQ(strVal);
       const words = strVal.split(/\s+/).filter((w) => w.length > 2 && !/^(and|the|of|in|for)$/i.test(w));
       if (words.length >= 3) {
         addQ(words.slice(-2).join(" "));
@@ -816,7 +1116,7 @@
         el.focus();
         el.click();
         setNativeValue(el, "", { skipBlur: true });
-        await sleep(50);
+        await sleep(60);
 
         // Use native Blink insertText command where possible + composed InputEvent without blur
         try {
@@ -831,9 +1131,9 @@
           el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, composed: true, key: q.slice(-1) || "a" }));
         }
 
-        // Poll up to ~450ms for the autocomplete dropdown options to appear while keeping focus on `el`
+        // Poll up to ~900ms for the autocomplete dropdown options to appear while keeping focus on `el`
         let options = [];
-        for (let poll = 0; poll < 3; poll++) {
+        for (let poll = 0; poll < 6; poll++) {
           await sleep(150);
           options = findVisibleAutocompleteOptions(el);
           if (options.length > 0) break;
@@ -2257,9 +2557,13 @@
       return null;
     };
 
-    // Helper to find all inputs belonging to an already-open Education or Experience repeater card
-    const findRepeaterCardInputs = (sectionContainer, anchorFieldRegex, oppositeFieldRegex) => {
+    // Helper to find ALL already-open repeater cards (Entry 1, Entry 2, ...) inside an Education or Experience section
+    const findAllRepeaterCards = (sectionContainer, anchorFieldRegex, oppositeFieldRegex) => {
       if (!sectionContainer) return [];
+      const cards = [];
+      const seenContainers = new Set();
+
+      // 1. Check if sectionContainer itself directly wraps a single repeater card
       const directInputs = getEditableFormInputs(sectionContainer).filter(
         (inp) => !closestDeep(inp, "#cvtomatch-autofill-host")
       );
@@ -2271,9 +2575,49 @@
         const hasOpposite = oppositeFieldRegex
           ? directInputs.some((inp) => oppositeFieldRegex.test(getFieldLabel(inp)))
           : false;
-        if (!hasOpposite) return directInputs;
+        if (!hasOpposite) {
+          return [directInputs];
+        }
       }
-      return [];
+
+      // 2. Find all anchor inputs on the page (e.g. "Institution*" for Education, "Title*" for Experience)
+      // and walk up from each anchor to its individual repeater card container
+      const allInputs = getEditableFormInputs().filter((inp) => !closestDeep(inp, "#cvtomatch-autofill-host"));
+      const anchors = allInputs.filter((inp) => anchorFieldRegex.test(getFieldLabel(inp)));
+
+      for (const anchor of anchors) {
+        let cur = getParentOrShadowHost(anchor);
+        let bestCardContainer = null;
+        let bestCardInputs = null;
+        for (let d = 0; d < 8 && cur && cur !== document.body; d++) {
+          const cardInputs = getEditableFormInputs(cur).filter((inp) => !closestDeep(inp, "#cvtomatch-autofill-host"));
+          if (hasPersonalContactOrFileInputs(cardInputs)) break;
+          const hasDateOrLocOrCurrent = cardInputs.some((inp) =>
+            /\b(from|to|start\s*date|end\s*date|office\s*location|school\s*location|currently\s*work|currently\s*attend|degree|major)\b/i.test(
+              `${getFieldLabel(inp)} ${inp.getAttribute("placeholder") || ""}`
+            )
+          );
+          if (cardInputs.length >= 3 && cardInputs.length <= 11 && hasDateOrLocOrCurrent) {
+            const hasOpposite = oppositeFieldRegex
+              ? cardInputs.some((inp) => oppositeFieldRegex.test(getFieldLabel(inp)))
+              : false;
+            if (!hasOpposite) {
+              bestCardContainer = cur;
+              bestCardInputs = cardInputs;
+              if (cardInputs.length >= 5) break;
+            }
+          }
+          cur = getParentOrShadowHost(cur);
+        }
+        if (bestCardContainer && bestCardInputs && !seenContainers.has(bestCardContainer)) {
+          const overlaps = cards.some((existing) => existing.some((inp) => bestCardInputs.includes(inp)));
+          if (!overlaps) {
+            seenContainers.add(bestCardContainer);
+            cards.push(bestCardInputs);
+          }
+        }
+      }
+      return cards;
     };
 
     // Helper to find a generic "+ Add" button next to a section heading (e.g. SmartRecruiters / Workable "Experience" / "Education")
@@ -2438,16 +2782,18 @@
     // Identify Education & Experience section containers before Section A so topInputs never overwrites open repeater cards
     const initialEduContainer = findSectionContainer(/^education\b/i);
     const initialExpContainer = findSectionContainer(/^experience\b/i);
-    const initialEduCardInputs = findRepeaterCardInputs(
+    const initialEduCards = findAllRepeaterCards(
       initialEduContainer,
       /\b(institution|school\s*location|i\s*currently\s*attend)\b/i,
       /\b(office\s*location|i\s*currently\s*work\s*here|^company$)\b/i
     );
-    const initialExpCardInputs = findRepeaterCardInputs(
+    const initialExpCards = findAllRepeaterCards(
       initialExpContainer,
-      /\b(^title$|job\s*title|role\s*title|^company$|office\s*location|i\s*currently\s*work\s*here)\b/i,
+      /\b(^title$|office\s*location|i\s*currently\s*work\s*here)\b/i,
       /\b(institution|school\s*location|i\s*currently\s*attend)\b/i
     );
+    const initialEduCardInputs = initialEduCards.flat();
+    const initialExpCardInputs = initialExpCards.flat();
 
     // ─── A. Fill Top-Level (Non-Tabular, Non-Repeater) Inputs ──────────────────
     const topInputs = getEditableFormInputs().filter((el) => {
@@ -3209,21 +3555,23 @@
       } else if (educationsList.length > 0) {
         // Generic ATS Education Repeater (e.g. SmartRecruiters / Workable "+ Add" under "Education")
         const eduSecContainer = findSectionContainer(/^education\b/i);
-        const preExistingEduInputs = findRepeaterCardInputs(
+        const preExistingEduCards = findAllRepeaterCards(
           eduSecContainer,
           /\b(institution|school\s*location|i\s*currently\s*attend)\b/i,
           /\b(office\s*location|i\s*currently\s*work\s*here|^company$)\b/i
         );
+        const allPreExistingEduInputs = preExistingEduCards.flat();
 
         const filledEduInputs = new Set(
-          getEditableFormInputs().filter((inp) => !preExistingEduInputs.includes(inp))
+          getEditableFormInputs().filter((inp) => !allPreExistingEduInputs.includes(inp))
         );
 
         let eduStartIdx = 0;
-        if (preExistingEduInputs.length >= 2) {
-          preExistingEduInputs.forEach((inp) => filledEduInputs.add(inp));
-          filledCount += await fillGenericEduCardInputs(preExistingEduInputs, educationsList[0], 0);
-          eduStartIdx = 1;
+        for (let cIdx = 0; cIdx < preExistingEduCards.length && cIdx < educationsList.length; cIdx++) {
+          const cardGroup = preExistingEduCards[cIdx];
+          cardGroup.forEach((inp) => filledEduInputs.add(inp));
+          filledCount += await fillGenericEduCardInputs(cardGroup, educationsList[cIdx], cIdx);
+          eduStartIdx = cIdx + 1;
         }
 
         for (let i = eduStartIdx; i < Math.min(educationsList.length, 4); i++) {
@@ -3342,46 +3690,34 @@
         } else if (experiencesList.length > 0) {
           // Generic ATS Experience Repeater (e.g. SmartRecruiters / Workable "+ Add" under "Experience")
           let expSecContainer = findSectionContainer(/^experience\b/i);
-          let preExistingExpInputs = findRepeaterCardInputs(
+          let preExistingExpCards = findAllRepeaterCards(
             expSecContainer,
-            /\b(^title$|job\s*title|role\s*title|^company$|office\s*location|i\s*currently\s*work\s*here)\b/i,
+            /\b(^title$|office\s*location|i\s*currently\s*work\s*here)\b/i,
             /\b(institution|school\s*location|i\s*currently\s*attend)\b/i
           );
+          const allPreExistingExpInputs = preExistingExpCards.flat();
 
           const filledExpInputs = new Set(
-            getEditableFormInputs().filter(
-              (inp) => inp.getAttribute("data-cvm-exp-entry") !== "1" && !preExistingExpInputs.includes(inp)
-            )
+            getEditableFormInputs().filter((inp) => !allPreExistingExpInputs.includes(inp))
           );
 
-          // If we already tagged generic experience inputs on an earlier pass, re-fill each index group directly
-          const taggedExpInputs = querySelectorAllDeep("[data-cvm-exp-entry='1']");
-          if (taggedExpInputs.length > 0) {
-            for (let idx = 0; idx < experiencesList.length; idx++) {
-              const group = taggedExpInputs.filter((inp) => inp.getAttribute("data-cvm-exp-idx") === String(idx));
-              if (group.length > 0) {
-                expFilled += await fillGenericExpCardInputs(group, experiencesList[idx], idx);
-              }
-            }
-          } else {
-            let startIndex = 0;
-            if (preExistingExpInputs.length >= 2) {
-              // Fill the already-open Experience sub-form with experiencesList[0]
-              preExistingExpInputs.forEach((inp) => filledExpInputs.add(inp));
-              expFilled += await fillGenericExpCardInputs(preExistingExpInputs, experiencesList[0], 0);
-              startIndex = 1;
-            }
+          let startIndex = 0;
+          for (let cIdx = 0; cIdx < preExistingExpCards.length && cIdx < experiencesList.length; cIdx++) {
+            const cardGroup = preExistingExpCards[cIdx];
+            cardGroup.forEach((inp) => filledExpInputs.add(inp));
+            expFilled += await fillGenericExpCardInputs(cardGroup, experiencesList[cIdx], cIdx);
+            startIndex = cIdx + 1;
+          }
 
-            for (let i = startIndex; i < Math.min(experiencesList.length, 4); i++) {
-              const found = findSectionAddButton(/\bexperience\b/i);
-              if (!found) break;
-              found.btn.click();
-              await sleep(500);
-              const expItem = experiencesList[i];
-              const newInputs = getEditableFormInputs().filter((inp) => !filledExpInputs.has(inp));
-              newInputs.forEach((inp) => filledExpInputs.add(inp));
-              expFilled += await fillGenericExpCardInputs(newInputs, expItem, i);
-            }
+          for (let i = startIndex; i < Math.min(experiencesList.length, 4); i++) {
+            const found = findSectionAddButton(/\bexperience\b/i);
+            if (!found) break;
+            found.btn.click();
+            await sleep(500);
+            const expItem = experiencesList[i];
+            const newInputs = getEditableFormInputs().filter((inp) => !filledExpInputs.has(inp));
+            newInputs.forEach((inp) => filledExpInputs.add(inp));
+            expFilled += await fillGenericExpCardInputs(newInputs, expItem, i);
           }
         }
       } catch (_) {}
@@ -3438,10 +3774,108 @@
   // ─── 8. Floating Shadow-DOM Widget on Job Application Pages ────────────────
   let dismissedByUser = false;
 
+  function refreshMountedWidgetJobMeta() {
+    const host = document.getElementById("cvtomatch-autofill-host");
+    if (!host || !host.shadowRoot) return;
+    const titleEl = host.shadowRoot.getElementById("jobTitle");
+    const companyEl = host.shadowRoot.getElementById("jobCompany");
+    if (!titleEl || !companyEl) return;
+    const ctx = extractJobContext();
+    if (ctx.job_title) titleEl.textContent = ctx.job_title;
+    if (ctx.company) companyEl.textContent = ctx.company;
+  }
+
+  function isApplyTriggerElement(target) {
+    if (!target || typeof target.closest !== "function") return null;
+    if (closestDeep(target, "#cvtomatch-autofill-host")) return null;
+    const clickable = target.closest(
+      "button, a, [role='button'], input[type='button'], input[type='submit'], lyte-button, spl-button"
+    );
+    if (!clickable) return null;
+
+    const text = [
+      clickable.innerText || clickable.textContent || "",
+      clickable.getAttribute("aria-label") || "",
+      clickable.getAttribute("title") || "",
+      clickable.getAttribute("value") || "",
+      clickable.getAttribute("data-testid") || "",
+      clickable.getAttribute("id") || "",
+      clickable.className && typeof clickable.className === "string" ? clickable.className : ""
+    ]
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+
+    const href = (clickable.getAttribute("href") || "").toLowerCase();
+
+    // Ignore filters, saved jobs, share buttons, or login buttons
+    if (
+      /\b(filter|search|save\s+job|saved|share|sign\s+in|log\s+in|login|alert|cancel|close|dismiss|back)\b/i.test(
+        text
+      )
+    ) {
+      return null;
+    }
+
+    const hasApplyText =
+      /\b(apply(\s+now|\s+for\s+this\s+job|\s+to\s+job|\s+online|\s+today|\s+here|\s+with\s+\w+)?|easy\s+apply|quick\s+apply|i'?m\s+interested|start\s+application|candidatar(\-se)?|candidature(\s+simplifi[eé]e)?|postuler|aplicar|jetzt\s+bewerben|solliciteren)\b/i.test(
+        text
+      );
+    const hasApplyHref =
+      /\/(apply|application)(\/|$|\?|#)/i.test(href) || /^#(apply|application|app)\b/i.test(href);
+
+    if (hasApplyText || hasApplyHref) {
+      return clickable;
+    }
+    return null;
+  }
+
+  function handleUserApplyInteraction(e) {
+    const trigger = isApplyTriggerElement(e.target);
+    if (!trigger) return;
+
+    // 1. Capture job title, company, and full job description BEFORE navigation or modal open
+    captureJobPostIfPresent(true);
+
+    // 2. Mark that the user explicitly clicked Apply
+    const now = Date.now();
+    userClickedApply = true;
+    lastApplyClickTs = now;
+    dismissedByUser = false;
+
+    try {
+      sessionStorage.setItem("cvtomatch_apply_clicked", String(now));
+    } catch (_) {}
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      try {
+        chrome.storage.local.set({
+          cvtomatch_apply_clicked: { timestamp: now, host: HOST, url: location.href }
+        });
+      } catch (_) {}
+    }
+
+    // 3. Schedule popup mount checks as the application modal or form opens
+    setTimeout(mountFloatingWidget, 150);
+    setTimeout(mountFloatingWidget, 600);
+    setTimeout(mountFloatingWidget, 1300);
+    setTimeout(mountFloatingWidget, 2200);
+  }
+
+  document.addEventListener("mousedown", handleUserApplyInteraction, true);
+  document.addEventListener("click", handleUserApplyInteraction, true);
+
   function mountFloatingWidget() {
     if (dismissedByUser) return;
-    if (document.getElementById("cvtomatch-autofill-host")) return;
-    if (!isKnownAtsDomain() && !hasApplicationFormOnPage()) return;
+    if (document.getElementById("cvtomatch-autofill-host")) {
+      refreshMountedWidgetJobMeta();
+      return;
+    }
+    // Always silently capture the job post when viewing a job description page before clicking Apply
+    captureJobPostIfPresent(false);
+
+    // Strictly mount the popup ONLY when the user clicked Apply or an application form is open on screen
+    if (!shouldShowFloatingPopup()) return;
 
     const host = document.createElement("div");
     host.id = "cvtomatch-autofill-host";
@@ -3804,8 +4238,14 @@
     });
   }
 
-  setTimeout(mountFloatingWidget, 600);
+  setTimeout(() => {
+    captureJobPostIfPresent(false);
+    mountFloatingWidget();
+  }, 600);
+
   let lastHref = location.href;
+  let captureDebounceTimer = null;
+
   const observer = new MutationObserver(() => {
     if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
       observer.disconnect();
@@ -3814,15 +4254,33 @@
     if (location.href !== lastHref) {
       lastHref = location.href;
       dismissedByUser = false;
+      const isApplyUrl = /\/(apply|application)(\/|$|\?)/i.test(window.location.pathname || "");
+      if (!isApplyUrl && Date.now() - lastApplyClickTs > 6000) {
+        userClickedApply = false;
+      }
       const host = document.getElementById("cvtomatch-autofill-host");
       if (host) host.remove();
-      setTimeout(mountFloatingWidget, 800);
-    } else if (
-      !dismissedByUser &&
-      !document.getElementById("cvtomatch-autofill-host") &&
-      hasApplicationFormOnPage()
-    ) {
-      mountFloatingWidget();
+      setTimeout(() => {
+        captureJobPostIfPresent(false);
+        mountFloatingWidget();
+      }, 800);
+    } else {
+      if (!captureDebounceTimer) {
+        captureDebounceTimer = setTimeout(() => {
+          captureDebounceTimer = null;
+          captureJobPostIfPresent(false);
+        }, 1000);
+      }
+      const existingWidget = document.getElementById("cvtomatch-autofill-host");
+      if (!dismissedByUser && !existingWidget && shouldShowFloatingPopup()) {
+        mountFloatingWidget();
+      } else if (
+        existingWidget &&
+        !shouldShowFloatingPopup() &&
+        Date.now() - lastApplyClickTs > 5000
+      ) {
+        existingWidget.remove();
+      }
     }
   });
   if (document.documentElement) {

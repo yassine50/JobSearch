@@ -6,25 +6,30 @@ import { ThemeProvider } from './context/ThemeContext.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
 import SEOHead      from './components/SEOHead.jsx'
+import Sidebar      from './components/Sidebar.jsx'
 import Login        from './pages/Login.jsx'
+import Seeker       from './pages/Seeker.jsx'
+import Tracker      from './pages/Tracker.jsx'
+import CoverLetter  from './pages/CoverLetter.jsx'
+import EmailHistory from './pages/EmailHistory.jsx'
+import Settings     from './pages/Settings.jsx'
 import { prefetchWorkspaceData } from './api/client.js'
 
-// Route-based code splitting for workspace pages
-const Seeker       = lazy(() => import('./pages/Seeker.jsx'))
+// Lazy-load secondary analytics pages while keeping core daily routes pre-bundled for zero CLS/INP
 const Dashboard    = lazy(() => import('./pages/Dashboard.jsx'))
 const Recruiter    = lazy(() => import('./pages/Recruiter.jsx'))
-const Tracker      = lazy(() => import('./pages/Tracker.jsx'))
-const CoverLetter  = lazy(() => import('./pages/CoverLetter.jsx'))
-const EmailHistory = lazy(() => import('./pages/EmailHistory.jsx'))
-const Settings     = lazy(() => import('./pages/Settings.jsx'))
+const BackOffice   = lazy(() => import('./pages/BackOffice.jsx'))
 
 function RouteFallback() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#050811] text-white">
-      <div className="flex items-center gap-3 px-5 py-3 rounded-2xl glass-panel text-xs font-bold text-slate-300">
-        <div className="w-5 h-5 rounded-full border-2 border-slate-700 border-t-blue-500 animate-spin" />
-        <span>Loading workspace...</span>
-      </div>
+    <div className="flex min-h-screen bg-[#050811] text-white">
+      <Sidebar />
+      <main className="md:ml-64 flex-1 min-w-0 px-5 sm:px-8 lg:px-10 pt-20 md:pt-8 lg:pt-10 pb-14 flex items-center justify-center">
+        <div className="flex items-center gap-3 px-5 py-3 rounded-2xl glass-panel text-xs font-bold text-slate-300">
+          <div className="w-5 h-5 rounded-full border-2 border-slate-700 border-t-blue-500 animate-spin" />
+          <span>Loading workspace...</span>
+        </div>
+      </main>
     </div>
   )
 }
@@ -65,6 +70,8 @@ function AnimatedRoutes() {
         <Route path="/cover-letter" element={<P C={CoverLetter} />} />
         <Route path="/email"        element={<P C={EmailHistory}/>} />
         <Route path="/settings"     element={<P C={Settings}    />} />
+        <Route path="/backoffice"   element={<BackOffice />} />
+        <Route path="/admin"        element={<BackOffice />} />
         <Route path="*"             element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>

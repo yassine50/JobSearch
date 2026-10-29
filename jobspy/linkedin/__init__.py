@@ -144,6 +144,20 @@ class LinkedIn(Scraper):
                     params=params,
                     timeout=4.2,
                 )
+                if response.status_code == 500 and params.get("location"):
+                    loc_low = str(params["location"]).strip().lower()
+                    fallback_loc = {
+                        "tunisia": "Tunisie",
+                        "maroc": "Morocco",
+                        "algeria": "Algérie",
+                    }.get(loc_low)
+                    if fallback_loc:
+                        retry_params = {**params, "location": fallback_loc}
+                        response = self.session.get(
+                            f"{self.base_url}/jobs-guest/jobs/api/seeMoreJobPostings/search?",
+                            params=retry_params,
+                            timeout=4.2,
+                        )
                 if response.status_code == 429:
                     time.sleep(0.8)
                     response = self.session.get(
@@ -159,7 +173,7 @@ class LinkedIn(Scraper):
                         )
                     else:
                         err = f"LinkedIn response status code {response.status_code}"
-                        err += f" - {response.text}"
+                        err += f" - {(response.text or '')[:200]}"
                     log.error(err)
                     return JobResponse(jobs=job_list)
             except Exception as e:
@@ -268,6 +282,14 @@ class LinkedIn(Scraper):
                     m_w = re.search(r"(\d+)", tag_text)
                     weeks = int(m_w.group(1)) if m_w else 1
                     date_posted = now_dt - timedelta(weeks=weeks)
+                elif "month" in tag_text or re.search(r"\b\d+\s*mo\b", tag_text):
+                    m_m = re.search(r"(\d+)", tag_text)
+                    months = int(m_m.group(1)) if m_m else 1
+                    date_posted = now_dt - timedelta(days=months * 30)
+                elif "year" in tag_text or re.search(r"\b\d+\s*y(?:r|rs)?\b", tag_text):
+                    m_y = re.search(r"(\d+)", tag_text)
+                    years = int(m_y.group(1)) if m_y else 1
+                    date_posted = now_dt - timedelta(days=years * 365)
         job_details = {}
         if full_descr:
             job_details = self._get_job_details(job_id)
@@ -382,7 +404,12 @@ class LinkedIn(Scraper):
             )
             location_string = location_tag.text.strip() if location_tag else "N/A"
             parts = location_string.split(", ")
-            if len(parts) == 2:
+            if len(parts) == 1 and location_string and location_string != "N/A":
+                location = Location(
+                    city=location_string,
+                    country=Country.from_string(self.country),
+                )
+            elif len(parts) == 2:
                 city, state = parts
                 location = Location(
                     city=city,

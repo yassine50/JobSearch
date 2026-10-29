@@ -410,7 +410,7 @@ export default function LinkedInPostHunter({
         setPostFilters={setPostFilters}
         viewMode={viewMode}
         setViewMode={setViewMode}
-        posts={posts}
+        posts={filteredPosts}
         onBatchApply={() => setBatchApplyOpen(true)}
         onApplyAndSearch={(newFilters) => {
           if (searched && role.trim()) {
@@ -714,7 +714,7 @@ export default function LinkedInPostHunter({
       <BatchApplyModal
         isOpen={batchApplyOpen}
         onClose={() => setBatchApplyOpen(false)}
-        items={posts.filter(p => p.has_email && p.recruiter_emails && p.recruiter_emails.length > 0)}
+        items={filteredPosts.filter(p => p.has_email && p.recruiter_emails && p.recruiter_emails.length > 0)}
         source="linkedin"
         onSuccess={(appliedList) => {
           const appliedIds = appliedList.map(i => i.id)
@@ -722,8 +722,12 @@ export default function LinkedInPostHunter({
           setTrackerAppliedKeys(prev => {
             const next = new Set(prev)
             appliedList.forEach(item => {
-              if (item.post_url) next.add(item.post_url.trim().toLowerCase())
-              next.add(`${(item.title || '').trim().toLowerCase()}|${(item.company || '').trim().toLowerCase()}`)
+              const raw = item.raw || item
+              const url = item.post_url || raw.post_url
+              const roleTitle = item.title || item.role_title || raw.role_title || ''
+              const comp = item.company || raw.company || ''
+              if (url) next.add(url.trim().toLowerCase())
+              next.add(`${roleTitle.trim().toLowerCase()}|${comp.trim().toLowerCase()}`)
             })
             return next
           })

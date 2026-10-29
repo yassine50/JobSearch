@@ -53,10 +53,11 @@ export default function JobDetailWorkbench({
       .then(res => {
         if (!isMounted) return
         setFetchingDesc(false)
-        if (res.data && (res.data.description || (res.data.emails && res.data.emails.length > 0))) {
+        if (res.data && (res.data.description || (res.data.emails && res.data.emails.length > 0) || res.data.job_url_direct)) {
           const updated = {
             ...job,
             description: res.data.description || job.description,
+            job_url_direct: res.data.job_url_direct || job.job_url_direct,
             score: res.data.score != null ? res.data.score : job.score,
             matched_skills: res.data.matched_skills?.length ? res.data.matched_skills : job.matched_skills,
             missing_skills: res.data.missing_skills?.length ? res.data.missing_skills : job.missing_skills,
@@ -118,8 +119,12 @@ export default function JobDetailWorkbench({
   const missingSkills = job.missing_skills || []
   const tips = job.tips || []
 
-  const isLinkedIn = (job.site || '').toLowerCase().includes('linkedin')
-  const jobUrl = job.url || job.job_url_direct || job.job_url || '#'
+  const directUrl = (job.job_url_direct || '').trim()
+  const hasExternalDirect = Boolean(directUrl && directUrl.startsWith('http') && !directUrl.toLowerCase().includes('linkedin.com'))
+  const rawPrimaryUrl = hasExternalDirect ? directUrl : (job.url || job.job_url_direct || job.job_url || '#')
+  const liIdMatch = rawPrimaryUrl.match(/linkedin\.com\/jobs\/view\/(?:[^/?#]*-)?(\d{8,12})(?:[/?#]|$)/i)
+  const jobUrl = liIdMatch ? `https://www.linkedin.com/jobs/view/${liIdMatch[1]}` : rawPrimaryUrl
+  const isLinkedIn = !hasExternalDirect && ((job.site || '').toLowerCase().includes('linkedin') || jobUrl.toLowerCase().includes('linkedin.com'))
   const isEasyApply = Boolean(job && (job.easy_apply || job.is_direct_apply))
 
   return (

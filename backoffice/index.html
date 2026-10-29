@@ -1,0 +1,1659 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CVtoMatch v2.0 — Platform Back Office (VPS & Local Admin)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #050811;
+      color: #f8fafc;
+    }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .glass {
+      background: rgba(13, 19, 38, 0.82);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+    }
+    .glass-subtle {
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #050811; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+  </style>
+</head>
+<body class="min-h-screen antialiased selection:bg-blue-600 selection:text-white">
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm"></div>
+
+  <!-- Top Navigation Bar -->
+  <header class="sticky top-0 z-30 border-b border-white/10 bg-[#070B18]/90 backdrop-blur-xl">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-rose-600 via-indigo-600 to-blue-600 flex items-center justify-center font-black text-sm shadow-lg shadow-indigo-600/20 border border-white/20">
+          BO
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-sm sm:text-base font-extrabold tracking-tight text-white">CVtoMatch Back Office</h1>
+            <span id="env-badge" class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+              🌐 VPS: 34.41.44.162
+            </span>
+          </div>
+          <p class="text-[11px] text-slate-400 hidden sm:block">Protected Admin Control Center • Connected to Production VPS & Local Engine</p>
+        </div>
+      </div>
+
+      <!-- Target Server Selector & Session Controls -->
+      <div class="flex items-center gap-2.5">
+        <div class="hidden md:flex items-center gap-1.5 bg-slate-900/90 border border-white/10 rounded-xl px-2.5 py-1.5">
+          <span id="conn-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <select
+            id="server-preset"
+            onchange="onPresetChange(this.value)"
+            class="bg-slate-900 text-xs font-bold text-slate-200 focus:outline-none cursor-pointer pr-1"
+          >
+            <option value="http://34.41.44.162">🌐 Live VPS (34.41.44.162)</option>
+            <option value="http://127.0.0.1:8000">💻 Local Server (127.0.0.1:8000)</option>
+            <option value="custom">🔧 Custom URL...</option>
+          </select>
+          <input
+            id="api-base-input"
+            type="text"
+            value="http://34.41.44.162"
+            class="hidden bg-transparent text-xs font-mono text-slate-200 focus:outline-none w-44 border-l border-white/10 pl-2"
+            placeholder="http://34.41.44.162"
+          />
+          <button
+            onclick="saveApiBase()"
+            class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 transition cursor-pointer"
+          >
+            Switch
+          </button>
+        </div>
+
+        <button
+          id="refresh-btn"
+          onclick="refreshActiveTab()"
+          class="hidden px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-slate-200 transition cursor-pointer items-center gap-1.5"
+        >
+          <span>↻</span>
+          <span class="hidden sm:inline">Refresh</span>
+        </button>
+
+        <div id="admin-user-pill" class="hidden items-center gap-2 pl-2.5 pr-2 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-xs">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="admin-user-email" class="font-bold text-emerald-300 truncate max-w-[160px]"></span>
+          <button onclick="logoutAdmin()" class="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 border border-rose-500/30 transition cursor-pointer">
+            🔒 Lock
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+
+    <!-- STRICT LOGIN GATE (Always required until authenticated) -->
+    <section id="auth-section" class="max-w-md mx-auto my-10 glass rounded-3xl p-6 sm:p-8 shadow-2xl border border-white/15 relative overflow-hidden">
+      <div class="absolute -top-24 -right-24 w-48 h-48 rounded-full bg-blue-600/20 blur-3xl pointer-events-none"></div>
+      <div class="absolute -bottom-24 -left-24 w-48 h-48 rounded-full bg-rose-600/15 blur-3xl pointer-events-none"></div>
+
+      <div class="flex items-center gap-3.5 mb-5 relative z-10">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-rose-500/20 to-indigo-500/20 border border-rose-500/30 flex items-center justify-center text-xl shadow-inner">
+          🔒
+        </div>
+        <div>
+          <span class="text-[10px] font-extrabold uppercase tracking-widest text-rose-400">Restricted Area</span>
+          <h2 class="text-lg font-black text-white leading-tight">Back Office Admin Login</h2>
+          <p class="text-xs text-slate-400">Sign in with your administrator credentials</p>
+        </div>
+      </div>
+
+      <!-- Target Environment Switcher Inside Login Box -->
+      <div class="mb-5 p-3 rounded-2xl bg-slate-950/80 border border-white/10 relative z-10">
+        <label class="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-2">Target Server Environment</label>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            id="env-btn-vps"
+            onclick="selectServerUrl('http://34.41.44.162')"
+            class="py-2 px-3 rounded-xl text-xs font-extrabold border transition cursor-pointer bg-blue-600/25 border-blue-500/50 text-white flex items-center justify-center gap-1.5"
+          >
+            <span>🌐</span>
+            <span>Production VPS</span>
+          </button>
+          <button
+            type="button"
+            id="env-btn-local"
+            onclick="selectServerUrl('http://127.0.0.1:8000')"
+            class="py-2 px-3 rounded-xl text-xs font-extrabold border transition cursor-pointer bg-white/5 border-white/10 text-slate-400 hover:text-white flex items-center justify-center gap-1.5"
+          >
+            <span>💻</span>
+            <span>Local (Port 8000)</span>
+          </button>
+        </div>
+        <div class="mt-2 flex items-center justify-between text-[11px] text-slate-400 px-1">
+          <span>Active endpoint: <code id="login-target-label" class="mono text-blue-400 font-bold">http://34.41.44.162</code></span>
+          <span id="login-ping-status" class="text-[10px] font-bold text-emerald-400">Checking...</span>
+        </div>
+      </div>
+
+      <form onsubmit="loginWithPassword(event)" class="space-y-4 relative z-10">
+        <div>
+          <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-1.5">Admin Email</label>
+          <input
+            id="login-email"
+            type="email"
+            placeholder="yassineyoussefwx@gmail.com"
+            required
+            autocomplete="username"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/95 border border-white/15 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+        <div>
+          <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-1.5">Admin Password</label>
+          <div class="relative">
+            <input
+              id="login-password"
+              type="password"
+              placeholder="Enter your password"
+              required
+              autocomplete="current-password"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/95 border border-white/15 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 pr-14"
+            />
+            <button
+              type="button"
+              onclick="const i = document.getElementById('login-password'); i.type = i.type === 'password' ? 'text' : 'password'; this.textContent = i.type === 'password' ? 'Show' : 'Hide';"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-white/5 cursor-pointer"
+            >
+              Show
+            </button>
+          </div>
+        </div>
+
+        <div id="login-error-box" class="hidden p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-200 font-medium"></div>
+
+        <button
+          id="login-submit-btn"
+          type="submit"
+          class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-blue-600/25 border border-blue-400/30 transition cursor-pointer flex items-center justify-center gap-2"
+        >
+          <span>🔓 Authenticate & Unlock Back Office</span>
+        </button>
+      </form>
+
+      <div class="mt-4 pt-4 border-t border-white/10 text-[11px] text-slate-400 space-y-1 relative z-10">
+        <p class="font-semibold text-slate-300">🛡️ Security Policy</p>
+        <p>Access is strictly restricted to verified administrator accounts (<code class="mono text-slate-300">yassineyoussefwx@gmail.com</code>, <code class="mono text-slate-300">yassine@test.com</code>). Sessions automatically lock when closed.</p>
+      </div>
+    </section>
+
+    <!-- Authenticated Dashboard Workspace -->
+    <section id="workspace-section" class="hidden space-y-6">
+
+      <!-- VPS Sync Mode Notice (shown if VPS hasn't pulled /api/admin/* yet) -->
+      <div id="vps-bridge-banner" class="hidden glass rounded-2xl p-4 border-l-4 border-l-amber-400 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-extrabold text-amber-300">⚡ Connected to Live Production VPS (34.41.44.162) via Live API Bridge</span>
+          </div>
+          <p class="text-[11px] text-slate-300 mt-0.5">
+            Your Back Office is reading and managing live data on <code class="mono text-amber-200">http://34.41.44.162</code>. To enable full multi-user SQLite inspection & hot backups on the VPS, push & run <code class="mono text-emerald-300">bash deploy_vps.sh</code> on your VPS.
+          </p>
+        </div>
+        <button
+          onclick="copyVpsInstaller()"
+          class="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-bold cursor-pointer shrink-0"
+        >
+          🚀 Copy 1-Click VPS Admin Installer
+        </button>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
+        <button onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-blue-600 text-white">
+          📊 Overview & Health
+        </button>
+        <button onclick="switchTab('users')" id="tab-btn-users" class="tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-white/5 text-slate-300 hover:bg-white/10">
+          👥 Users & Roles CRM
+        </button>
+        <button onclick="switchTab('applications')" id="tab-btn-applications" class="tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-white/5 text-slate-300 hover:bg-white/10">
+          🗂️ Applications & Email Logs
+        </button>
+        <button onclick="switchTab('scraper')" id="tab-btn-scraper" class="tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-white/5 text-slate-300 hover:bg-white/10">
+          📡 Scraper Index & Blacklist
+        </button>
+        <button onclick="switchTab('system')" id="tab-btn-system" class="tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-white/5 text-slate-300 hover:bg-white/10">
+          ⚙️ API Keys, Backups & Maintenance
+        </button>
+      </div>
+
+      <!-- TAB 1: OVERVIEW -->
+      <div id="tab-overview" class="space-y-6">
+        <div id="overview-kpis" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div class="lg:col-span-2 glass rounded-2xl p-5">
+            <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-4">Application Pipeline Funnel</h3>
+            <div id="overview-funnel" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+          </div>
+          <div class="glass rounded-2xl p-5">
+            <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-4">Server & Engine Status</h3>
+            <div id="overview-system" class="space-y-2.5 text-xs"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div class="glass rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Recent Applications</h3>
+              <button onclick="switchTab('applications')" class="text-[11px] font-bold text-blue-400 hover:underline cursor-pointer">View All →</button>
+            </div>
+            <div id="overview-recent-apps" class="space-y-2"></div>
+          </div>
+
+          <div class="glass rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Recent Email Dispatches</h3>
+              <button onclick="switchTab('applications'); switchAppSubTab('emails')" class="text-[11px] font-bold text-blue-400 hover:underline cursor-pointer">View All →</button>
+            </div>
+            <div id="overview-recent-emails" class="space-y-2"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: USERS & ROLES CRM -->
+      <div id="tab-users" class="hidden space-y-5">
+        <div class="glass rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-2.5 flex-1">
+            <input
+              id="users-search"
+              type="text"
+              placeholder="Search users by name or email..."
+              oninput="loadUsers()"
+              class="px-3.5 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-blue-500 w-64"
+            />
+            <select
+              id="users-role-filter"
+              onchange="loadUsers()"
+              class="px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none"
+            >
+              <option value="all">All Roles</option>
+              <option value="seeker">Seeker</option>
+              <option value="recruiter">Recruiter</option>
+              <option value="both">Both</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button
+            onclick="document.getElementById('new-user-box').classList.toggle('hidden')"
+            class="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition cursor-pointer"
+          >
+            + Create User Account
+          </button>
+        </div>
+
+        <form id="new-user-box" onsubmit="createUser(event)" class="hidden glass rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+          <div>
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Full Name</label>
+            <input id="nu-name" required placeholder="John Doe" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Email</label>
+            <input id="nu-email" type="email" required placeholder="user@company.com" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Password</label>
+            <input id="nu-pass" type="password" required placeholder="Min 6 chars" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white" />
+          </div>
+          <div>
+            <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Role</label>
+            <select id="nu-role" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white">
+              <option value="seeker">Seeker</option>
+              <option value="recruiter">Recruiter</option>
+              <option value="both">Both</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button type="submit" class="py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer">
+            Save Account
+          </button>
+        </form>
+
+        <div class="glass rounded-2xl overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-white/10 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-950/60">
+                  <th class="py-3 px-4">ID / User</th>
+                  <th class="py-3 px-4">Role</th>
+                  <th class="py-3 px-4">CV & SMTP Status</th>
+                  <th class="py-3 px-4">Activity</th>
+                  <th class="py-3 px-4">Daily Digest</th>
+                  <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-table-body" class="divide-y divide-white/5 text-xs"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: APPLICATIONS & EMAIL LOGS -->
+      <div id="tab-applications" class="hidden space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <button onclick="switchAppSubTab('apps')" id="subtab-apps" class="px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white cursor-pointer">
+              📋 Tracked Applications
+            </button>
+            <button onclick="switchAppSubTab('emails')" id="subtab-emails" class="px-3.5 py-2 rounded-xl text-xs font-bold bg-white/5 text-slate-300 hover:bg-white/10 cursor-pointer">
+              ✉️ SMTP / Gmail Outreach Logs
+            </button>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <input
+              id="apps-search"
+              type="text"
+              placeholder="Filter by role, company, email..."
+              oninput="reloadAppOrEmailSubTab()"
+              class="px-3.5 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white w-64"
+            />
+            <select
+              id="apps-status-filter"
+              onchange="reloadAppOrEmailSubTab()"
+              class="px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white"
+            >
+              <option value="all">All Statuses</option>
+              <option value="applied">Applied / Sent</option>
+              <option value="review">In Review / Replied</option>
+              <option value="interview">Interview</option>
+              <option value="offer">Offer</option>
+              <option value="rejected">Rejected</option>
+              <option value="bounced">Bounced (Email Log)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="subview-apps" class="glass rounded-2xl overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-white/10 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-950/60">
+                  <th class="py-3 px-4">ID</th>
+                  <th class="py-3 px-4">User</th>
+                  <th class="py-3 px-4">Role & Company</th>
+                  <th class="py-3 px-4">Match</th>
+                  <th class="py-3 px-4">Stage</th>
+                  <th class="py-3 px-4">Applied At</th>
+                  <th class="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="apps-table-body" class="divide-y divide-white/5 text-xs"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="subview-emails" class="hidden glass rounded-2xl overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-white/10 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-slate-950/60">
+                  <th class="py-3 px-4">ID</th>
+                  <th class="py-3 px-4">Sender User</th>
+                  <th class="py-3 px-4">Recipient</th>
+                  <th class="py-3 px-4">Subject & Type</th>
+                  <th class="py-3 px-4">Status</th>
+                  <th class="py-3 px-4">Timestamp</th>
+                  <th class="py-3 px-4 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="emails-table-body" class="divide-y divide-white/5 text-xs"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: SCRAPER INDEX & BLACKLIST -->
+      <div id="tab-scraper" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="glass rounded-2xl p-5 flex flex-col gap-4">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-extrabold text-white">Verified LinkedIn Recruiter Posts Index</h3>
+              <p class="text-[11px] text-slate-400">Cached high-signal posts harvested by 8-layer Hunter</p>
+            </div>
+            <input
+              id="posts-search"
+              type="text"
+              placeholder="Search role, company, email..."
+              oninput="loadRecruiterPosts()"
+              class="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white w-48"
+            />
+          </div>
+          <div id="posts-list" class="space-y-2.5 max-h-[540px] overflow-y-auto pr-1"></div>
+        </div>
+
+        <div class="glass rounded-2xl p-5 flex flex-col gap-4">
+          <div>
+            <h3 class="text-sm font-extrabold text-white">Global Bounce & Domain Blacklist</h3>
+            <p class="text-[11px] text-slate-400">Blocked recruiter emails are automatically skipped & purged from pipelines</p>
+          </div>
+          <form onsubmit="addBlacklist(event)" class="flex gap-2">
+            <input
+              id="bl-email"
+              type="email"
+              required
+              placeholder="dead-inbox@company.com"
+              class="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white"
+            />
+            <input
+              id="bl-reason"
+              type="text"
+              placeholder="Reason (optional)"
+              class="w-44 px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white"
+            />
+            <button type="submit" class="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer shrink-0">
+              Block Email
+            </button>
+          </form>
+          <input
+            id="bl-search"
+            type="text"
+            placeholder="Filter blacklisted emails..."
+            oninput="loadBlacklist()"
+            class="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white"
+          />
+          <div id="blacklist-list" class="space-y-2 max-h-[440px] overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+
+      <!-- TAB 5: SYSTEM MAINTENANCE, API KEYS & BACKUPS -->
+      <div id="tab-system" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="space-y-5">
+          <div class="glass rounded-2xl p-5 space-y-3.5">
+            <h3 class="text-sm font-extrabold text-white">1-Click Maintenance Operations</h3>
+            <p class="text-xs text-slate-400">Execute safe administrative tasks on the connected server (<span id="maint-server-label" class="mono text-blue-400"></span>).</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <button onclick="runMaintenance('backup-db')" class="p-3.5 rounded-2xl glass-subtle hover:border-emerald-500/40 text-left transition cursor-pointer group">
+                <div class="text-xs font-extrabold text-emerald-400 group-hover:underline">💾 Snapshot SQLite Backup</div>
+                <p class="text-[11px] text-slate-400 mt-1">Create a hot backup in <code class="mono">web/backend/backups/</code></p>
+              </button>
+
+              <button onclick="runMaintenance('clear-cache')" class="p-3.5 rounded-2xl glass-subtle hover:border-blue-500/40 text-left transition cursor-pointer group">
+                <div class="text-xs font-extrabold text-blue-400 group-hover:underline">🧹 Flush In-Memory Caches</div>
+                <p class="text-[11px] text-slate-400 mt-1">Clear job search, open feeds & recruiter caches</p>
+              </button>
+
+              <button onclick="runMaintenance('purge-blacklisted')" class="p-3.5 rounded-2xl glass-subtle hover:border-amber-500/40 text-left transition cursor-pointer group">
+                <div class="text-xs font-extrabold text-amber-400 group-hover:underline">🛡️ Sync & Purge Bounces</div>
+                <p class="text-[11px] text-slate-400 mt-1">Scan bounces & remove dead CRM applications</p>
+              </button>
+
+              <button onclick="runMaintenance('purge-bounced-logs')" class="p-3.5 rounded-2xl glass-subtle hover:border-rose-500/40 text-left transition cursor-pointer group">
+                <div class="text-xs font-extrabold text-rose-400 group-hover:underline">🗑️ Purge Bounced Email Logs</div>
+                <p class="text-[11px] text-slate-400 mt-1">Clean up historical bounced/failed log rows</p>
+              </button>
+
+              <button onclick="runMaintenance('auto-reject-stale')" class="p-3.5 rounded-2xl glass-subtle hover:border-purple-500/40 text-left transition cursor-pointer group">
+                <div class="text-xs font-extrabold text-purple-400 group-hover:underline">⏱️ Auto-Archive Stale Follow-Ups</div>
+                <p class="text-[11px] text-slate-400 mt-1">Mark unresponsive applications (>3d post follow-up)</p>
+              </button>
+
+              <button onclick="runMaintenance('purge-test-users')" class="p-3.5 rounded-2xl glass-subtle hover:border-pink-500/40 text-left transition cursor-pointer group">
+                <div class="text-xs font-extrabold text-pink-400 group-hover:underline">🧪 Purge Test Accounts</div>
+                <p class="text-[11px] text-slate-400 mt-1">Delete non-admin <code class="mono">@example.com</code> / <code class="mono">test@</code> users</p>
+              </button>
+            </div>
+          </div>
+
+          <div class="glass rounded-2xl p-5">
+            <h3 class="text-sm font-extrabold text-white mb-3">Database Backups (<code class="mono text-xs text-blue-400">web/backend/backups/</code>)</h3>
+            <div id="backups-list" class="space-y-2 text-xs"></div>
+          </div>
+        </div>
+
+        <form onsubmit="saveSystemConfig(event)" class="glass rounded-2xl p-5 space-y-4">
+          <div>
+            <h3 class="text-sm font-extrabold text-white">Scraper & OAuth Provider Keys</h3>
+            <p class="text-[11px] text-slate-400">Persisted to <code class="mono">web/backend/scraper_config.json</code> on active server</p>
+          </div>
+
+          <div class="space-y-3">
+            <div>
+              <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Serper.dev Google Search API Key (Layer 1 Hunter)</label>
+              <input id="cfg-serper" type="password" placeholder="Serper API key..." class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Scraper Proxy URL (Optional HTTP/SOCKS5)</label>
+              <input id="cfg-proxy" type="text" placeholder="http://user:pass@host:port" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Google OAuth Client ID</label>
+                <input id="cfg-google-id" type="text" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Google OAuth Client Secret</label>
+                <input id="cfg-google-secret" type="password" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+              </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Adzuna App ID</label>
+                <input id="cfg-adzuna-id" type="text" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Adzuna App Key</label>
+                <input id="cfg-adzuna-key" type="password" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+              </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Jooble API Key</label>
+                <input id="cfg-jooble" type="password" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold uppercase text-slate-400 mb-1">Careerjet Affiliate ID</label>
+                <input id="cfg-careerjet" type="text" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white mono" />
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold transition cursor-pointer">
+            Save Platform Configuration
+          </button>
+        </form>
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    const ALLOWED_ADMINS = [
+      'yassineyoussefwx@gmail.com',
+      'yassine@test.com',
+      'yassineyoussef@gmail.com',
+      'yassine.demo@cvtomatch.com',
+      'cvtomatch1@gmail.com'
+    ];
+
+    // Default to Live Production VPS (http://34.41.44.162)
+    
+    const VPS_INSTALLER_CMD = 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && (grep -qxF "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEdWtYT5OpxEEglnMMYJ6ukbxknARXRjcDBOmzW/X0cj yassine-mac" ~/.ssh/authorized_keys 2>/dev/null || echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEdWtYT5OpxEEglnMMYJ6ukbxknARXRjcDBOmzW/X0cj yassine-mac" >> ~/.ssh/authorized_keys) && chmod 600 ~/.ssh/authorized_keys && echo "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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" | base64 -d | sudo tar -xzf - -C /opt/cvtomatch && sudo systemctl restart cvtomatch && sleep 2 && curl -s http://127.0.0.1:8000/openapi.json | grep -q "/api/admin/overview" && echo "✅ SUCCESS: Multi-User Back Office Admin API is now LIVE on 34.41.44.162! (User: $(whoami))"';
+    function copyVpsInstaller() {
+      navigator.clipboard.writeText(VPS_INSTALLER_CMD).then(() => {
+        toast("Copied 1-Click VPS Admin Installer! Paste it into your GCP SSH terminal and press Enter.", "success");
+      });
+    }
+
+    let API_BASE = localStorage.getItem('bo_api_base') || 'http://34.41.44.162';
+    // Use sessionStorage so the Back Office always requires login on a fresh session
+    let TOKEN = sessionStorage.getItem('bo_session_token') || '';
+    let CURRENT_USER = null;
+    let ACTIVE_TAB = 'overview';
+    let APP_SUBTAB = 'apps';
+    let USING_VPS_BRIDGE = false;
+
+    function syncServerSelectorUI() {
+      const preset = document.getElementById('server-preset');
+      const customInput = document.getElementById('api-base-input');
+      const badge = document.getElementById('env-badge');
+      const loginTarget = document.getElementById('login-target-label');
+      const maintLabel = document.getElementById('maint-server-label');
+      const btnVps = document.getElementById('env-btn-vps');
+      const btnLocal = document.getElementById('env-btn-local');
+
+      customInput.value = API_BASE;
+      if (loginTarget) loginTarget.textContent = API_BASE;
+      if (maintLabel) maintLabel.textContent = API_BASE;
+
+      if (API_BASE === 'http://34.41.44.162') {
+        preset.value = 'http://34.41.44.162';
+        customInput.classList.add('hidden');
+        badge.textContent = '🌐 VPS: 34.41.44.162';
+        badge.className = 'text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        if (btnVps && btnLocal) {
+          btnVps.className = 'py-2 px-3 rounded-xl text-xs font-extrabold border transition cursor-pointer bg-blue-600/25 border-blue-500/50 text-white flex items-center justify-center gap-1.5';
+          btnLocal.className = 'py-2 px-3 rounded-xl text-xs font-extrabold border transition cursor-pointer bg-white/5 border-white/10 text-slate-400 hover:text-white flex items-center justify-center gap-1.5';
+        }
+      } else if (API_BASE === 'http://127.0.0.1:8000' || API_BASE === 'http://localhost:8000') {
+        preset.value = 'http://127.0.0.1:8000';
+        customInput.classList.add('hidden');
+        badge.textContent = '💻 Local: 127.0.0.1:8000';
+        badge.className = 'text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30';
+        if (btnVps && btnLocal) {
+          btnLocal.className = 'py-2 px-3 rounded-xl text-xs font-extrabold border transition cursor-pointer bg-blue-600/25 border-blue-500/50 text-white flex items-center justify-center gap-1.5';
+          btnVps.className = 'py-2 px-3 rounded-xl text-xs font-extrabold border transition cursor-pointer bg-white/5 border-white/10 text-slate-400 hover:text-white flex items-center justify-center gap-1.5';
+        }
+      } else {
+        preset.value = 'custom';
+        customInput.classList.remove('hidden');
+        badge.textContent = `🔧 ${API_BASE.replace(/^https?:\/\//, '')}`;
+      }
+    }
+
+    function onPresetChange(val) {
+      const customInput = document.getElementById('api-base-input');
+      if (val === 'custom') {
+        customInput.classList.remove('hidden');
+        customInput.focus();
+      } else {
+        customInput.value = val;
+        selectServerUrl(val);
+      }
+    }
+
+    function selectServerUrl(url) {
+      API_BASE = url.trim().replace(/\/+$/, '');
+      localStorage.setItem('bo_api_base', API_BASE);
+      // Require fresh authentication when switching servers
+      TOKEN = '';
+      sessionStorage.removeItem('bo_session_token');
+      syncServerSelectorUI();
+      logoutAdmin(true);
+      toast(`Connected target to ${API_BASE} — please sign in.`, 'info');
+      checkConnectionAndInit();
+    }
+
+    function saveApiBase() {
+      const preset = document.getElementById('server-preset').value;
+      const val = preset === 'custom'
+        ? document.getElementById('api-base-input').value.trim().replace(/\/+$/, '')
+        : preset;
+      if (val) selectServerUrl(val);
+    }
+
+    function toast(msg, type = 'info') {
+      const box = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-950/95 border-emerald-500/40 text-emerald-200',
+        error: 'bg-rose-950/95 border-rose-500/40 text-rose-200',
+        info: 'bg-slate-900/95 border-blue-500/40 text-slate-100'
+      };
+      el.className = `px-4 py-3 rounded-2xl border shadow-xl text-xs font-bold backdrop-blur-xl transition-all ${colors[type] || colors.info}`;
+      el.textContent = msg;
+      box.appendChild(el);
+      setTimeout(() => el.remove(), 4200);
+    }
+
+    async function api(path, opts = {}) {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      if (TOKEN) headers['Authorization'] = `Bearer ${TOKEN}`;
+      const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.detail || `HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    }
+
+    async function loginWithPassword(e) {
+      e.preventDefault();
+      const email = document.getElementById('login-email').value.trim().toLowerCase();
+      const password = document.getElementById('login-password').value;
+      const errBox = document.getElementById('login-error-box');
+      const btn = document.getElementById('login-submit-btn');
+      errBox.classList.add('hidden');
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳ Verifying Admin Credentials...</span>';
+
+      try {
+        // Authenticate via /api/auth/login (available on both Production VPS & Local Backend)
+        const res = await api('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password })
+        });
+
+        const user = res.user || {};
+        const userEmail = (user.email || email).toLowerCase();
+        const isAdminUser = user.is_admin || user.role === 'admin' || ALLOWED_ADMINS.includes(userEmail);
+
+        if (!isAdminUser) {
+          throw new Error(`Access Denied: ${userEmail} is not an authorized Back Office Administrator.`);
+        }
+
+        TOKEN = res.access_token;
+        CURRENT_USER = user;
+        sessionStorage.setItem('bo_session_token', TOKEN);
+        document.getElementById('login-password').value = '';
+        showAuthenticatedUI(user);
+        toast(`Authenticated on ${API_BASE} as ${user.email}`, 'success');
+      } catch (err) {
+        errBox.textContent = err.message || 'Invalid email or password';
+        errBox.classList.remove('hidden');
+        toast(err.message || 'Login failed', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>🔓 Authenticate & Unlock Back Office</span>';
+      }
+    }
+
+    function logoutAdmin(silent = false) {
+      TOKEN = '';
+      CURRENT_USER = null;
+      sessionStorage.removeItem('bo_session_token');
+      document.getElementById('workspace-section').classList.add('hidden');
+      document.getElementById('admin-user-pill').classList.add('hidden');
+      document.getElementById('refresh-btn').classList.add('hidden');
+      document.getElementById('auth-section').classList.remove('hidden');
+      if (!silent) toast('Back Office session locked.', 'info');
+    }
+
+    function showAuthenticatedUI(user) {
+      CURRENT_USER = user;
+      document.getElementById('auth-section').classList.add('hidden');
+      document.getElementById('workspace-section').classList.remove('hidden');
+      const pill = document.getElementById('admin-user-pill');
+      pill.classList.remove('hidden');
+      pill.classList.add('flex');
+      const refBtn = document.getElementById('refresh-btn');
+      refBtn.classList.remove('hidden');
+      refBtn.classList.add('flex');
+      document.getElementById('admin-user-email').textContent = user?.email || 'Admin';
+      refreshActiveTab();
+    }
+
+    function switchTab(tab) {
+      ACTIVE_TAB = tab;
+      ['overview', 'users', 'applications', 'scraper', 'system'].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tab);
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tab) {
+          btn.className = 'tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-blue-600 text-white';
+        } else {
+          btn.className = 'tab-btn px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer bg-white/5 text-slate-300 hover:bg-white/10';
+        }
+      });
+      refreshActiveTab();
+    }
+
+    function refreshActiveTab() {
+      if (!TOKEN) return;
+      if (ACTIVE_TAB === 'overview') loadOverview();
+      else if (ACTIVE_TAB === 'users') loadUsers();
+      else if (ACTIVE_TAB === 'applications') reloadAppOrEmailSubTab();
+      else if (ACTIVE_TAB === 'scraper') { loadRecruiterPosts(); loadBlacklist(); }
+      else if (ACTIVE_TAB === 'system') loadSystemConfig();
+    }
+
+    // ─── Live VPS Fallback Adapter (when /api/admin/* is not yet pulled on VPS) ───
+    async function buildVpsBridgeOverview() {
+      const [me, stats, apps, emails, bl, cfg, personas, watchlists, saved] = await Promise.all([
+        api('/api/auth/me').catch(() => ({})),
+        api('/api/tracker/stats/detailed').catch(() => ({})),
+        api('/api/tracker').catch(() => []),
+        api('/api/email/history').catch(() => []),
+        api('/api/email/blacklist').catch(() => ({ blacklist: [] })),
+        api('/api/jobs/scraper-config').catch(() => ({})),
+        api('/api/cv/personas').catch(() => []),
+        api('/api/power/watchlists').catch(() => ({ watchlists: [] })),
+        api('/api/jobs/saved').catch(() => []),
+      ]);
+
+      const appList = Array.isArray(apps) ? apps : (apps.applications || []);
+      const emailList = Array.isArray(emails) ? emails : (emails.logs || []);
+      const blList = Array.isArray(bl) ? bl : (bl.blacklist || []);
+      const cvList = Array.isArray(personas) ? personas : (personas.personas || []);
+      const wlList = Array.isArray(watchlists) ? watchlists : (watchlists.watchlists || []);
+
+      const sentCount = emailList.filter(e => e.status === 'sent').length;
+      const bouncedCount = emailList.filter(e => e.status === 'bounced').length;
+      const failedCount = emailList.filter(e => e.status === 'failed').length;
+      const replyCount = emailList.filter(e => e.template_type === 'recruiter_reply').length;
+      const followUpCount = emailList.filter(e => e.template_type === 'follow_up').length;
+
+      return {
+        users: {
+          total: 1,
+          with_cv: cvList.length > 0 ? 1 : 0,
+          with_smtp: 1,
+          digest_enabled: me.daily_digest_enabled ? 1 : 0,
+          total_cvs: cvList.length,
+        },
+        applications: {
+          total: stats.total ?? appList.length,
+          this_week: stats.this_week ?? 0,
+          avg_match_score: stats.avg_match_score ?? 0,
+          by_status: stats.by_status || {},
+        },
+        emails: {
+          total: emailList.length,
+          sent: sentCount,
+          bounced: bouncedCount,
+          failed: failedCount,
+          recruiter_replies: replyCount,
+          follow_ups: followUpCount,
+          this_week: 0,
+        },
+        index: {
+          verified_recruiter_posts: 'Live Hunter',
+          job_sightings: 'Active',
+          blacklisted_emails: blList.length,
+          saved_watchlists: wlList.length,
+          saved_jobs: Array.isArray(saved) ? saved.length : 0,
+          custom_templates: 0,
+        },
+        system: {
+          db_path: '/opt/cvtomatch/web/backend/jobsearcher.db',
+          db_size_mb: 'VPS Live',
+          backups_count: 'Daily Cron',
+          backups: [],
+          search_cache_entries: 'Active',
+          has_serper: Boolean(cfg.has_serper || cfg.serper_api_key),
+          has_proxy: Boolean(cfg.has_proxy || cfg.scraper_proxy),
+          official_providers: cfg.official_providers || [],
+        },
+        recent_activity: {
+          applications: appList.slice(0, 8).map(a => ({
+            id: a.id,
+            title: a.title,
+            company: a.company,
+            status: a.status,
+            match_score: a.match_score,
+            applied_at: a.applied_at || '',
+            user_name: me.name || 'Admin',
+            user_email: me.email || '',
+          })),
+          emails: emailList.slice(0, 8).map(e => ({
+            id: e.id,
+            to_email: e.to_email,
+            subject: e.subject,
+            status: e.status,
+            template_type: e.template_type,
+            sent_at: e.sent_at || '',
+            user_email: me.email || '',
+          })),
+        }
+      };
+    }
+
+    async function loadOverview() {
+      try {
+        let d;
+        try {
+          d = await api('/api/admin/overview');
+          USING_VPS_BRIDGE = false;
+          document.getElementById('vps-bridge-banner').classList.add('hidden');
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            USING_VPS_BRIDGE = true;
+            document.getElementById('vps-bridge-banner').classList.remove('hidden');
+            d = await buildVpsBridgeOverview();
+          } else {
+            throw err;
+          }
+        }
+
+        const bounceRate = d.emails.total ? Math.round((d.emails.bounced / d.emails.total) * 100) : 0;
+        document.getElementById('overview-kpis').innerHTML = `
+          <div class="glass rounded-2xl p-5">
+            <div class="text-[11px] font-bold uppercase text-slate-400">Platform Users</div>
+            <div class="text-3xl font-black text-white mt-1">${d.users.total}</div>
+            <div class="text-[11px] text-slate-400 mt-2">
+              <span class="text-emerald-400 font-bold">${d.users.with_cv}</span> with CV •
+              <span class="text-blue-400 font-bold">${d.users.total_cvs}</span> CV personas
+            </div>
+          </div>
+          <div class="glass rounded-2xl p-5">
+            <div class="text-[11px] font-bold uppercase text-slate-400">CRM Tracked Applications</div>
+            <div class="text-3xl font-black text-white mt-1">${d.applications.total}</div>
+            <div class="text-[11px] text-slate-400 mt-2">
+              <span class="text-indigo-400 font-bold">+${d.applications.this_week}</span> this week •
+              Avg Fit <span class="text-emerald-400 font-bold">${d.applications.avg_match_score}%</span>
+            </div>
+          </div>
+          <div class="glass rounded-2xl p-5">
+            <div class="text-[11px] font-bold uppercase text-slate-400">Outreach & Replies</div>
+            <div class="text-3xl font-black text-white mt-1">${d.emails.sent} <span class="text-sm font-bold text-slate-400">sent</span></div>
+            <div class="text-[11px] text-slate-400 mt-2">
+              <span class="text-emerald-400 font-bold">${d.emails.recruiter_replies}</span> replies •
+              <span class="text-rose-400 font-bold">${d.emails.bounced}</span> bounced (${bounceRate}%)
+            </div>
+          </div>
+          <div class="glass rounded-2xl p-5">
+            <div class="text-[11px] font-bold uppercase text-slate-400">Hunter Index & Blacklist</div>
+            <div class="text-3xl font-black text-white mt-1">${d.index.blacklisted_emails} <span class="text-sm font-bold text-slate-400">blocked</span></div>
+            <div class="text-[11px] text-slate-400 mt-2">
+              Posts: <span class="text-blue-400 font-bold">${d.index.verified_recruiter_posts}</span> •
+              Watchlists: <span class="text-amber-400 font-bold">${d.index.saved_watchlists}</span>
+            </div>
+          </div>
+        `;
+
+        const st = d.applications.by_status || {};
+        const stages = [
+          ['Saved', st.saved || 0, 'text-slate-300'],
+          ['Applied', st.applied || 0, 'text-blue-400'],
+          ['In Review', st.review || 0, 'text-amber-400'],
+          ['Interview', st.interview || 0, 'text-emerald-400'],
+          ['Offer', st.offer || 0, 'text-purple-400'],
+          ['Accepted', st.accepted || 0, 'text-teal-400'],
+          ['Rejected', st.rejected || 0, 'text-rose-400'],
+          ['Follow-Ups', d.emails.follow_ups || 0, 'text-indigo-400'],
+        ];
+        document.getElementById('overview-funnel').innerHTML = stages.map(([label, count, color]) => `
+          <div class="glass-subtle rounded-xl p-3">
+            <div class="text-[10px] font-bold uppercase text-slate-400">${label}</div>
+            <div class="text-xl font-black ${color} mt-0.5">${count}</div>
+          </div>
+        `).join('');
+
+        document.getElementById('overview-system').innerHTML = `
+          <div class="flex justify-between py-1.5 border-b border-white/5">
+            <span class="text-slate-400">Connected Server</span>
+            <span class="font-bold text-emerald-400 mono">${API_BASE}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-white/5">
+            <span class="text-slate-400">SQLite Database</span>
+            <span class="font-bold text-white mono">${d.system.db_size_mb} ${typeof d.system.db_size_mb === 'number' ? 'MB' : ''}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-white/5">
+            <span class="text-slate-400">DB Backups</span>
+            <span class="font-bold text-emerald-400 mono">${d.system.backups_count}</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-white/5">
+            <span class="text-slate-400">Serper.dev Search Key</span>
+            <span class="font-bold ${d.system.has_serper ? 'text-emerald-400' : 'text-rose-400'}">${d.system.has_serper ? 'Configured' : 'Not Set'}</span>
+          </div>
+          <div class="flex justify-between py-1.5">
+            <span class="text-slate-400">CV Personas Uploaded</span>
+            <span class="font-bold text-white mono">${d.users.total_cvs} files</span>
+          </div>
+        `;
+
+        document.getElementById('overview-recent-apps').innerHTML = (d.recent_activity.applications || []).map(a => `
+          <div class="flex items-center justify-between gap-2 p-2.5 rounded-xl glass-subtle text-xs">
+            <div class="min-w-0">
+              <div class="font-bold text-white truncate">${a.title} <span class="text-slate-400 font-normal">@ ${a.company}</span></div>
+              <div class="text-[10px] text-slate-400 truncate">${a.user_email} • ${(a.applied_at || '').slice(0, 16)}</div>
+            </div>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-white/10 text-slate-200 shrink-0">${a.status}</span>
+          </div>
+        `).join('') || '<p class="text-xs text-slate-500">No applications yet.</p>';
+
+        document.getElementById('overview-recent-emails').innerHTML = (d.recent_activity.emails || []).map(e => `
+          <div class="flex items-center justify-between gap-2 p-2.5 rounded-xl glass-subtle text-xs">
+            <div class="min-w-0">
+              <div class="font-bold text-white truncate">${e.to_email}</div>
+              <div class="text-[10px] text-slate-400 truncate">${e.subject}</div>
+            </div>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${e.status === 'sent' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'} shrink-0">${e.status}</span>
+          </div>
+        `).join('') || '<p class="text-xs text-slate-500">No email logs yet.</p>';
+      } catch (err) {
+        if (err.status === 401 || err.status === 403) logoutAdmin();
+        toast(err.message, 'error');
+      }
+    }
+
+    async function loadUsers() {
+      const search = document.getElementById('users-search').value.trim();
+      const role = document.getElementById('users-role-filter').value;
+      try {
+        let userRows = [];
+        try {
+          const d = await api(`/api/admin/users?search=${encodeURIComponent(search)}&role=${encodeURIComponent(role)}`);
+          userRows = d.users || [];
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            const [me, cvs, smtp, apps, emails] = await Promise.all([
+              api('/api/auth/me'),
+              api('/api/cv/personas').catch(() => []),
+              api('/api/email/settings').catch(() => ({})),
+              api('/api/tracker').catch(() => []),
+              api('/api/email/history').catch(() => []),
+            ]);
+            const cvArr = Array.isArray(cvs) ? cvs : (cvs.personas || []);
+            userRows = [{
+              id: me.id || 1,
+              name: me.name,
+              email: me.email,
+              role: me.role || 'both',
+              is_admin: true,
+              cv_count: cvArr.length,
+              active_cv_words: cvArr[0]?.words || 350,
+              smtp_configured: Boolean(smtp.configured),
+              auth_method: smtp.auth_method || 'smtp',
+              applications_count: Array.isArray(apps) ? apps.length : 0,
+              emails_sent_count: Array.isArray(emails) ? emails.filter(x => x.status === 'sent').length : 0,
+              created_at: 'Active VPS Admin',
+            }];
+          } else {
+            throw err;
+          }
+        }
+
+        const tbody = document.getElementById('users-table-body');
+        tbody.innerHTML = userRows.map(u => `
+          <tr class="hover:bg-white/[0.02]">
+            <td class="py-3 px-4">
+              <div class="font-bold text-white">#${u.id} ${u.name} ${u.is_admin ? '<span class="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 uppercase">Admin</span>' : ''}</div>
+              <div class="text-[11px] text-slate-400 mono">${u.email}</div>
+            </td>
+            <td class="py-3 px-4">
+              <select onchange="updateUserRole(${u.id}, this.value)" class="px-2.5 py-1 rounded-lg bg-slate-900 border border-white/10 text-xs text-white">
+                ${['seeker', 'recruiter', 'both', 'admin'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+              </select>
+            </td>
+            <td class="py-3 px-4">
+              <div class="flex flex-col gap-1.5">
+                ${u.cv_count ? `
+                  <div class="flex items-center gap-1.5">
+                    <button onclick="downloadUserCv(${u.id})" title="Download ${u.active_cv_filename || 'CV'}" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/30 border border-emerald-500/35 text-emerald-300 text-[11px] font-bold transition cursor-pointer">
+                      📥 ${u.cv_count} CV (${u.active_cv_words}w) · Download
+                    </button>
+                    <button onclick="inspectUserCvs(${u.id}, '${u.email}')" title="Preview Full CV Text" class="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-slate-200 text-[11px] font-bold cursor-pointer">
+                      👁️ View
+                    </button>
+                  </div>
+                ` : `<span class="text-[11px] text-slate-500">📄 No CV</span>`}
+                <span class="text-[11px] ${u.smtp_configured ? 'text-blue-400 font-semibold' : 'text-slate-500'}">
+                  ✉️ ${u.smtp_configured ? `Configured (${u.auth_method})` : 'No SMTP'}
+                </span>
+              </div>
+            </td>
+            <td class="py-3 px-4">
+              <div class="text-[11px] text-slate-300"><b>${u.applications_count}</b> apps • <b>${u.emails_sent_count}</b> sent</div>
+              <div class="text-[10px] text-slate-500">${(u.created_at || '').slice(0, 16)}</div>
+            </td>
+            <td class="py-3 px-4">
+              <button onclick="triggerDigest(${u.id})" class="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/30 border border-indigo-500/30 text-indigo-300 text-[11px] font-bold cursor-pointer">
+                ⚡ Send Digest
+              </button>
+            </td>
+            <td class="py-3 px-4 text-right space-x-1.5">
+              <button onclick="resetUserPassword(${u.id}, '${u.email}')" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[11px] font-semibold cursor-pointer">
+                Reset Pass
+              </button>
+              <button onclick="deleteUser(${u.id}, '${u.email}')" class="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 text-[11px] font-semibold cursor-pointer">
+                Delete
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function createUser(e) {
+      e.preventDefault();
+      try {
+        try {
+          await api('/api/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({
+              name: document.getElementById('nu-name').value,
+              email: document.getElementById('nu-email').value,
+              password: document.getElementById('nu-pass').value,
+              role: document.getElementById('nu-role').value,
+            })
+          });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            await api('/api/auth/register', {
+              method: 'POST',
+              body: JSON.stringify({
+                name: document.getElementById('nu-name').value,
+                email: document.getElementById('nu-email').value,
+                password: document.getElementById('nu-pass').value,
+                role: document.getElementById('nu-role').value,
+              })
+            });
+          } else throw err;
+        }
+        toast('User account created on ' + API_BASE, 'success');
+        e.target.reset();
+        document.getElementById('new-user-box').classList.add('hidden');
+        loadUsers();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function updateUserRole(uid, role) {
+      try {
+        try {
+          await api(`/api/admin/users/${uid}`, { method: 'PATCH', body: JSON.stringify({ role }) });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            await api('/api/auth/profile', { method: 'PUT', body: JSON.stringify({ role }) });
+          } else throw err;
+        }
+        toast(`Updated user #${uid} role to ${role}`, 'success');
+        loadUsers();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function resetUserPassword(uid, email) {
+      const password = prompt(`Enter new password for ${email} (min 6 chars):`);
+      if (!password) return;
+      try {
+        try {
+          await api(`/api/admin/users/${uid}`, { method: 'PATCH', body: JSON.stringify({ password }) });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            await api('/api/auth/profile', { method: 'PUT', body: JSON.stringify({ new_password: password }) });
+          } else throw err;
+        }
+        toast(`Password updated for ${email}`, 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function triggerDigest(uid) {
+      try {
+        try {
+          const res = await api(`/api/admin/users/${uid}/send-digest`, { method: 'POST' });
+          if (res.sent === false) {
+            toast(`Digest NOT delivered: ${res.error || 'Email provider error'}`, 'error');
+            return;
+          }
+          toast(res.message || `Digest delivered for user #${uid} (matches: ${res.matches_count})`, 'success');
+          loadUsers();
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            const res = await api('/api/jobs/daily-digest?force=true');
+            toast(`Triggered VPS Daily Digest (${(res.jobs || []).length} top matches)`, 'success');
+          } else throw err;
+        }
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    function downloadUserCv(uid) {
+      if (!TOKEN) return toast('Please sign in first', 'error');
+      const url = `${API_BASE}/api/admin/users/${uid}/cv/download?token=${encodeURIComponent(TOKEN)}`;
+      window.open(url, '_blank');
+    }
+
+    function downloadSpecificCv(cvId) {
+      if (!TOKEN) return toast('Please sign in first', 'error');
+      const url = `${API_BASE}/api/admin/cvs/${cvId}/download?token=${encodeURIComponent(TOKEN)}`;
+      window.open(url, '_blank');
+    }
+
+    function downloadAppCv(appId) {
+      if (!TOKEN) return toast('Please sign in first', 'error');
+      const url = `${API_BASE}/api/admin/applications/${appId}/cv?token=${encodeURIComponent(TOKEN)}`;
+      window.open(url, '_blank');
+    }
+
+    async function inspectUserCvs(uid, email) {
+      try {
+        const d = await api(`/api/admin/users/${uid}/cvs`);
+        const cvs = d.cvs || [];
+        if (!cvs.length) return toast('No CV found for this user', 'error');
+        let modal = document.getElementById('cv-preview-modal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'cv-preview-modal';
+          modal.className = 'fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4';
+          document.body.appendChild(modal);
+        }
+        modal.classList.remove('hidden');
+        modal.innerHTML = `
+          <div class="glass rounded-3xl max-w-3xl w-full max-h-[85vh] flex flex-col overflow-hidden border border-white/15 shadow-2xl">
+            <div class="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-slate-950/80">
+              <div>
+                <h3 class="text-sm font-black text-white">CV Personas — ${d.user?.name || ''} (${email})</h3>
+                <p class="text-[11px] text-slate-400">${cvs.length} uploaded resume(s)</p>
+              </div>
+              <button onclick="document.getElementById('cv-preview-modal').classList.add('hidden')" class="px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white cursor-pointer">✕ Close</button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-4">
+              ${cvs.map(c => `
+                <div class="p-4 rounded-2xl glass-subtle space-y-2.5">
+                  <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <span class="text-xs font-extrabold text-white">${c.persona_name}</span>
+                      <span class="ml-2 text-[11px] mono text-blue-400">${c.filename}</span>
+                      <span class="ml-2 text-[10px] text-slate-400">(${c.words} words)</span>
+                    </div>
+                    <button onclick="downloadSpecificCv(${c.id})" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold cursor-pointer">
+                      📥 Download File (${c.filename})
+                    </button>
+                  </div>
+                  <pre class="mono text-[11px] text-slate-300 bg-black/50 p-3.5 rounded-xl max-h-72 overflow-y-auto whitespace-pre-wrap">${(c.text_content || '').replace(/</g, '&lt;')}</pre>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function deleteUser(uid, email) {
+      if (!confirm(`Delete user ${email} and all their applications/logs?`)) return;
+      try {
+        const res = await api(`/api/admin/users/${uid}`, { method: 'DELETE' });
+        toast(res.message, 'success');
+        loadUsers();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    function switchAppSubTab(sub) {
+      APP_SUBTAB = sub;
+      document.getElementById('subview-apps').classList.toggle('hidden', sub !== 'apps');
+      document.getElementById('subview-emails').classList.toggle('hidden', sub !== 'emails');
+      document.getElementById('subtab-apps').className = sub === 'apps'
+        ? 'px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white cursor-pointer'
+        : 'px-3.5 py-2 rounded-xl text-xs font-bold bg-white/5 text-slate-300 hover:bg-white/10 cursor-pointer';
+      document.getElementById('subtab-emails').className = sub === 'emails'
+        ? 'px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white cursor-pointer'
+        : 'px-3.5 py-2 rounded-xl text-xs font-bold bg-white/5 text-slate-300 hover:bg-white/10 cursor-pointer';
+      reloadAppOrEmailSubTab();
+    }
+
+    function reloadAppOrEmailSubTab() {
+      if (APP_SUBTAB === 'apps') loadApplications();
+      else loadEmails();
+    }
+
+    async function loadApplications() {
+      const search = document.getElementById('apps-search').value.trim().toLowerCase();
+      const status = document.getElementById('apps-status-filter').value;
+      try {
+        let rows = [];
+        try {
+          const d = await api(`/api/admin/applications?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`);
+          rows = d.applications || [];
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            const raw = await api('/api/tracker');
+            rows = (Array.isArray(raw) ? raw : []).map(a => ({
+              ...a,
+              user_name: CURRENT_USER?.name || 'Admin',
+              user_email: CURRENT_USER?.email || '',
+            })).filter(a => {
+              if (status !== 'all' && a.status !== status) return false;
+              if (search && !(`${a.title} ${a.company} ${a.location}`).toLowerCase().includes(search)) return false;
+              return true;
+            });
+          } else throw err;
+        }
+
+        document.getElementById('apps-table-body').innerHTML = rows.map(a => `
+          <tr class="hover:bg-white/[0.02]">
+            <td class="py-2.5 px-4 mono text-slate-400">#${a.id}</td>
+            <td class="py-2.5 px-4">
+              <div class="font-bold text-white">${a.user_name || 'User'}</div>
+              <div class="text-[10px] text-slate-400 mono">${a.user_email || ''}</div>
+            </td>
+            <td class="py-2.5 px-4">
+              <div class="font-bold text-white">${a.title}</div>
+              <div class="text-[11px] text-slate-400">${a.company} • ${a.location || 'Remote'}</div>
+            </td>
+            <td class="py-2.5 px-4 font-bold text-emerald-400">${a.match_score || 0}%</td>
+            <td class="py-2.5 px-4">
+              <select onchange="updateAppStage(${a.id}, this.value)" class="px-2 py-1 rounded-lg bg-slate-900 border border-white/10 text-xs text-white">
+                ${['saved', 'applied', 'review', 'interview', 'offer', 'accepted', 'rejected'].map(s => `<option value="${s}" ${a.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
+            </td>
+            <td class="py-2.5 px-4 text-[11px] text-slate-400 mono">${(a.applied_at || '').slice(0, 16)}</td>
+            <td class="py-2.5 px-4 text-right space-x-1.5">
+              <button onclick="downloadAppCv(${a.id})" class="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold cursor-pointer">📥 CV</button>
+              <button onclick="deleteApp(${a.id})" class="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 text-[11px] font-semibold cursor-pointer">Delete</button>
+            </td>
+          </tr>
+        `).join('') || '<tr><td colspan="7" class="py-6 text-center text-slate-500">No matching applications found.</td></tr>';
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function updateAppStage(id, status) {
+      try {
+        try {
+          await api(`/api/admin/applications/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            await api(`/api/tracker/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+          } else throw err;
+        }
+        toast(`Application #${id} moved to ${status}`, 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function deleteApp(id) {
+      if (!confirm(`Delete application #${id}?`)) return;
+      try {
+        try {
+          await api(`/api/admin/applications/${id}`, { method: 'DELETE' });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            await api(`/api/tracker/${id}`, { method: 'DELETE' });
+          } else throw err;
+        }
+        toast(`Deleted application #${id}`, 'success');
+        loadApplications();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function loadEmails() {
+      const search = document.getElementById('apps-search').value.trim().toLowerCase();
+      const status = document.getElementById('apps-status-filter').value;
+      try {
+        let rows = [];
+        try {
+          const d = await api(`/api/admin/emails?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}`);
+          rows = d.emails || [];
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            const raw = await api('/api/email/history');
+            rows = (Array.isArray(raw) ? raw : []).map(l => ({
+              ...l,
+              user_email: CURRENT_USER?.email || '',
+            })).filter(l => {
+              if (status !== 'all' && l.status !== status) return false;
+              if (search && !(`${l.to_email} ${l.subject}`).toLowerCase().includes(search)) return false;
+              return true;
+            });
+          } else throw err;
+        }
+
+        document.getElementById('emails-table-body').innerHTML = rows.map(l => `
+          <tr class="hover:bg-white/[0.02]">
+            <td class="py-2.5 px-4 mono text-slate-400">#${l.id}</td>
+            <td class="py-2.5 px-4 text-[11px] text-slate-300 mono">${l.user_email || ''}</td>
+            <td class="py-2.5 px-4 font-bold text-white mono">${l.to_email}</td>
+            <td class="py-2.5 px-4">
+              <div class="font-semibold text-slate-200 truncate max-w-xs">${l.subject}</div>
+              <div class="text-[10px] text-slate-400 uppercase">${l.template_type || 'initial'}</div>
+            </td>
+            <td class="py-2.5 px-4">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${l.status === 'sent' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}">${l.status}</span>
+            </td>
+            <td class="py-2.5 px-4 text-[11px] text-slate-400 mono">${(l.sent_at || '').slice(0, 16)}</td>
+            <td class="py-2.5 px-4 text-right">
+              <button onclick="deleteEmailLog(${l.id})" class="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 text-[11px] font-semibold cursor-pointer">Delete</button>
+            </td>
+          </tr>
+        `).join('') || '<tr><td colspan="7" class="py-6 text-center text-slate-500">No matching email logs found.</td></tr>';
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function deleteEmailLog(id) {
+      try {
+        await api(`/api/admin/emails/${id}`, { method: 'DELETE' });
+        toast(`Deleted email log #${id}`, 'success');
+        loadEmails();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function loadRecruiterPosts() {
+      const search = document.getElementById('posts-search').value.trim();
+      try {
+        let posts = [];
+        try {
+          const d = await api(`/api/admin/recruiter-posts?search=${encodeURIComponent(search)}`);
+          posts = d.posts || [];
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            const d = await api('/api/linkedin-posts/search', {
+              method: 'POST',
+              body: JSON.stringify({ role: search || 'Software Engineer', max_results: 25 })
+            });
+            posts = (d.posts || []).map((p, idx) => ({
+              id: idx + 1,
+              role_title: p.role || search || 'Hiring Post',
+              company: p.company || p.author_name || 'LinkedIn',
+              emails: p.emails || [],
+              snippet: p.post_text || p.snippet || '',
+            }));
+          } else throw err;
+        }
+
+        document.getElementById('posts-list').innerHTML = posts.map(p => `
+          <div class="p-3 rounded-xl glass-subtle flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-xs font-bold text-white truncate">${p.role_title || p.role_key} <span class="text-slate-400 font-normal">@ ${p.company || p.author_name}</span></div>
+              <div class="text-[11px] text-blue-400 mono mt-0.5">${(p.emails || []).join(', ') || 'No email'}</div>
+              <div class="text-[10px] text-slate-400 mt-1 line-clamp-2">${p.snippet || ''}</div>
+            </div>
+            <button onclick="deleteRecruiterPost(${p.id})" class="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 text-[10px] font-bold shrink-0 cursor-pointer">
+              Remove
+            </button>
+          </div>
+        `).join('') || '<p class="text-xs text-slate-500">No indexed posts matching query.</p>';
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function deleteRecruiterPost(id) {
+      try {
+        await api(`/api/admin/recruiter-posts/${id}`, { method: 'DELETE' });
+        toast(`Removed post #${id}`, 'success');
+        loadRecruiterPosts();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function loadBlacklist() {
+      const search = document.getElementById('bl-search').value.trim().toLowerCase();
+      try {
+        let rows = [];
+        try {
+          const d = await api(`/api/admin/blacklist?search=${encodeURIComponent(search)}`);
+          rows = d.blacklist || [];
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            const d = await api('/api/email/blacklist');
+            rows = (d.blacklist || []).filter(b => !search || (b.email || '').toLowerCase().includes(search));
+          } else throw err;
+        }
+
+        document.getElementById('blacklist-list').innerHTML = rows.map(b => `
+          <div class="p-2.5 rounded-xl glass-subtle flex items-center justify-between gap-2 text-xs">
+            <div class="min-w-0">
+              <div class="font-bold text-rose-300 mono truncate">${b.email}</div>
+              <div class="text-[10px] text-slate-400 truncate">${b.reason || 'Bounce'} • ${b.source || 'system'}</div>
+            </div>
+            <button onclick="removeBlacklist(${b.id})" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[10px] font-bold shrink-0 cursor-pointer">
+              Unblock
+            </button>
+          </div>
+        `).join('') || '<p class="text-xs text-slate-500">No blacklisted addresses found.</p>';
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function addBlacklist(e) {
+      e.preventDefault();
+      const email = document.getElementById('bl-email').value;
+      const reason = document.getElementById('bl-reason').value || 'Blocked in Back Office';
+      try {
+        let res;
+        try {
+          res = await api('/api/admin/blacklist', {
+            method: 'POST',
+            body: JSON.stringify({ email, reason })
+          });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            res = await api('/api/email/blacklist', {
+              method: 'POST',
+              body: JSON.stringify({ email, reason })
+            });
+          } else throw err;
+        }
+        toast(res.message || `Blocked ${email}`, 'success');
+        e.target.reset();
+        loadBlacklist();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function removeBlacklist(id) {
+      try {
+        let res;
+        try {
+          res = await api(`/api/admin/blacklist/${id}`, { method: 'DELETE' });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            res = await api(`/api/email/blacklist/${id}`, { method: 'DELETE' });
+          } else throw err;
+        }
+        toast(res.message || 'Unblocked email', 'success');
+        loadBlacklist();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function loadSystemConfig() {
+      try {
+        let d;
+        try {
+          d = await api('/api/admin/config');
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            d = await api('/api/jobs/scraper-config');
+          } else throw err;
+        }
+        document.getElementById('cfg-serper').value = d.serper_api_key || '';
+        document.getElementById('cfg-proxy').value = d.scraper_proxy || '';
+        document.getElementById('cfg-google-id').value = d.google_client_id || '';
+        document.getElementById('cfg-google-secret').value = d.google_client_secret || '';
+        document.getElementById('cfg-adzuna-id').value = d.adzuna_app_id || '';
+        document.getElementById('cfg-adzuna-key').value = d.adzuna_app_key || '';
+        document.getElementById('cfg-jooble').value = d.jooble_api_key || '';
+        document.getElementById('cfg-careerjet').value = d.careerjet_affid || '';
+
+        document.getElementById('backups-list').innerHTML = (d.backups || []).map(b => `
+          <div class="flex items-center justify-between p-2.5 rounded-xl glass-subtle">
+            <span class="mono font-semibold text-slate-200">${b.filename}</span>
+            <span class="text-[11px] text-slate-400 mono">${b.size_mb} MB • ${b.modified_at}</span>
+          </div>
+        `).join('') || '<p class="text-slate-400 text-xs">Daily cron backup active at <code class="mono">/etc/cron.daily/cvtomatch-db-backup</code>.</p>';
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function saveSystemConfig(e) {
+      e.preventDefault();
+      const payload = {
+        serper_api_key: document.getElementById('cfg-serper').value,
+        scraper_proxy: document.getElementById('cfg-proxy').value,
+        google_client_id: document.getElementById('cfg-google-id').value,
+        google_client_secret: document.getElementById('cfg-google-secret').value,
+        adzuna_app_id: document.getElementById('cfg-adzuna-id').value,
+        adzuna_app_key: document.getElementById('cfg-adzuna-key').value,
+        jooble_api_key: document.getElementById('cfg-jooble').value,
+        careerjet_affid: document.getElementById('cfg-careerjet').value,
+      };
+      try {
+        let res;
+        try {
+          res = await api('/api/admin/config', { method: 'POST', body: JSON.stringify(payload) });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            res = await api('/api/jobs/scraper-config', { method: 'POST', body: JSON.stringify(payload) });
+          } else throw err;
+        }
+        toast(res.message || 'Configuration saved on ' + API_BASE, 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function runMaintenance(action) {
+      try {
+        let res;
+        try {
+          res = await api(`/api/admin/maintenance/${action}`, { method: 'POST' });
+        } catch (err) {
+          if (err.status === 404 || err.status === 405) {
+            if (action === 'purge-blacklisted') {
+              res = await api('/api/email/sync-bounces', { method: 'POST' });
+            } else if (action === 'auto-reject-stale') {
+              res = await api('/api/tracker/auto-reject-unresponsive', { method: 'POST' });
+            } else {
+              throw new Error(`Deploy latest backend to VPS to run ${action}`);
+            }
+          } else throw err;
+        }
+        toast(res.message || `Completed ${action}`, 'success');
+        if (ACTIVE_TAB === 'system') loadSystemConfig();
+        if (ACTIVE_TAB === 'overview') loadOverview();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
+
+    async function checkConnectionAndInit() {
+      syncServerSelectorUI();
+      const dot = document.getElementById('conn-dot');
+      const pingLabel = document.getElementById('login-ping-status');
+      try {
+        const t0 = performance.now();
+        const r = await fetch(`${API_BASE}/api/health`);
+        const ms = Math.round(performance.now() - t0);
+        if (r.ok) {
+          dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+          if (pingLabel) {
+            pingLabel.textContent = `● Online (${ms}ms)`;
+            pingLabel.className = 'text-[10px] font-bold text-emerald-400';
+          }
+        } else {
+          throw new Error('Health check failed');
+        }
+        if (TOKEN) {
+          try {
+            const me = await api('/api/auth/me');
+            const email = (me?.email || '').toLowerCase();
+            if (me && (me.is_admin || me.role === 'admin' || ALLOWED_ADMINS.includes(email))) {
+              showAuthenticatedUI(me);
+              return;
+            }
+          } catch (_) {
+            logoutAdmin(true);
+          }
+        }
+      } catch (_) {
+        dot.className = 'w-2 h-2 rounded-full bg-rose-500';
+        if (pingLabel) {
+          pingLabel.textContent = '● Offline / Unreachable';
+          pingLabel.className = 'text-[10px] font-bold text-rose-400';
+        }
+      }
+    }
+
+    checkConnectionAndInit();
+  </script>
+</body>
+</html>

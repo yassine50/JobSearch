@@ -523,15 +523,16 @@ def _dispatch_platform_digest_email(
     subject: str,
     plain_body: str,
     html_body: str,
+    force_manual: bool = False,
 ) -> bool:
     """
     Sends the Daily Top 5 Digest strictly from CVtoMatch's official sender identity
     (never from a regular user's personal Gmail).
     Priority order:
-      1. RESEND_API_KEY (Resend HTTP API -> From: CVtoMatch AI <support@cvtomatch.com>)
+      1. RESEND_API_KEY (.env file prioritized over stale process env -> From: CVtoMatch AI <support@cvtomatch.com>)
       2. BREVO_API_KEY (Brevo HTTP API -> From: CVtoMatch AI <support@cvtomatch.com>)
       3. PLATFORM_SMTP_USER + PLATFORM_SMTP_PASSWORD (Official Platform SMTP)
-      4. Platform Admin EmailSettings (user_id == 1 or PLATFORM_ADMIN_EMAIL)
+      4. Official Admin EmailSettings fallback (yassineyoussefwx@gmail.com)
     """
     import os
     import smtplib
@@ -540,40 +541,57 @@ def _dispatch_platform_digest_email(
     from email.mime.text import MIMEText
     from email.utils import formataddr
 
+    _dispatch_platform_digest_email.last_error = ""
+    _dispatch_platform_digest_email.last_provider = ""
+
     from_name = os.getenv("PLATFORM_FROM_NAME", "CVtoMatch AI").strip() or "CVtoMatch AI"
     from_email = os.getenv("PLATFORM_FROM_EMAIL", "support@cvtomatch.com").strip() or "support@cvtomatch.com"
     reply_to_email = os.getenv("PLATFORM_REPLY_TO_EMAIL", "support@cvtomatch.com").strip() or from_email
 
     target_addr = (recipient_user.email or "").strip().lower()
-    if (
-        not target_addr
-        or target_addr.endswith(("@example.com", "@test.com", ".local", "@cvtomatch.com"))
-        or target_addr in ("cvtomatch1@gmail.com",)
-    ):
+    if not target_addr:
+        _dispatch_platform_digest_email.last_error = "User has no email address"
         return False
 
-    # Load .env fallback if RESEND_API_KEY is not yet in os.environ
-    resend_key = os.getenv("RESEND_API_KEY", "").strip()
-    if not resend_key:
-        for env_candidate in (
-            "/opt/cvtomatch/.env",
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env")),
-        ):
-            if os.path.exists(env_candidate):
-                try:
-                    with open(env_candidate, "r", encoding="utf-8") as ef:
-                        for line in ef:
-                            line = line.strip()
-                            if line.startswith("RESEND_API_KEY="):
-                                resend_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                                break
-                except Exception:
-                    pass
-            if resend_key:
-                break
+    if not force_manual and (
+        target_addr.endswith(("@example.com", "@test.com", ".local", "@cvtomatch.com"))
+        or target_addr in ("cvtomatch1@gmail.com",)
+    ):
+        _dispatch_platform_digest_email.last_error = f"Skipped internal/test address ({target_addr})"
+        return False
+
+    if force_manual and target_addr.endswith(("@example.com", "@test.com", ".local")):
+        _dispatch_platform_digest_email.last_error = f"Cannot deliver to dummy test domain ({target_addr})"
+        return False
+
+    # Always read .env files FIRST so updating /opt/cvtomatch/.env immediately overrides any stale systemd Environment= key
+    candidate_resend_keys = []
+    for env_candidate in (
+        "/opt/cvtomatch/.env",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env")),
+    ):
+        if os.path.exists(env_candidate):
+            try:
+                with open(env_candidate, "r", encoding="utf-8") as ef:
+                    for line in ef:
+                        line = line.strip()
+                        if line.startswith("RESEND_API_KEY="):
+                            k = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if k and k not in candidate_resend_keys:
+                                candidate_resend_keys.append(k)
+                                os.environ["RESEND_API_KEY"] = k
+            except Exception:
+                pass
+
+    env_key = os.getenv("RESEND_API_KEY", "").strip()
+    if env_key and env_key not in candidate_resend_keys:
+        candidate_resend_keys.append(env_key)
+
+    errors = []
 
     # 1. Resend API (Verified cvtomatch.com domain -> From: CVtoMatch AI <support@cvtomatch.com>)
-    if resend_key:
+    for resend_key in candidate_resend_keys:
         try:
             resp = requests.post(
                 "https://api.resend.com/emails",
@@ -592,10 +610,15 @@ def _dispatch_platform_digest_email(
                 timeout=15,
             )
             if 200 <= resp.status_code < 300:
+                _dispatch_platform_digest_email.last_provider = "resend (support@cvtomatch.com)"
                 return True
-            print(f"[PlatformMailer] Resend API HTTP {resp.status_code}: {resp.text}")
+            err_msg = f"Resend HTTP {resp.status_code}: {resp.text[:180]}"
+            print(f"[PlatformMailer] {err_msg}")
+            errors.append(err_msg)
         except Exception as err:
-            print(f"[PlatformMailer] Resend API warning: {err}")
+            err_msg = f"Resend error: {err}"
+            print(f"[PlatformMailer] {err_msg}")
+            errors.append(err_msg)
 
     # 2. Brevo API (9,000 free emails/mo)
     brevo_key = os.getenv("BREVO_API_KEY", "").strip()
@@ -618,13 +641,16 @@ def _dispatch_platform_digest_email(
                 timeout=15,
             )
             if 200 <= resp.status_code < 300:
+                _dispatch_platform_digest_email.last_provider = "brevo"
                 return True
+            errors.append(f"Brevo HTTP {resp.status_code}")
         except Exception as err:
             print(f"[PlatformMailer] Brevo API warning: {err}")
+            errors.append(f"Brevo error: {err}")
 
     # 3. Official Platform SMTP environment variables (Zoho Mail / Namecheap Private Email / Google Workspace)
     platform_smtp_user = os.getenv("PLATFORM_SMTP_USER", "").strip()
-    platform_smtp_pass = os.getenv("PLATFORM_SMTP_PASSWORD", "").strip()
+    platform_smtp_pass = "".join((os.getenv("PLATFORM_SMTP_PASSWORD", "") or "").split())
     platform_smtp_host = os.getenv("PLATFORM_SMTP_HOST", "smtp.zoho.com").strip()
     platform_smtp_port = int(os.getenv("PLATFORM_SMTP_PORT", "587") or 587)
     if platform_smtp_user and platform_smtp_pass:
@@ -642,11 +668,15 @@ def _dispatch_platform_digest_email(
                 server.ehlo()
                 server.login(platform_smtp_user, platform_smtp_pass)
                 server.sendmail(sender_addr, [recipient_user.email], msg.as_string())
+            _dispatch_platform_digest_email.last_provider = f"platform_smtp ({sender_addr})"
             return True
         except Exception as err:
             print(f"[PlatformMailer] Platform SMTP warning: {err}")
+            errors.append(f"Platform SMTP error: {err}")
 
-    # NEVER fall back to any user's personal EmailSettings / Gmail OAuth!
+    # NEVER fall back to any personal Gmail / EmailSettings account!
+    # All platform & password-reset emails MUST come strictly from support@cvtomatch.com.
+    _dispatch_platform_digest_email.last_error = " | ".join(errors) if errors else "No active business email provider (support@cvtomatch.com) configured"
     return False
 
 
@@ -809,7 +839,12 @@ def build_upload_cv_reminder_html(user_name: str, user_email: str) -> str:
 </html>"""
 
 
-def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: str = "") -> Dict[str, Any]:
+def dispatch_daily_top_matches_digest(
+    db: Session,
+    user_id: int,
+    role_override: str = "",
+    force_manual: bool = False,
+) -> Dict[str, Any]:
     """
     Finds the user's Top 5 new job/recruiter matches (prioritizing >=80% ATS CV match)
     and dispatches a branded HTML daily morning digest email to the user's inbox.
@@ -830,9 +865,9 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
     # CASE 1: User has NOT uploaded any CV yet -> Send branded "Upload Your CV & Start Hunting" email
     if not cv_text:
         # If this user already has another registered account (same first+last name or email prefix) WITH a CV,
-        # skip sending the Upload-CV reminder to their secondary/empty account.
+        # skip sending the Upload-CV reminder to their secondary/empty account (unless triggered manually by admin).
         norm_first = ((user.name or "").strip().lower().split(" ")[0] if user.name else "")
-        if norm_first and len(norm_first) >= 3:
+        if not force_manual and norm_first and len(norm_first) >= 3:
             sibling_users = (
                 db.query(models.User)
                 .filter(models.User.id != user.id)
@@ -851,6 +886,9 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
                         return {
                             "sent": False,
                             "mode": "skipped_secondary_account",
+                            "recipient": user.email,
+                            "provider": "",
+                            "error": "Skipped secondary account without CV",
                             "role": "",
                             "matches_count": 0,
                             "matches": [],
@@ -873,6 +911,7 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
         subject = "⚡ Upload Your CV to Unlock Your Daily Top 5 Job Matches — CVtoMatch AI"
         email_sent = False
         if user.email:
+            prev_sent_at = user.last_digest_sent_at
             try:
                 # Claim and commit timestamp BEFORE sending so a locked DB can never cause repeat spam
                 user.daily_digest_enabled = True
@@ -884,7 +923,11 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
                     subject=subject,
                     plain_body=plain_body,
                     html_body=html_body,
+                    force_manual=force_manual,
                 )
+                if not email_sent:
+                    user.last_digest_sent_at = prev_sent_at
+                    db.commit()
             except Exception as err:
                 db.rollback()
                 print(f"[DailyDigest] Upload-CV reminder skipped for user {user_id}: {err}")
@@ -892,6 +935,9 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
         return {
             "sent": email_sent,
             "mode": "upload_cv_reminder",
+            "recipient": user.email,
+            "provider": getattr(_dispatch_platform_digest_email, "last_provider", ""),
+            "error": "" if email_sent else getattr(_dispatch_platform_digest_email, "last_error", "Email dispatch failed"),
             "role": "",
             "matches_count": 0,
             "matches": [],
@@ -1076,6 +1122,7 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
 
     email_sent = False
     if top_5 and user.email:
+        prev_sent_at = user.last_digest_sent_at
         try:
             # Claim and commit timestamp BEFORE sending so a locked DB can never cause repeat spam
             user.daily_digest_enabled = True
@@ -1104,13 +1151,20 @@ def dispatch_daily_top_matches_digest(db: Session, user_id: int, role_override: 
                 subject=subject,
                 plain_body=plain_body,
                 html_body=html_body,
+                force_manual=force_manual,
             )
+            if not email_sent:
+                user.last_digest_sent_at = prev_sent_at
+                db.commit()
         except Exception as err:
             db.rollback()
             print(f"[DailyDigest] Email dispatch skipped for user {user_id}: {err}")
 
     return {
         "sent": email_sent,
+        "recipient": user.email,
+        "provider": getattr(_dispatch_platform_digest_email, "last_provider", ""),
+        "error": "" if email_sent else getattr(_dispatch_platform_digest_email, "last_error", "Email dispatch failed"),
         "role": target_role,
         "matches_count": len(top_5),
         "matches": top_5,

@@ -8,8 +8,16 @@ import BrandLogo from './BrandLogo.jsx'
 import {
   LayoutDashboard, Users, KanbanSquare,
   FileText, Mail, Settings, LogOut, Menu, X, Radar, ChevronRight, Search,
-  PanelLeftClose, PanelLeftOpen, Lock
+  PanelLeftClose, PanelLeftOpen, Lock, ShieldCheck
 } from 'lucide-react'
+
+const ADMIN_EMAILS = [
+  'yassineyoussefwx@gmail.com',
+  'yassine@test.com',
+  'yassineyoussef@gmail.com',
+  'yassine.demo@cvtomatch.com',
+  'cvtomatch1@gmail.com',
+]
 
 function NavContent({ onClose, collapsed = false, onToggleCollapse }) {
   const { user, logout, isAuth } = useAuth()

@@ -61,19 +61,25 @@ export function getCached(url, fallback = null, params = null) {
   return fallback
 }
 
+const _scheduleIdle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
+  ? (cb) => window.requestIdleCallback(cb, { timeout: 1000 })
+  : (cb) => setTimeout(cb, 50)
+
 function _setCached(url, params, data) {
   if (data === undefined || data instanceof Blob) return
   const key = normalizeCacheKey(url, params)
   _memCache.set(key, data)
   _cacheTs.set(key, Date.now())
-  try {
-    const serialized = JSON.stringify(data)
-    if (serialized.length < 350000) {
-      sessionStorage.setItem(CACHE_PREFIX + key, serialized)
+  _scheduleIdle(() => {
+    try {
+      const serialized = JSON.stringify(data)
+      if (serialized.length < 350000) {
+        sessionStorage.setItem(CACHE_PREFIX + key, serialized)
+      }
+    } catch {
+      // Ignore sessionStorage quota errors
     }
-  } catch {
-    // Ignore sessionStorage quota errors
-  }
+  })
 }
 
 export function invalidateCache() {
@@ -181,17 +187,17 @@ client.interceptors.response.use(
     const cfg = err.config
     const st = err.response?.status
     const method = (cfg?.method || 'get').toLowerCase()
+    // Retry once on transient 502/503/504 gateway errors for GET requests on the SAME origin.
+    // Never fail over to a different backend host (e.g. Render) because JWT secrets and DBs
+    // are host-specific and would cause a false 401 logout.
     if (
       cfg &&
       !cfg._retriedDirect &&
       method === 'get' && // never replay mutations (would duplicate emails / applications)
-      (!st || st === 502 || st === 503 || st === 504) &&
-      typeof window !== 'undefined' &&
-      !window.location.hostname.includes('localhost') &&
-      !window.location.hostname.includes('127.0.0.1')
+      (st === 502 || st === 503 || st === 504)
     ) {
       cfg._retriedDirect = true
-      cfg.baseURL = 'https://job-searcher-api-ux4i.onrender.com/api'
+      await new Promise(r => setTimeout(r, 800))
       return client.request(cfg)
     }
 
@@ -295,6 +301,7 @@ export function prefetchRouteData(routePath) {
     case '/seeker':
       client.get('/cv/info').catch(() => {})
       client.get('/tracker').catch(() => {})
+      client.get('/jobs/daily-digest').catch(() => {})
       break
     case '/email':
       client.get('/email/history').catch(() => {})

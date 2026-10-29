@@ -63,7 +63,7 @@ export default function EasyApplyModal({
 
 I am excited to submit my simplified application for the ${title} position.
 
-My background aligns closely with the technical and operational requirements of this role. I have extensive experience building scalable solutions and delivering high-impact software.
+My background aligns closely with the technical and operational requirements of this role.
 
 I have attached my resume for your review and look forward to discussing how I can contribute to ${comp}.
 

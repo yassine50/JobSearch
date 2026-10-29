@@ -36,6 +36,8 @@ const CORE_SITES = [
     hint: 'Remotive, RemoteOK, Jobicy, Himalayas, We Work Remotely, Working Nomads, Arbeitnow' },
   { id: 'ats', label: '🏢 Company Careers (ATS)', color: 'bg-violet-600',
     hint: 'Greenhouse, Lever & Ashby career pages — direct from the employer, verified still open' },
+  { id: 'local_boards', label: '📍 Local Country Boards', color: 'bg-cyan-600',
+    hint: 'Tanitjobs, Keejob, eJobs.ro, BestJobs, Hipo, DevJob.ro, Welcome to the Jungle, APEC, HelloWork, Free-Work, StepStone, ReKrute & more' },
   { id: 'hackernews', label: '🟧 HN Who\'s Hiring', color: 'bg-orange-600',
     hint: 'Latest Hacker News "Who is hiring?" thread' },
   { id: 'official_apis', label: 'Adzuna / Jooble / Careerjet', color: 'bg-emerald-600',
@@ -70,11 +72,23 @@ export default function JobBoardScraper({
   const [hasSerperKey, setHasSerperKey] = useState(false)
   const [upskillOpen, setUpskillOpen] = useState(false)
 
-  // Every search automatically covers ALL sources — the user doesn't pick boards.
-  // Google Jobs is only included when a Serper key is configured (otherwise it returns nothing).
+  // Every search automatically covers relevant sources.
+  // When a specific country is selected (not Worldwide/Remote), skip global remote-only boards.
+  const isGlobalOrRemoteLoc = useMemo(
+    () => selectedCountries.some(c => {
+      const low = (c || '').trim().toLowerCase()
+      return !low || low === 'worldwide' || low === 'global' || low === 'remote' || low.startsWith('remote ')
+    }),
+    [selectedCountries]
+  )
   const selectedSites = useMemo(
-    () => CORE_SITES.map(s => s.id).filter(id => id !== 'google' || hasSerperKey),
-    [hasSerperKey]
+    () => CORE_SITES.map(s => s.id).filter(id => {
+      if (id === 'google' && !hasSerperKey) return false
+      if ((id === 'remote_boards' || id === 'hackernews') && !isGlobalOrRemoteLoc && !isRemote) return false
+      if (id === 'local_boards' && isGlobalOrRemoteLoc) return false
+      return true
+    }),
+    [hasSerperKey, isGlobalOrRemoteLoc, isRemote]
   )
   const siteLabel = (id) => (CORE_SITES.find(s => s.id === id)?.label || id).replace(/^[^\w]+\s*/, '')
 
@@ -333,7 +347,11 @@ export default function JobBoardScraper({
   }, [filters])
 
   const checkJobAgeMatch = (job, datePostedFilter) => {
-    if (!datePostedFilter || datePostedFilter === 'all') return true
+    if (job.is_closed) return false
+    if (!datePostedFilter || datePostedFilter === 'all') {
+      if (job.age_hours != null && job.age_hours > 2160.0) return false
+      return true
+    }
     const subDayMap = { '1h': 1.0, '3h': 3.0, '6h': 6.0, '24h': 24.0 }
     const isSubDayOr24h = datePostedFilter in subDayMap
 
@@ -348,28 +366,45 @@ export default function JobBoardScraper({
     if (datePostedFilter === '24h' && job.is_under_24h) return true
 
     // Fallback check on date_posted or age_str
-    const dateStr = String(job.date_posted || job.age_str || '').toLowerCase().trim()
-    if (!dateStr) {
-      // If sub-day or 24h filter is strictly requested and we have no proof it's fresh, exclude it
-      if (isSubDayOr24h) return false
-      return true
-    }
-
-    // Obvious older indicators
-    if (dateStr.includes('week') || dateStr.includes('wk') || dateStr.includes('mo') || dateStr.includes('month') || dateStr.includes('year') || dateStr.includes('yr')) {
+    const dateStr = String(job.age_str || job.date_posted || '').toLowerCase().trim()
+    if (!dateStr || dateStr === 'recently' || dateStr === 'recent' || dateStr === 'n/a') {
+      // Never allow unverified/undated jobs to bypass an explicit time filter (24h, Past week, Past month)
       return false
     }
-    const matchDays = dateStr.match(/(\d+)\s*(?:d|day)/)
+
+    // Reject year-old postings for all filters
+    if (/\b(?:\d+\s*(?:years?|yrs?|yr|y|ans?)|a\s+year|un\s+an)\b/.test(dateStr)) {
+      return false
+    }
+
+    // Handle months ("1mo ago", "2 months ago")
+    const matchMonths = dateStr.match(/(\d+)\s*(?:months?|mos?|mo|mois)\b/)
+    if (matchMonths || /\b(?:a\s+month|un\s+mois)\b/.test(dateStr)) {
+      const months = matchMonths ? parseInt(matchMonths[1], 10) : 1
+      if (datePostedFilter === 'month') return months <= 1
+      return false
+    }
+
+    // Handle weeks ("1w ago", "2 weeks ago", "3w ago")
+    const matchWeeks = dateStr.match(/(\d+)\s*(?:weeks?|wks?|w|semaines?)\b/)
+    if (matchWeeks || /\b(?:a\s+week|une\s+semaine)\b/.test(dateStr)) {
+      const weeks = matchWeeks ? parseInt(matchWeeks[1], 10) : 1
+      if (datePostedFilter === 'week') return weeks <= 1
+      if (datePostedFilter === 'month') return weeks <= 4
+      return false
+    }
+
+    const matchDays = dateStr.match(/(\d+)\s*(?:d|days?|jours?)\b/)
     if (matchDays) {
       const days = parseInt(matchDays[1], 10)
       if (datePostedFilter in { '1h': 1, '3h': 1, '6h': 1 }) return false
       if (datePostedFilter === '24h') return days <= 1
-      if (datePostedFilter === 'week' && days > 7) return false
-      if (datePostedFilter === 'month' && days > 30) return false
+      if (datePostedFilter === 'week') return days <= 7
+      if (datePostedFilter === 'month') return days <= 30
       return true
     }
 
-    const matchHours = dateStr.match(/(\d+)\s*(?:h|hr|hour)/)
+    const matchHours = dateStr.match(/(\d+)\s*(?:h|hrs?|hours?|heures?)\b/)
     if (matchHours) {
       const hours = parseInt(matchHours[1], 10)
       if (isSubDayOr24h) return hours <= subDayMap[datePostedFilter]
@@ -379,11 +414,11 @@ export default function JobBoardScraper({
     if (dateStr.includes('just now') || dateStr.includes('minute') || dateStr.includes('min') || dateStr.includes('m ago') || dateStr.includes('sec')) {
       return true
     }
-    if (dateStr.includes('today') || dateStr.includes('yesterday')) {
+    if (dateStr.includes('today') || dateStr.includes('yesterday') || dateStr.includes('hier')) {
       return !['1h', '3h', '6h'].includes(datePostedFilter)
     }
 
-    // Try parsing ISO date
+    // Try parsing ISO / calendar date
     const parsed = Date.parse(dateStr)
     if (!isNaN(parsed)) {
       const diffHours = (Date.now() - parsed) / (1000 * 3600)
@@ -392,7 +427,7 @@ export default function JobBoardScraper({
       if (datePostedFilter === 'month') return diffHours <= 720.0
     }
 
-    return !isSubDayOr24h
+    return false
   }
 
   // Multi-criteria client-side filtering matching the 14 LinkedIn categories

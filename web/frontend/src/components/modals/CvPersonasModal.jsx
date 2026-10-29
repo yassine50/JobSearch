@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  X, Layers, Upload, CheckCircle2, Trash2, Sparkles, FileText, Loader2, Check
+  X, Layers, Upload, CheckCircle2, Trash2, Sparkles, FileText, Loader2, Check, Download
 } from 'lucide-react'
 import client from '../../api/client.js'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -201,6 +201,18 @@ export default function CvPersonasModal({ isOpen, onClose, onPersonaChanged }) {
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const tok = localStorage.getItem('token') || ''
+                          window.open(`/api/cv/personas/${p.id}/download?token=${encodeURIComponent(tok)}`, '_blank')
+                        }}
+                        className="px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        title={`Download ${p.filename || p.persona_name}`}
+                      >
+                        <Download size={13} />
+                        <span>Download</span>
+                      </button>
                       {!p.is_active && (
                         <button
                           type="button"

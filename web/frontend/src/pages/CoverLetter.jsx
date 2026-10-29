@@ -117,9 +117,12 @@ export default function CoverLetter() {
       await client.post('/email/send', {
         to_email: emailForm.to_email,
         to_name: emailForm.to_name || 'Hiring Manager',
-        subject: `Cover Letter — ${form.job_title} | Application`,
+        subject: `Cover Letter — ${form.job_title || 'Application'}${form.company ? ` at ${form.company}` : ''}`,
         body: letter,
-        template_type: 'cover_letter'
+        template_type: 'cover_letter',
+        job_title: form.job_title || '',
+        company: form.company || '',
+        job_description: form.job_description || ''
       })
       setSendMsg('✅ Email sent successfully!')
       setTimeout(() => { setEmailModal(false); setSendMsg('') }, 2000)
@@ -136,9 +139,7 @@ export default function CoverLetter() {
         <Sidebar />
         <main className="md:ml-64 flex-1 min-w-0 px-5 sm:px-8 lg:px-10 pt-20 md:pt-8 lg:pt-10 pb-14 w-full">
           {/* Hero Header */}
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
+          <div
             className="glass-panel rounded-3xl p-5 md:p-6 mb-6 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4"
           >
             <div className="glow-line-top" />
@@ -188,9 +189,9 @@ export default function CoverLetter() {
                 )}
               </button>
             </div>
-          </motion.div>
+          </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 min-h-[540px]">
             {/* Left: Configuration Form */}
             <div className="glass-card rounded-3xl p-6 relative overflow-hidden">
               <div className="glow-line-top" />
@@ -198,15 +199,31 @@ export default function CoverLetter() {
                 Target Role &amp; Job Description
               </h2>
 
-              {!cvUploaded && (
-                <div className="bg-slate-950/60 border border-blue-500/30 text-slate-300 text-xs rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3">
-                  <span>⚠️ Upload your PDF or DOCX resume to unlock 100% ATS CV tailoring &amp; grounded letters.</span>
-                  <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shrink-0 cursor-pointer transition">
-                    Upload Now
-                    <input type="file" accept=".pdf,.docx,.txt" onChange={handleDirectUpload} className="hidden" />
-                  </label>
-                </div>
-              )}
+              <div className="bg-slate-950/60 border border-blue-500/30 text-slate-300 text-xs rounded-xl px-4 py-2.5 mb-4 min-h-[46px] flex items-center justify-between gap-3">
+                {cvUploaded ? (
+                  <>
+                    <span className="flex items-center gap-2 text-emerald-300 font-semibold truncate">
+                      <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                      <span className="truncate">Grounded on active resume: <strong>{cvInfo.persona_name || cvInfo.filename}</strong></span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPersonasOpen(true)}
+                      className="px-3 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-slate-200 font-bold shrink-0 cursor-pointer transition"
+                    >
+                      Switch CV
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span>⚠️ Upload your PDF or DOCX resume to unlock 100% ATS CV tailoring &amp; grounded letters.</span>
+                    <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold shrink-0 cursor-pointer transition">
+                      Upload Now
+                      <input type="file" accept=".pdf,.docx,.txt" onChange={handleDirectUpload} className="hidden" />
+                    </label>
+                  </>
+                )}
+              </div>
 
               <div className="space-y-4">
                 {[

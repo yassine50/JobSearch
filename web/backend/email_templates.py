@@ -121,7 +121,7 @@ def get_application_email(
 
 Je vous soumets par la présente ma candidature pour le poste de {clean_title}, {phrase_fr}.
 
-Ayant pris connaissance de vos exigences techniques, mon profil correspond étroitement aux compétences que vous recherchez. Je conçois des solutions logicielles performantes, maintenables et évolutives, et je serais ravi de mettre mon expertise au service de vos prochains projets.
+Ayant pris connaissance de vos exigences techniques, mon profil correspond étroitement aux compétences que vous recherchez.
 
 Vous trouverez mon curriculum vitae ci-joint pour examen. Je me tiens à votre entière disposition pour un échange afin d'approfondir l'adéquation de mon parcours avec vos objectifs.
 
@@ -138,7 +138,7 @@ En vous remerciant de l'attention que vous porterez à ma démarche, je vous pri
 
 I am writing to formally submit my application for the {clean_title} position {phrase_en}.
 
-Having reviewed your technical requirements, my experience aligns closely with the skills your team is seeking. I specialize in building high-performance, maintainable software and would love to contribute to your upcoming projects and engineering milestones.
+Having reviewed your technical requirements, my experience aligns closely with the skills your team is seeking.
 
 I have attached my resume for your review. Thank you for your time and consideration, and I look forward to the opportunity to speak with you.
 

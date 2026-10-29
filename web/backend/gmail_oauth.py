@@ -24,13 +24,14 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 import requests
+import secrets
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 
 from . import models
-from .auth import get_current_user, SECRET_KEY
+from .auth import get_current_user, SECRET_KEY, create_access_token, get_password_hash, is_admin
 from .database import get_db
 
 logger = logging.getLogger("jobsearcher.gmail_oauth")
@@ -76,12 +77,17 @@ _ALLOWED_ORIGINS = {
     "https://www.cvtomatch.com",
     "https://cvtomatch.com",
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 }
 
 
 def _safe_origin(origin: str) -> str:
     """Exact-match origin whitelist (prevents open redirects like cvtomatch.com.evil.io)."""
     clean = (origin or "").strip().rstrip("/")
+    if clean.startswith(("http://localhost:", "http://127.0.0.1:")):
+        return clean
     extra = {o.strip().rstrip("/") for o in (os.getenv("ALLOWED_FRONTEND_ORIGINS") or "").split(",") if o.strip()}
     return clean if clean in (_ALLOWED_ORIGINS | extra | {frontend_url()}) else ""
 
@@ -89,8 +95,10 @@ def _safe_origin(origin: str) -> str:
 def redirect_uri(origin: str = "") -> str:
     clean_origin = _safe_origin(origin)
     if clean_origin:
-        if "localhost:5173" in clean_origin:
+        if "localhost" in clean_origin or "127.0.0.1" in clean_origin:
             return "http://localhost:8000/api/email/google/callback"
+        if clean_origin == "https://cvtomatch.com":
+            return "https://www.cvtomatch.com/api/email/google/callback"
         return f"{clean_origin}/api/email/google/callback"
     return f"{backend_url()}/api/email/google/callback"
 
@@ -169,23 +177,100 @@ def auth_url(origin: str = "", current_user: models.User = Depends(get_current_u
     return {"url": "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)}
 
 
+@router.get("/login-url")
+def login_url(origin: str = "", role: str = "seeker"):
+    """
+    Build a server-side Google OAuth 2.0 Sign-In URL using the authorized
+    `/api/email/google/callback` redirect URI (avoids GIS JavaScript `origin_mismatch`).
+    """
+    cid, _ = _client()
+    if not is_configured():
+        raise HTTPException(400, "Google Sign-In is not configured on this server.")
+    clean_origin = _safe_origin(origin) or frontend_url()
+    r_uri = redirect_uri(clean_origin)
+    safe_role = role if role in ("seeker", "recruiter", "both") else "seeker"
+    state = jwt.encode({
+        "p": "login",
+        "role": safe_role,
+        "origin": clean_origin,
+        "r_uri": r_uri,
+        "exp": datetime.utcnow() + timedelta(minutes=10),
+    }, SECRET_KEY, algorithm="HS256")
+    params = {
+        "client_id": cid,
+        "redirect_uri": r_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "prompt": "select_account",
+        "state": state,
+    }
+    return {"url": "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)}
+
+
+def _popup_login_html(front_origin: str, payload_dict: dict) -> HTMLResponse:
+    js_payload = json.dumps(payload_dict)
+    safe_front = json.dumps(front_origin or frontend_url())
+    html_str = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Signing in with Google...</title></head>
+<body style="background:#050811;color:#fff;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <div style="text-align:center;">
+    <div style="font-size:15px;font-weight:700;margin-bottom:6px;">Completing Google Sign-In...</div>
+    <div style="font-size:12px;color:#94a3b8;">This window will close automatically.</div>
+  </div>
+  <script>
+    (function() {{
+      var data = {js_payload};
+      var front = {safe_front};
+      try {{
+        if (window.opener && !window.opener.closed) {{
+          window.opener.postMessage(data, "*");
+          setTimeout(function() {{ window.close(); }}, 80);
+          return;
+        }}
+      }} catch (e) {{}}
+      if (data.access_token) {{
+        window.location.replace(front + "/?google_auth_token=" + encodeURIComponent(data.access_token));
+      }} else {{
+        window.location.replace(front + "/?google_auth_error=" + encodeURIComponent(data.error || "Google authentication failed"));
+      }}
+    }})();
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html_str)
+
+
 @router.get("/callback")
 def callback(code: str = "", state: str = "", error: str = "", db: Session = Depends(get_db)):
     back = f"{frontend_url()}/settings"
     r_uri = redirect_uri()
+    purpose = "gmail"
+    front_origin = frontend_url()
+    role = "seeker"
+    uid = 0
     try:
         payload = jwt.decode(state, SECRET_KEY, algorithms=["HS256"])
-        if payload.get("p") != "gmail":
+        purpose = payload.get("p") or "gmail"
+        if purpose not in ("gmail", "login"):
             raise JWTError("bad purpose")
-        uid = int(payload["uid"])
         if payload.get("origin") and _safe_origin(payload["origin"]):
-            back = f"{_safe_origin(payload['origin'])}/settings"
+            front_origin = _safe_origin(payload["origin"])
+            back = f"{front_origin}/settings"
         if payload.get("r_uri"):
             r_uri = payload["r_uri"]
+        if purpose == "gmail":
+            uid = int(payload["uid"])
+        else:
+            role = payload.get("role") if payload.get("role") in ("seeker", "recruiter", "both") else "seeker"
     except Exception:
+        if purpose == "login":
+            return _popup_login_html(front_origin, {"type": "cvtomatch_google_auth", "error": "Sign-in session expired. Please try again."})
         return RedirectResponse(f"{back}?gmail=error&reason=expired")
 
     if error:
+        if purpose == "login":
+            return _popup_login_html(front_origin, {"type": "cvtomatch_google_auth", "error": error[:100]})
         from urllib.parse import quote
         return RedirectResponse(f"{back}?gmail=error&reason={quote(error[:100])}")
 
@@ -194,9 +279,53 @@ def callback(code: str = "", state: str = "", error: str = "", db: Session = Dep
         "code": code, "client_id": cid, "client_secret": secret,
         "redirect_uri": r_uri, "grant_type": "authorization_code"}, timeout=15)
     if r.status_code != 200:
-        logger.warning(f"[Gmail] code exchange failed: {r.text[:300]}")
+        logger.warning(f"[GoogleOAuth] code exchange failed: {r.text[:300]}")
+        if purpose == "login":
+            return _popup_login_html(front_origin, {"type": "cvtomatch_google_auth", "error": "Failed to exchange Google authorization code."})
         return RedirectResponse(f"{back}?gmail=error&reason=exchange")
     tok = r.json()
+
+    if purpose == "login":
+        info = requests.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {tok.get('access_token', '')}"},
+            timeout=10,
+        ).json()
+        email = (info.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            return _popup_login_html(front_origin, {"type": "cvtomatch_google_auth", "error": "Google account did not provide a valid email."})
+        raw_name = (info.get("name") or info.get("given_name") or "").strip()
+        if not raw_name or len(raw_name) < 2:
+            raw_name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+        user = db.query(models.User).filter(models.User.email == email).first()
+        if not user:
+            user = models.User(
+                name=raw_name,
+                email=email,
+                hashed_password=get_password_hash(secrets.token_urlsafe(24)),
+                role=role,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        elif not user.name or not user.name.strip():
+            user.name = raw_name
+            db.commit()
+            db.refresh(user)
+        jwt_tok = create_access_token({"sub": user.email})
+        user_payload = {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "is_admin": is_admin(user),
+        }
+        return _popup_login_html(front_origin, {
+            "type": "cvtomatch_google_auth",
+            "access_token": jwt_tok,
+            "user": user_payload,
+        })
+
     if "gmail.send" not in tok.get("scope", ""):
         return RedirectResponse(f"{back}?gmail=error&reason=permission")
     refresh = tok.get("refresh_token")

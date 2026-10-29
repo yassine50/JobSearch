@@ -212,15 +212,30 @@ def _build_mime_message(settings, current_user, to_email: str, to_name: str,
             cv = cached_cv if cached_cv is not None else (
                 _get_active_cv(db, current_user.id) if db else None
             )
-            if cv and cv.file_data:
+            if cv and cv.file_data and not (cv.filename or "").lower().endswith(".txt"):
                 fname = cv.filename or "Resume.pdf"
                 part = MIMEApplication(bytes(cv.file_data), Name=fname)
                 part.add_header('Content-Disposition', 'attachment', filename=fname)
                 msg.attach(part)
             elif cv and cv.text_content:
-                part = MIMEApplication(cv.text_content.encode("utf-8"), Name="Resume.txt")
-                part.add_header('Content-Disposition', 'attachment', filename="Resume.txt")
-                msg.attach(part)
+                attached_pdf = False
+                try:
+                    from ..tailoring import honest_tailored_attachment
+                    gen_pdf, gen_name, _, _ = honest_tailored_attachment(
+                        cv, "Software Engineer", "", "", allow_low_confidence=True
+                    )
+                    if gen_pdf:
+                        pdf_fname = gen_name or "Resume.pdf"
+                        part = MIMEApplication(bytes(gen_pdf), Name=pdf_fname)
+                        part.add_header('Content-Disposition', 'attachment', filename=pdf_fname)
+                        msg.attach(part)
+                        attached_pdf = True
+                except Exception:
+                    pass
+                if not attached_pdf:
+                    part = MIMEApplication(cv.text_content.encode("utf-8"), Name="Resume.txt")
+                    part.add_header('Content-Disposition', 'attachment', filename="Resume.txt")
+                    msg.attach(part)
     return msg
 
 
@@ -560,30 +575,73 @@ def send_email(req: SendEmailRequest,
                 models.Application.user_id == current_user.id
             ).first()
         else:
+            company_hint = (req.company or "").strip()
+            if not company_hint and req.subject:
+                company_hint = (
+                    req.subject.replace("Application for", "")
+                    .replace("Cover Letter —", "")
+                    .split("—")[0]
+                    .split("|")[0]
+                    .strip()
+                )
+            filters = [models.Application.notes.contains(req.to_email)]
+            if company_hint:
+                filters.append(models.Application.company.ilike(f"%{company_hint}%"))
+            from sqlalchemy import or_
             app_to_update = db.query(models.Application).filter(
                 models.Application.user_id == current_user.id,
-                models.Application.status == 'saved',
-                (models.Application.notes.contains(req.to_email) | models.Application.company.contains(req.subject.replace('Application for', '').split('—')[0].strip()))
+                models.Application.status == "saved",
+                or_(*filters),
             ).first()
 
-        if req.attach_cv:
-            # Automatic email send strictly attaches authentic original CV (cv.file_data)
-            custom_pdf_bytes = None
-            custom_pdf_name = None
+        if req.attach_cv and req.customize_cv and (req.job_title or (app_to_update and app_to_update.title)):
+            from ..utils import get_active_cv
+            from ..tailoring import honest_tailored_attachment
+            cv_row = get_active_cv(db, current_user.id)
+            if cv_row:
+                try:
+                    custom_pdf_bytes, custom_pdf_name, effective_score, _ = honest_tailored_attachment(
+                        cv_row,
+                        req.job_title or (app_to_update.title if app_to_update else ""),
+                        req.company or (app_to_update.company if app_to_update else ""),
+                        req.job_description or "",
+                    )
+                except Exception:
+                    custom_pdf_bytes = None
+                    custom_pdf_name = None
 
         _dispatch_smtp(settings, current_user, req.to_email, req.to_name,
                        req.subject, req.body, req.attach_cv, db,
                        custom_attachment_bytes=custom_pdf_bytes,
                        custom_attachment_name=custom_pdf_name)
 
+        now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
         if app_to_update:
             app_to_update.status = "applied"
             app_to_update.applied_at = datetime.utcnow()
             if not app_to_update.follow_up_date:
                 app_to_update.follow_up_date = datetime.utcnow() + timedelta(days=3)
-            now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
+            if custom_pdf_bytes:
+                app_to_update.tailored_cv_data = custom_pdf_bytes
+                app_to_update.tailored_cv_filename = custom_pdf_name
             app_to_update.notes = (app_to_update.notes or "") + f"\n[{now_str}] 📤 Dispatched email to {req.to_email}" + (" (Tailored CV attached)" if custom_pdf_bytes else "")
             req.application_id = app_to_update.id
+        elif (req.job_title or "").strip() and (req.company or "").strip():
+            new_app = models.Application(
+                user_id=current_user.id,
+                title=req.job_title.strip(),
+                company=req.company.strip(),
+                status="applied",
+                match_score=int(round(effective_score)) if effective_score else 75,
+                applied_at=datetime.utcnow(),
+                follow_up_date=datetime.utcnow() + timedelta(days=3),
+                tailored_cv_data=custom_pdf_bytes,
+                tailored_cv_filename=custom_pdf_name,
+                notes=f"[{now_str}] 📤 Dispatched {req.template_type} email to {req.to_email}",
+            )
+            db.add(new_app)
+            db.flush()
+            req.application_id = new_app.id
 
         log = models.EmailLog(
             user_id=current_user.id,
@@ -980,15 +1038,23 @@ def get_history(db: Session = Depends(get_db),
 def save_settings(req: SettingsRequest,
                   db: Session = Depends(get_db),
                   current_user: models.User = Depends(get_current_user)):
+    clean_user = (req.smtp_user or "").strip()
+    clean_pwd = "".join((req.smtp_password or "").split())
     s = db.query(models.EmailSettings).filter(
         models.EmailSettings.user_id == current_user.id).first()
     if s:
-        s.smtp_host=req.smtp_host; s.smtp_port=req.smtp_port
-        s.smtp_user=req.smtp_user; s.smtp_password=req.smtp_password
-        s.sender_name=req.sender_name
-        s.auth_method = "smtp"; s.gmail_refresh_token = ""
+        s.smtp_host = (req.smtp_host or "smtp.gmail.com").strip()
+        s.smtp_port = req.smtp_port
+        s.smtp_user = clean_user
+        s.smtp_password = clean_pwd
+        s.sender_name = (req.sender_name or "").strip()
+        s.auth_method = "smtp"
+        s.gmail_refresh_token = ""
     else:
-        s = models.EmailSettings(user_id=current_user.id, **req.dict())
+        payload = req.dict()
+        payload["smtp_user"] = clean_user
+        payload["smtp_password"] = clean_pwd
+        s = models.EmailSettings(user_id=current_user.id, **payload)
         db.add(s)
     db.commit()
     return {"message": "Email settings saved!"}

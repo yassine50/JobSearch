@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
@@ -12,11 +12,7 @@ import {
 
 function Section({ title, sub, icon: Icon, children }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="glass-panel rounded-3xl p-6 mb-5 relative overflow-hidden"
-    >
+    <div className="glass-panel rounded-3xl p-6 mb-5 relative overflow-hidden">
       <div className="glow-line-top" />
       <div className="flex items-center gap-3 mb-5 pb-4 border-b border-white/[0.07]">
         <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
@@ -28,7 +24,7 @@ function Section({ title, sub, icon: Icon, children }) {
         </div>
       </div>
       {children}
-    </motion.div>
+    </div>
   )
 }
 
@@ -219,6 +215,14 @@ export default function Settings() {
     }
   }
 
+  const filteredBlacklist = useMemo(() => {
+    const q = blSearch.trim().toLowerCase()
+    const list = !q
+      ? blacklist
+      : blacklist.filter(b => b.email?.toLowerCase().includes(q) || (b.reason || '').toLowerCase().includes(q))
+    return list.slice(0, 80)
+  }, [blacklist, blSearch])
+
   return (
     <PageWrapper>
       <div className="flex min-h-screen bg-[#050811] text-white">
@@ -226,11 +230,7 @@ export default function Settings() {
         <main className="md:ml-64 flex-1 min-w-0 px-5 sm:px-8 lg:px-12 pt-20 md:pt-8 lg:pt-10 pb-14 w-full">
 
           {/* Hero Header */}
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-panel rounded-3xl p-6 mb-6 relative overflow-hidden"
-          >
+          <div className="glass-panel rounded-3xl p-6 mb-6 relative overflow-hidden">
             <div className="glow-line-top" />
             <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] font-bold mb-1.5">
               <Sparkles size={11} className="text-amber-400" />
@@ -243,7 +243,7 @@ export default function Settings() {
             <p className="text-xs text-slate-400 mt-1">
               Manage your identity, 1-click Gmail OAuth connection, custom outreach templates, and global bounce protection.
             </p>
-          </motion.div>
+          </div>
 
           {/* Profile */}
           <Section title="Account Profile" sub="Update your display name and security credentials" icon={User}>
@@ -516,113 +516,6 @@ export default function Settings() {
                 <Plus size={14} className="text-blue-400" /> New Template
               </motion.button>
             )}
-          </Section>
-
-          {/* Blacklisted & Bounced Emails */}
-          <Section title="Blacklisted & Bounced Emails" sub="Zero-bounce protection across all recruiter post & job board searches" icon={ShieldAlert}>
-            <div className="space-y-4">
-              <div className="bg-slate-950/60 border border-blue-500/25 rounded-2xl p-4 text-xs text-slate-300 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div>
-                  <p className="font-extrabold text-white mb-0.5">🌐 Platform-Wide Global Protection &amp; Zero Bounces</p>
-                  Emails flagged with <strong>"Message bloqué"</strong> or <strong>"Adresse introuvable"</strong> are permanently blacklisted for <strong>all users</strong> across the platform.
-                </div>
-                <button
-                  onClick={handleSyncBounces}
-                  disabled={syncingBounces}
-                  className="shimmer-btn shrink-0 flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-extrabold text-xs px-4 py-2 rounded-xl shadow-md transition cursor-pointer"
-                >
-                  {syncingBounces ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                  <span>{syncingBounces ? 'Scanning...' : 'Sync Bounces'}</span>
-                </button>
-              </div>
-
-              {/* Manual Add Input */}
-              <div className="flex gap-2 flex-wrap sm:flex-nowrap">
-                <input
-                  value={newBlEmail}
-                  onChange={e => setNewBlEmail(e.target.value)}
-                  placeholder="Block an invalid email globally (e.g. dead@company.com)"
-                  className="flex-1 glass-input rounded-xl px-3.5 py-2 text-xs placeholder-slate-600"
-                />
-                <input
-                  value={newBlReason}
-                  onChange={e => setNewBlReason(e.target.value)}
-                  placeholder="Reason (optional)"
-                  className="w-36 glass-input rounded-xl px-3 py-2 text-xs placeholder-slate-600"
-                />
-                <button
-                  onClick={handleAddBlacklist}
-                  className="bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-white px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0"
-                >
-                  Block Globally
-                </button>
-              </div>
-
-              {/* Search filter */}
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <div className="relative flex-1">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-400" />
-                  <input
-                    value={blSearch}
-                    onChange={e => setBlSearch(e.target.value)}
-                    placeholder="Filter blacklisted emails..."
-                    className="w-full glass-input rounded-xl pl-8 pr-3 py-1.5 text-xs"
-                  />
-                </div>
-                <span className="text-xs text-slate-400 font-bold shrink-0">
-                  {blacklist.length} dead email(s) blocked
-                </span>
-              </div>
-
-              {/* Blacklist Table */}
-              <div className="max-h-60 overflow-y-auto border border-white/[0.08] rounded-2xl bg-[#050811]/70 divide-y divide-white/[0.05]">
-                {blacklist.length === 0 ? (
-                  <p className="text-xs text-slate-500 text-center py-6">
-                    No blacklisted emails found. Click "Sync Bounces" to scan your Gmail inbox.
-                  </p>
-                ) : (
-                  blacklist
-                    .filter(b => !blSearch || b.email.toLowerCase().includes(blSearch.toLowerCase()) || (b.reason || '').toLowerCase().includes(blSearch.toLowerCase()))
-                    .map(b => (
-                      <div key={b.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-white/[0.03] transition text-xs">
-                        <div className="min-w-0 flex-1 mr-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-slate-200">{b.email}</span>
-                            <span className={`text-[10px] px-2 py-0.2 rounded-full font-bold border ${
-                              b.is_mine
-                                ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
-                                : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-                            }`}>
-                              {b.is_mine ? '👤 You' : '🌐 Global'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`text-[10px] px-2 py-0.2 rounded-md font-semibold border ${
-                              b.reason?.includes('bloqué')
-                                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                                : b.reason?.includes('introuvable')
-                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                                : 'bg-white/[0.04] text-slate-400 border-white/[0.08]'
-                            }`}>
-                              {b.reason}
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              {b.created_at?.split(' ')[0] || ''}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleRemoveBlacklist(b.id)}
-                          className="text-slate-500 hover:text-rose-400 transition p-1.5 rounded-lg hover:bg-rose-500/10 cursor-pointer"
-                          title="Unblock this email"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    ))
-                )}
-              </div>
-            </div>
           </Section>
 
           {/* Chrome Extension Autofill Card */}

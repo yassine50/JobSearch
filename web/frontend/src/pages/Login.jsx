@@ -218,6 +218,9 @@ export default function Login() {
     password: ''
   }))
   const [rf, setRf] = useState({ name: '', email: '', password: '', role: 'seeker' })
+  const [fpStep, setFpStep] = useState('request') // 'request' | 'verify'
+  const [fpForm, setFpForm] = useState({ email: '', code: '', newPassword: '' })
+  const [fpNotice, setFpNotice] = useState('')
 
   // Live Guest App Test Workbench state
   const [testTab, setTestTab] = useState('job_boards') // 'job_boards' | 'linkedin_posts'
@@ -250,6 +253,32 @@ export default function Login() {
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }, 250)
     }
+    try {
+      const qs = new URLSearchParams(window.location.search)
+      const gTok = (qs.get('google_auth_token') || '').trim()
+      const gErr = (qs.get('google_auth_error') || '').trim()
+      if (gTok) {
+        client.get('/auth/me', { headers: { Authorization: `Bearer ${gTok}` } }).then(({ data: u }) => {
+          try { localStorage.setItem('saved_login_email', u?.email || '') } catch {}
+          login(gTok, u)
+          navigate(getPostAuthDestination(), { replace: true })
+        }).catch(() => {})
+      } else if (gErr) {
+        setErr(gErr)
+      }
+      const rEmail = (qs.get('reset_email') || '').trim()
+      const rCode = (qs.get('reset_code') || '').trim()
+      if (rEmail) {
+        setTab('forgot')
+        setFpForm(prev => ({ ...prev, email: rEmail, code: rCode }))
+        setFpStep(rCode ? 'verify' : 'request')
+        if (rCode) setFpNotice(`Reset code ${rCode} pre-filled for ${rEmail}. Enter your new password below.`)
+        setTimeout(() => {
+          const el = document.getElementById('auth-workbench')
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 250)
+      }
+    } catch {}
   }, [])
 
   useEffect(() => {
@@ -419,52 +448,58 @@ export default function Login() {
     setErr('')
     setGoogleBusy(true)
     try {
-      await ensureGoogleScript()
-      if (!window.google?.accounts?.oauth2) {
-        throw new Error('Google Sign-In is unavailable in this browser.')
-      }
-
-      const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: googleClientId,
-        scope: 'openid email profile',
-        callback: async (tokenResponse) => {
-          if (tokenResponse?.error) {
-            setGoogleBusy(false)
-            if (tokenResponse.error !== 'popup_closed_by_user' && tokenResponse.error !== 'access_denied') {
-              setErr(`Google Sign-In error: ${tokenResponse.error_description || tokenResponse.error}`)
-            }
-            return
-          }
-          const gToken = tokenResponse?.access_token
-          if (!gToken) {
-            setGoogleBusy(false)
-            setErr('Did not receive an access token from Google.')
-            return
-          }
-
-          try {
-            const { data } = await client.post('/auth/google', {
-              access_token: gToken,
-              role: rf.role || 'seeker',
-            })
-            try { localStorage.setItem('saved_login_email', data.user?.email || '') } catch {}
-            login(data.access_token, data.user)
-            navigate(getPostAuthDestination(), { replace: true })
-          } catch (apiErr) {
-            setErr(apiErr?.response?.data?.detail || 'Google authentication failed.')
-          } finally {
-            setGoogleBusy(false)
-          }
-        },
-        error_callback: () => {
-          setGoogleBusy(false)
+      const { data } = await client.get('/email/google/login-url', {
+        params: {
+          origin: window.location.origin,
+          role: rf.role || 'seeker',
         },
       })
-
-      tokenClient.requestAccessToken({ prompt: 'select_account' })
+      if (!data?.url) {
+        throw new Error('Could not initialize Google Sign-In URL.')
+      }
+      const w = 520
+      const h = 640
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2))
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2))
+      const popup = window.open(
+        data.url,
+        'cvtomatch_google_login',
+        `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no`
+      )
+      if (!popup) {
+        window.location.href = data.url
+        return
+      }
+      const cleanup = () => {
+        window.removeEventListener('message', onMsg)
+        clearInterval(closeTimer)
+      }
+      const onMsg = (ev) => {
+        if (!ev?.data || ev.data.type !== 'cvtomatch_google_auth') return
+        cleanup()
+        setGoogleBusy(false)
+        if (ev.data.error) {
+          if (ev.data.error !== 'access_denied') {
+            setErr(`Google Sign-In error: ${ev.data.error}`)
+          }
+          return
+        }
+        if (ev.data.access_token && ev.data.user) {
+          try { localStorage.setItem('saved_login_email', ev.data.user?.email || '') } catch {}
+          login(ev.data.access_token, ev.data.user)
+          navigate(getPostAuthDestination(), { replace: true })
+        }
+      }
+      window.addEventListener('message', onMsg)
+      const closeTimer = setInterval(() => {
+        if (popup.closed) {
+          cleanup()
+          setGoogleBusy(false)
+        }
+      }, 400)
     } catch (e) {
       setGoogleBusy(false)
-      setErr(e?.message || 'Could not start Google Sign-In.')
+      setErr(e?.response?.data?.detail || e?.message || 'Could not start Google Sign-In.')
     }
   }
 
@@ -524,6 +559,57 @@ export default function Login() {
       setErr(e.response?.data?.detail || 'Registration failed')
     }
     setBusy(false)
+  }
+
+  const doForgotPassword = async (e) => {
+    if (e && e.preventDefault) e.preventDefault()
+    const email = (fpForm.email || lf.email || '').trim().toLowerCase()
+    if (!email || !email.includes('@')) {
+      setErr('Please enter your account email address.')
+      return
+    }
+    setBusy(true); setErr(''); setFpNotice('')
+    try {
+      const { data } = await client.post('/auth/forgot-password', { email })
+      setFpForm(prev => ({ ...prev, email }))
+      setFpStep('verify')
+      setFpNotice(data.message || `We sent a 6-digit reset code to ${email}.`)
+    } catch (e) {
+      setErr(e.response?.data?.detail || 'Could not send reset code.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doResetPassword = async (e) => {
+    if (e && e.preventDefault) e.preventDefault()
+    const email = (fpForm.email || lf.email || '').trim().toLowerCase()
+    const code = (fpForm.code || '').trim()
+    const new_password = fpForm.newPassword || ''
+    if (!email || !email.includes('@')) {
+      setErr('Please enter your email address.')
+      return
+    }
+    if (code.length < 6) {
+      setErr('Please enter the 6-digit reset code from your email.')
+      return
+    }
+    if (new_password.length < 6) {
+      setErr('New password must be at least 6 characters.')
+      return
+    }
+    setBusy(true); setErr('')
+    try {
+      const { data } = await client.post('/auth/reset-password', { email, code, new_password })
+      try { localStorage.setItem('saved_login_email', email) } catch {}
+      toast(data.message || 'Password reset successfully!', 'success')
+      login(data.access_token, data.user)
+      navigate(getPostAuthDestination(), { replace: true })
+    } catch (e) {
+      setErr(e.response?.data?.detail || 'Invalid or expired reset code.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const features = [
@@ -981,9 +1067,24 @@ export default function Login() {
                       </div>
 
                       <div>
-                        <label htmlFor="login-password" className="text-xs font-semibold text-slate-300 mb-1.5 block">
-                          Password
-                        </label>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label htmlFor="login-password" className="text-xs font-semibold text-slate-300">
+                            Password
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFpForm({ email: lf.email || '', code: '', newPassword: '' })
+                              setFpStep('request')
+                              setFpNotice('')
+                              setErr('')
+                              setTab('forgot')
+                            }}
+                            className="text-xs font-bold text-blue-400 hover:text-blue-300 hover:underline cursor-pointer"
+                          >
+                            Forgot password?
+                          </button>
+                        </div>
                         <div className="relative">
                           <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                           <input
@@ -1028,6 +1129,158 @@ export default function Login() {
                         className="text-blue-400 hover:text-blue-300 font-semibold hover:underline cursor-pointer"
                       >
                         Create one free →
+                      </button>
+                    </p>
+                  </motion.div>
+                ) : tab === 'forgot' ? (
+                  <motion.div
+                    key="forgot-form"
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 12 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <h2 className="text-2xl font-extrabold tracking-tight mb-1">Reset your password</h2>
+                    <p className="text-slate-400 text-xs mb-5">
+                      {fpStep === 'request'
+                        ? 'Enter your account email and we will send you a 6-digit verification code right away.'
+                        : 'Enter the 6-digit code sent to your inbox along with your new password.'}
+                    </p>
+
+                    {fpNotice && (
+                      <div className="bg-emerald-950/70 border border-emerald-500/40 text-emerald-200 text-xs font-medium rounded-xl px-4 py-3 mb-4 flex items-center gap-2">
+                        <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                        <span>{fpNotice}</span>
+                      </div>
+                    )}
+
+                    {fpStep === 'request' ? (
+                      <form onSubmit={doForgotPassword} className="space-y-4">
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 mb-1.5 block">
+                            Account Email Address
+                          </label>
+                          <div className="relative">
+                            <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input
+                              type="email"
+                              required
+                              value={fpForm.email}
+                              onChange={e => setFpForm({ ...fpForm, email: e.target.value })}
+                              placeholder="you@example.com"
+                              className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition"
+                            />
+                          </div>
+                        </div>
+
+                        <motion.button
+                          type="submit"
+                          whileHover={{ scale: 1.01 }}
+                          whileTap={{ scale: 0.98 }}
+                          disabled={busy}
+                          className="w-full shimmer-btn bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 text-white font-bold py-3.5 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 cursor-pointer"
+                        >
+                          {busy ? (
+                            <>
+                              <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                              <span>Sending Reset Code...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>Send 6-Digit Reset Code</span>
+                              <ArrowRight size={15} />
+                            </>
+                          )}
+                        </motion.button>
+                      </form>
+                    ) : (
+                      <form onSubmit={doResetPassword} className="space-y-4">
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 mb-1.5 block">
+                            Email Address
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            value={fpForm.email}
+                            onChange={e => setFpForm({ ...fpForm, email: e.target.value })}
+                            className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl px-4 py-2.5 text-sm text-slate-300 focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="text-xs font-semibold text-slate-300">
+                              6-Digit Reset Code (from your email)
+                            </label>
+                            <button
+                              type="button"
+                              onClick={doForgotPassword}
+                              disabled={busy}
+                              className="text-[11px] font-bold text-blue-400 hover:text-blue-300 hover:underline cursor-pointer"
+                            >
+                              Resend code
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            required
+                            value={fpForm.code}
+                            onChange={e => setFpForm({ ...fpForm, code: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                            placeholder="123456"
+                            className="w-full bg-slate-950/90 border border-blue-500/40 rounded-xl px-4 py-3 text-center text-lg font-mono font-extrabold tracking-[0.35em] text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 mb-1.5 block">
+                            New Password (min. 6 characters)
+                          </label>
+                          <div className="relative">
+                            <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input
+                              type="password"
+                              required
+                              autoComplete="new-password"
+                              value={fpForm.newPassword}
+                              onChange={e => setFpForm({ ...fpForm, newPassword: e.target.value })}
+                              placeholder="Enter your new password"
+                              className="w-full bg-slate-950/90 border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition"
+                            />
+                          </div>
+                        </div>
+
+                        <motion.button
+                          type="submit"
+                          whileHover={{ scale: 1.01 }}
+                          whileTap={{ scale: 0.98 }}
+                          disabled={busy}
+                          className="w-full shimmer-btn bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 disabled:opacity-40 text-white font-bold py-3.5 rounded-xl transition text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 cursor-pointer"
+                        >
+                          {busy ? (
+                            <>
+                              <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                              <span>Resetting Password...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>Reset Password &amp; Sign In</span>
+                              <ArrowRight size={15} />
+                            </>
+                          )}
+                        </motion.button>
+                      </form>
+                    )}
+
+                    <p className="text-center text-slate-400 text-xs mt-5">
+                      <button
+                        type="button"
+                        onClick={() => { setTab('login'); setErr(''); setFpNotice('') }}
+                        className="text-blue-400 hover:text-blue-300 font-semibold hover:underline cursor-pointer"
+                      >
+                        ← Back to Sign In
                       </button>
                     </p>
                   </motion.div>

@@ -120,3 +120,23 @@ def purge_blacklisted_applications(db: Session, user_id: Optional[int] = None) -
         db.commit()
 
     return purged_count
+
+
+def get_active_cv(db: Session, user_id: int):
+    """Returns the user's currently active CV persona (or most recent CV upload)."""
+    from . import models
+    active = (
+        db.query(models.CvUpload)
+        .filter(models.CvUpload.user_id == user_id, models.CvUpload.is_active == True)
+        .order_by(models.CvUpload.uploaded_at.desc())
+        .first()
+    )
+    if active:
+        return active
+    return (
+        db.query(models.CvUpload)
+        .filter(models.CvUpload.user_id == user_id)
+        .order_by(models.CvUpload.uploaded_at.desc())
+        .first()
+    )
+

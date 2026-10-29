@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, startTransition } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
@@ -114,8 +114,10 @@ export default function Tracker() {
   const [viewMode, setViewMode]             = useState(() => localStorage.getItem('tracker_view_mode') || 'kanban')
 
   const switchViewMode = (mode) => {
-    setViewMode(mode)
-    localStorage.setItem('tracker_view_mode', mode)
+    startTransition(() => {
+      setViewMode(mode)
+    })
+    try { localStorage.setItem('tracker_view_mode', mode) } catch {}
   }
 
   // Interactive Conversation Thread Modal State
@@ -377,7 +379,8 @@ export default function Tracker() {
     return apps.filter(a => matchesAppSearch(a, searchQuery, emailOnly))
   }, [apps, searchQuery, emailOnly])
 
-  const byStatus = key => filteredApps.filter(a => (a.status === 'saved' ? 'applied' : a.status) === key)
+  const normalizeStatus = s => (s === 'saved' || s === 'sent' || !s) ? 'applied' : s
+  const byStatus = key => filteredApps.filter(a => normalizeStatus(a.status) === key)
   const totalEmails = apps.reduce((sum, a) => sum + (a.emails?.length || 0), 0)
   const totalFiltered = filteredApps.length
 
@@ -388,9 +391,7 @@ export default function Tracker() {
         <main className="md:ml-64 flex-1 min-w-0 px-5 sm:px-8 lg:px-10 pt-20 md:pt-8 lg:pt-10 pb-14 w-full">
 
           {/* Hero Command Header */}
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
+          <div
             className="glass-panel rounded-3xl p-5 md:p-6 mb-5 relative overflow-hidden flex flex-col lg:flex-row lg:items-center justify-between gap-4"
           >
             <div className="glow-line-top" />
@@ -449,52 +450,15 @@ export default function Tracker() {
                 <Plus size={15} className="text-emerald-400" /> Add Manually
               </button>
             </div>
-          </motion.div>
-
-          {/* Follow-up Assistant Alert Bar */}
-          <AnimatePresence>
-            {followUpCandidates.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                className="mb-5 glass-panel border border-blue-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
-                    <Clock size={16} />
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm font-extrabold text-white">
-                      ⚡ Follow-Up Assistant: {followUpCandidates.length} application{followUpCandidates.length > 1 ? 's' : ''} awaiting recruiter response (&gt;3 days)
-                    </p>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Following up increases recruiter response rates. Review candidates and dispatch follow-ups in 1 click.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setBatchFollowUpOpen(true)}
-                  className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs px-4 py-2 rounded-xl transition shadow-md cursor-pointer shrink-0"
-                >
-                  <Send size={13} />
-                  <span>Review &amp; Follow Up ({followUpCandidates.length})</span>
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </div>
 
           {/* Stage KPI Ribbon */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 mb-5">
-            {COLUMNS.map((c, idx) => {
+            {COLUMNS.map((c) => {
               const count = byStatus(c.key).length
               return (
-                <motion.div
+                <div
                   key={c.key}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.04, duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
-                  whileHover={{ y: -3, scale: 1.015 }}
                   className={`glass-card border ${c.color} rounded-2xl px-3.5 py-3 relative overflow-hidden`}
                 >
                   <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${c.topBar}`} />
@@ -503,14 +467,10 @@ export default function Tracker() {
                     <span className={`w-2 h-2 rounded-full ${c.dot} ${count > 0 ? 'animate-pulse' : ''}`} />
                   </div>
                   <div className="text-[11px] font-bold text-slate-400 mt-0.5 truncate">{c.shortLabel}</div>
-                </motion.div>
+                </div>
               )
             })}
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: COLUMNS.length * 0.04, duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
-              whileHover={{ y: -3, scale: 1.015 }}
+            <div
               className="glass-card border border-blue-500/40 rounded-2xl px-3.5 py-3 relative overflow-hidden"
             >
               <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-400 to-purple-500" />
@@ -519,8 +479,36 @@ export default function Tracker() {
                 <Mail size={13} className="text-blue-400" />
               </div>
               <div className="text-[11px] font-bold text-slate-400 mt-0.5 truncate">Emails Sent</div>
-            </motion.div>
+            </div>
           </div>
+
+          {/* Follow-up Assistant Alert Bar */}
+          {followUpCandidates.length > 0 && (
+            <div
+              className="mb-5 glass-panel border border-blue-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                  <Clock size={16} />
+                </div>
+                <div>
+                  <p className="text-xs sm:text-sm font-extrabold text-white">
+                    ⚡ Follow-Up Assistant: {followUpCandidates.length} application{followUpCandidates.length > 1 ? 's' : ''} awaiting recruiter response (&gt;3 days)
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Following up increases recruiter response rates. Review candidates and dispatch follow-ups in 1 click.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBatchFollowUpOpen(true)}
+                className="shimmer-btn flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs px-4 py-2 rounded-xl transition shadow-md cursor-pointer shrink-0"
+              >
+                <Send size={13} />
+                <span>Review &amp; Follow Up ({followUpCandidates.length})</span>
+              </button>
+            </div>
+          )}
 
           {/* Search & Filter Bar */}
           <div className="mb-5 glass-panel rounded-2xl p-3">

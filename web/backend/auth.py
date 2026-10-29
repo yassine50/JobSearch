@@ -100,3 +100,32 @@ def get_optional_user(
     except JWTError:
         return None
 
+
+DEFAULT_ADMIN_EMAILS = (
+    "yassineyoussefwx@gmail.com,"
+    "yassine@test.com,"
+    "yassineyoussef@gmail.com,"
+    "yassine.demo@cvtomatch.com,"
+    "cvtomatch1@gmail.com"
+)
+
+
+def is_admin(user: Optional[models.User]) -> bool:
+    if not user:
+        return False
+    if getattr(user, "role", "") == "admin":
+        return True
+    admins = os.getenv("ADMIN_EMAILS", DEFAULT_ADMIN_EMAILS)
+    admin_set = {e.strip().lower() for e in admins.split(",") if e.strip()}
+    return (user.email or "").strip().lower() in admin_set
+
+
+def get_admin_user(current_user: models.User = Depends(get_current_user)) -> models.User:
+    if not is_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required for the Back Office.",
+        )
+    return current_user
+
+

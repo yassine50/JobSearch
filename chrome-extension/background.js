@@ -999,9 +999,47 @@ async function handleAutofillJob(payload) {
   const profile = await fetchCandidateProfile(true);
   let tailored = null;
 
+  // Merge pre-Apply captured job post if the application form page lacked the full job description or title
+  let storedJobPost = null;
+  try {
+    const data = await chrome.storage.local.get(["cvtomatch_captured_job_post"]);
+    if (
+      data &&
+      data.cvtomatch_captured_job_post &&
+      data.cvtomatch_captured_job_post.timestamp &&
+      Date.now() - data.cvtomatch_captured_job_post.timestamp < 45 * 60 * 1000
+    ) {
+      storedJobPost = data.cvtomatch_captured_job_post;
+    }
+  } catch (_) {}
+
+  if (storedJobPost) {
+    if (
+      (!payload.job_title ||
+        /^(software\s*engineer|job\s*application|basic\s*info|apply(\s*now)?)$/i.test(payload.job_title)) &&
+      storedJobPost.job_title
+    ) {
+      payload.job_title = storedJobPost.job_title;
+    }
+    if (
+      (!payload.company || /^(the\s+hiring\s+team|company)$/i.test(payload.company)) &&
+      storedJobPost.company
+    ) {
+      payload.company = storedJobPost.company;
+    }
+  }
+
   // Sanitize job_description so form labels / nationality dropdown lists on /apply pages never pollute CV tailoring
   let cleanJobDesc = String(payload.job_description || "").trim();
-  if (/\b(afghan\s*\(afghanistan\)|albanian\s*\(albania\)|abkhaz|escolher\s*ficheiros?)\b/i.test(cleanJobDesc)) {
+  const isFallbackOrNoise =
+    !cleanJobDesc ||
+    cleanJobDesc.length < 140 ||
+    cleanJobDesc.includes("Cross-platform mobile & web engineering, Flutter, Dart, BLoC, Riverpod") ||
+    /\b(afghan\s*\(afghanistan\)|albanian\s*\(albania\)|abkhaz|escolher\s*ficheiros?)\b/i.test(cleanJobDesc);
+
+  if (isFallbackOrNoise && storedJobPost && storedJobPost.job_description) {
+    cleanJobDesc = String(storedJobPost.job_description).trim();
+  } else if (/\b(afghan\s*\(afghanistan\)|albanian\s*\(albania\)|abkhaz|escolher\s*ficheiros?)\b/i.test(cleanJobDesc)) {
     cleanJobDesc = `${payload.job_title || profile.current_title || "Flutter Developer"} — ${(profile.skills || ["Flutter", "Dart", "BLoC", "Riverpod", "REST APIs", "Git", "Firebase"]).join(", ")}`;
   }
 

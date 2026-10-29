@@ -24,6 +24,7 @@ from .routers import (
     linkedin_posts,
     power,
     extension,
+    admin,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -60,6 +61,7 @@ for router in [
     linkedin_posts.router,
     power.router,
     extension.router,
+    admin.router,
 ]:
     app.include_router(router)
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
@@ -467,9 +467,9 @@ def analyze_cv(db: Session = Depends(get_db),
 
 
 class TailorCvRequest(BaseModel):
-    job_title: str
-    company: str
-    job_description: str
+    job_title: str = "Software Engineer"
+    company: str = ""
+    job_description: str = ""
 
 
 @router.post("/tailor")
@@ -593,3 +593,95 @@ def download_tailored_pdf(req: TailorCvRequest,
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+def _resolve_user_for_cv_download(request, token: Optional[str], db: Session) -> models.User:
+    raw_token = (token or "").strip()
+    if not raw_token:
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            raw_token = auth_header.split(" ", 1)[1].strip()
+    if not raw_token:
+        raise HTTPException(401, "Authentication required")
+    from ..auth import jwt, SECRET_KEY, ALGORITHM
+    try:
+        payload = jwt.decode(raw_token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = (payload.get("sub") or "").strip()
+    except Exception:
+        raise HTTPException(401, "Invalid or expired token")
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        raise HTTPException(401, "User not found")
+    return user
+
+
+def _stream_user_cv_record(cv: models.CvUpload):
+    import io
+    from fastapi.responses import StreamingResponse
+    fname = (cv.filename or "Resume.pdf").replace('"', "")
+    if cv.file_data and not fname.lower().endswith(".txt"):
+        media = "application/pdf"
+        if fname.lower().endswith(".docx"):
+            media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return StreamingResponse(
+            io.BytesIO(bytes(cv.file_data)),
+            media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    if cv.text_content:
+        try:
+            from web.backend.tailoring import honest_tailored_attachment
+            pdf_bytes, _, _, _ = honest_tailored_attachment(
+                cv, cv.persona_name or "Software Engineer", "", "", allow_low_confidence=True
+            )
+            if pdf_bytes:
+                pdf_name = fname if fname.lower().endswith(".pdf") else f"{os.path.splitext(fname)[0] or 'Resume'}.pdf"
+                return StreamingResponse(
+                    io.BytesIO(bytes(pdf_bytes)),
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{pdf_name}"'},
+                )
+        except Exception:
+            pass
+        return StreamingResponse(
+            io.BytesIO(cv.text_content.encode("utf-8")),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{os.path.splitext(fname)[0] or "Resume"}.txt"'},
+        )
+    raise HTTPException(404, "CV file has no stored content")
+
+
+@router.get("/download")
+def download_active_cv(
+    request: Request,
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Downloads the authenticated user's active CV (original PDF or rendered A4 PDF)."""
+    user = _resolve_user_for_cv_download(request, token, db)
+    cv = _get_active_cv(db, user.id)
+    if not cv:
+        raise HTTPException(404, "No CV uploaded yet")
+    return _stream_user_cv_record(cv)
+
+
+@router.get("/personas/{cv_id}/download")
+def download_persona_cv(
+    cv_id: int,
+    request: Request,
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Downloads a specific CV Persona belonging to the authenticated user (or Admin)."""
+    user = _resolve_user_for_cv_download(request, token, db)
+    from ..auth import is_admin
+    if is_admin(user):
+        cv = db.query(models.CvUpload).filter(models.CvUpload.id == cv_id).first()
+    else:
+        cv = db.query(models.CvUpload).filter(
+            models.CvUpload.id == cv_id,
+            models.CvUpload.user_id == user.id,
+        ).first()
+    if not cv:
+        raise HTTPException(404, "CV persona not found")
+    return _stream_user_cv_record(cv)

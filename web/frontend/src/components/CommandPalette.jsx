@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search, Radar, KanbanSquare, LayoutDashboard, FileText,
-  Mail, Settings, Users, Sparkles, ArrowRight, Layers, Bell, Command, X, Sun
+  Mail, Settings, Users, Sparkles, ArrowRight, Layers, Bell, Command, X, Sun, ShieldCheck
 } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext.jsx'
 
@@ -110,7 +110,7 @@ export default function CommandPalette() {
       id: 'nav-settings',
       category: 'Workspace Navigation',
       label: 'Go to Workspace Settings & 1-Click Gmail',
-      sub: 'Configure Gmail OAuth, custom templates & bounce blacklist',
+      sub: 'Configure Gmail OAuth & custom outreach templates',
       icon: Settings,
       color: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
       run: () => navigate('/settings'),

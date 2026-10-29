@@ -41,7 +41,7 @@
       "destination": "http://34.41.44.162/api/:path*"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/).*)",
       "destination": "/index.html"
     }
   ]

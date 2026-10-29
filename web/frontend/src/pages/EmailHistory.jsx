@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, startTransition } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import PageWrapper from '../components/PageWrapper.jsx'
 import Sidebar from '../components/Sidebar.jsx'
@@ -26,17 +26,24 @@ export default function EmailHistory() {
     client.get('/email/history').then(r => setLogs(r.data)).catch(() => {})
   }, [])
 
-  const filteredLogs = logs.filter(l => {
-    if (filter === 'all') return true
-    if (filter === 'sent') return l.status === 'sent'
-    if (filter === 'bounced') return l.status === 'bounced'
-    if (filter === 'follow_up') return l.template_type === 'follow_up'
-    return true
-  })
-
-  const countSent = logs.filter(l => l.status === 'sent').length
-  const countBounced = logs.filter(l => l.status === 'bounced').length
-  const countFollowUps = logs.filter(l => l.template_type === 'follow_up').length
+  const { filteredLogs, countSent, countBounced, countFollowUps } = useMemo(() => {
+    let sent = 0, bounced = 0, followUps = 0
+    const filtered = []
+    for (const l of logs) {
+      if (l.status === 'sent') sent++
+      if (l.status === 'bounced') bounced++
+      if (l.template_type === 'follow_up') followUps++
+      if (
+        filter === 'all' ||
+        (filter === 'sent' && l.status === 'sent') ||
+        (filter === 'bounced' && l.status === 'bounced') ||
+        (filter === 'follow_up' && l.template_type === 'follow_up')
+      ) {
+        filtered.push(l)
+      }
+    }
+    return { filteredLogs: filtered, countSent: sent, countBounced: bounced, countFollowUps: followUps }
+  }, [logs, filter])
 
   return (
     <PageWrapper>
@@ -45,9 +52,7 @@ export default function EmailHistory() {
         <main className="md:ml-64 flex-1 min-w-0 px-5 sm:px-8 lg:px-10 pt-20 md:pt-8 lg:pt-10 pb-14 w-full">
 
           {/* Hero Command Header */}
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
+          <div
             className="glass-panel rounded-3xl p-5 md:p-6 mb-6 relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4"
           >
             <div className="glow-line-top" />
@@ -68,44 +73,30 @@ export default function EmailHistory() {
             <div className="flex items-center gap-2 relative z-10 shrink-0">
               <div className="flex bg-[#050811]/90 border border-white/[0.08] rounded-2xl p-1 text-xs font-bold shadow-inner">
                 <button
-                  onClick={() => setViewMode('calendar')}
+                  onClick={() => startTransition(() => setViewMode('calendar'))}
                   className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-xl transition cursor-pointer ${
                     viewMode === 'calendar'
-                      ? 'text-white'
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {viewMode === 'calendar' && (
-                    <motion.div
-                      layoutId="email-view-pill"
-                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                      className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 shadow-md shadow-blue-600/25"
-                    />
-                  )}
                   <Calendar size={13} className="relative z-10" />
                   <span className="relative z-10">Daily Calendar</span>
                 </button>
                 <button
-                  onClick={() => setViewMode('table')}
+                  onClick={() => startTransition(() => setViewMode('table'))}
                   className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-xl transition cursor-pointer ${
                     viewMode === 'table'
-                      ? 'text-white'
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {viewMode === 'table' && (
-                    <motion.div
-                      layoutId="email-view-pill"
-                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                      className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 shadow-md shadow-blue-600/25"
-                    />
-                  )}
                   <List size={13} className="relative z-10" />
                   <span className="relative z-10">Audit Table ({logs.length})</span>
                 </button>
               </div>
             </div>
-          </motion.div>
+          </div>
 
           {viewMode === 'calendar' ? (
             <EmailCalendarView />

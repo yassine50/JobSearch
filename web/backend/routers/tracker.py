@@ -6,7 +6,7 @@ from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, date, timedelta
-import io, csv, re
+import io, os, csv, re
 from .. import models
 from ..database import get_db
 from ..auth import get_current_user
@@ -131,9 +131,10 @@ class AppUpdate(BaseModel):
 _LAST_TRACKER_MAINT: dict[int, float] = {}
 
 def _serialize(a, emails=None):
+    st = "applied" if a.status == "sent" else (a.status or "applied")
     return {
         "id": a.id, "title": a.title, "company": a.company,
-        "location": a.location, "url": a.url, "status": a.status,
+        "location": a.location, "url": a.url, "status": st,
         "notes": a.notes or "", "match_score": a.match_score,
         "applied_at": str(a.applied_at),
         "follow_up_date": str(a.follow_up_date) if a.follow_up_date else None,
@@ -288,7 +289,11 @@ def stats(db: Session = Depends(get_db),
     rows = db.query(models.Application.status, func.count(models.Application.id)) \
              .filter(models.Application.user_id == current_user.id) \
              .group_by(models.Application.status).all()
-    return {s: c for s, c in rows}
+    out: dict[str, int] = {}
+    for s, c in rows:
+        key = "applied" if s == "sent" else (s or "applied")
+        out[key] = out.get(key, 0) + c
+    return out
 
 @router.get("/stats/detailed")
 def stats_detailed(db: Session = Depends(get_db),
@@ -296,28 +301,34 @@ def stats_detailed(db: Session = Depends(get_db),
     """Returns pipeline counts + email count + response rate + weekly activity."""
     uid = current_user.id
 
-    # Pipeline
+    # Pipeline (normalize legacy 'sent' -> 'applied')
     pipeline_rows = db.query(models.Application.status, func.count(models.Application.id)) \
         .filter(models.Application.user_id == uid) \
         .group_by(models.Application.status).all()
-    pipeline = {s: c for s, c in pipeline_rows}
+    pipeline: dict[str, int] = {}
+    for s, c in pipeline_rows:
+        key = "applied" if s == "sent" else (s or "applied")
+        pipeline[key] = pipeline.get(key, 0) + c
 
     total_apps   = sum(pipeline.values())
+    submitted    = max(0, total_apps - pipeline.get("saved", 0))
     offers       = pipeline.get("offer", 0) + pipeline.get("accepted", 0)
     interviews   = pipeline.get("interview", 0)
-    response_rate = round((interviews + offers) / total_apps * 100) if total_apps else 0
+    reviews      = pipeline.get("review", 0)
+    responded    = reviews + interviews + offers
+    response_rate = round(responded / submitted * 100) if submitted else 0
 
     # Emails sent
     email_count = db.query(func.count(models.EmailLog.id)) \
         .filter(models.EmailLog.user_id == uid, models.EmailLog.status == "sent").scalar() or 0
 
     # Follow-ups due (today or overdue)
-    today = date.today()
+    now_dt = datetime.utcnow()
     follow_ups_due = db.query(models.Application) \
         .filter(models.Application.user_id == uid,
                 models.Application.follow_up_date != None,
-                func.date(models.Application.follow_up_date) <= str(today),
-                models.Application.status.in_(["applied","interview"])) \
+                models.Application.follow_up_date <= now_dt,
+                models.Application.status.in_(["applied", "sent", "review", "interview"])) \
         .all()
     follow_ups = [_serialize(a) for a in follow_ups_due]
 
@@ -812,16 +823,62 @@ def download_app_cv(app_id: int,
     if not user:
         raise HTTPException(401, "Unauthorized")
 
-    app = db.query(models.Application).filter(
-        models.Application.id == app_id,
-        models.Application.user_id == user.id
-    ).first()
-    if not app or not app.tailored_cv_data:
-        raise HTTPException(404, "Tailored CV not found")
+    from ..auth import is_admin
+    if is_admin(user):
+        app = db.query(models.Application).filter(models.Application.id == app_id).first()
+    else:
+        app = db.query(models.Application).filter(
+            models.Application.id == app_id,
+            models.Application.user_id == user.id
+        ).first()
+    if not app:
+        raise HTTPException(404, "Application not found")
 
-    filename = app.tailored_cv_filename or f"CV_{app.company.replace(' ', '_')}.pdf"
+    pdf_bytes = app.tailored_cv_data
+    filename = (app.tailored_cv_filename or f"CV_{(app.company or 'Application').replace(' ', '_')}.pdf").replace('"', '')
+    if not pdf_bytes:
+        from ..utils import get_active_cv
+        active_cv = get_active_cv(db, app.user_id)
+        if active_cv:
+            # First try to generate an honest tailored PDF for this application so it's always a valid A4 PDF
+            if active_cv.text_content:
+                try:
+                    from ..tailoring import honest_tailored_attachment
+                    gen_bytes, gen_name, _, _ = honest_tailored_attachment(
+                        active_cv,
+                        app.title or "Software Engineer",
+                        app.company or "",
+                        app.notes or app.title or "",
+                        allow_low_confidence=True,
+                    )
+                    if gen_bytes:
+                        pdf_bytes = gen_bytes
+                        filename = (gen_name or filename).replace('"', '')
+                        app.tailored_cv_data = gen_bytes
+                        app.tailored_cv_filename = filename
+                        db.commit()
+                except Exception:
+                    pass
+            if not pdf_bytes and active_cv.file_data:
+                pdf_bytes = active_cv.file_data
+                filename = (active_cv.filename or filename).replace('"', '')
+            if not pdf_bytes and active_cv.text_content:
+                return StreamingResponse(
+                    io.BytesIO(active_cv.text_content.encode("utf-8")),
+                    media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{os.path.splitext(filename)[0]}.txt"'},
+                )
+        if not pdf_bytes:
+            raise HTTPException(404, "CV file not found")
+
+    media_type = "application/pdf"
+    if filename.lower().endswith(".docx"):
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif filename.lower().endswith(".txt"):
+        media_type = "text/plain; charset=utf-8"
+
     return StreamingResponse(
-        io.BytesIO(bytes(app.tailored_cv_data)),
-        media_type="application/pdf",
+        io.BytesIO(bytes(pdf_bytes)),
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )

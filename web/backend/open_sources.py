@@ -45,7 +45,7 @@ TIMEOUT = 6.5
 CACHE_TTL_S = 30 * 60
 
 REMOTE_BOARDS = ["remotive", "remoteok", "jobicy", "himalayas", "weworkremotely", "workingnomads", "arbeitnow"]
-OPEN_SITE_IDS = {"remote_boards", "ats", "hackernews", "official_apis"}
+OPEN_SITE_IDS = {"remote_boards", "ats", "hackernews", "official_apis", "local_boards"}
 
 # ── Shared connection-pooled HTTP session (reuses TLS handshakes across calls) ──
 _OPEN_SESSION = requests.Session()
@@ -421,6 +421,7 @@ ATS_URL_PATTERNS = [
     ("greenhouse", re.compile(r"greenhouse\.io/.*[?&]for=([a-z0-9_-]+).*[?&]token=(\d+)", re.I)),
     ("lever", re.compile(r"jobs\.lever\.co/([A-Za-z0-9_.-]+)/([0-9a-f-]{36})", re.I)),
     ("ashby", re.compile(r"jobs\.ashbyhq\.com/([A-Za-z0-9_.%-]+)/([0-9a-f-]{36})", re.I)),
+    ("smartrecruiters", re.compile(r"jobs\.smartrecruiters\.com/([A-Za-z0-9_.-]+)/(\d{10,})", re.I)),
 ]
 
 
@@ -430,6 +431,31 @@ def parse_ats_url(url: str) -> Optional[tuple]:
         if m:
             return vendor, m.group(1), m.group(2)
     return None
+
+
+def _smartrecruiters_row(j: dict, slug: str, url: str = "") -> dict:
+    loc_obj = j.get("location") or {}
+    full_loc = loc_obj.get("fullLocation") or ", ".join(
+        x for x in [loc_obj.get("city"), loc_obj.get("region"), loc_obj.get("country")] if x
+    )
+    sections = ((j.get("jobAd") or {}).get("sections") or {})
+    desc_parts = []
+    for sec_key in ("companyDescription", "jobDescription", "qualifications", "additionalInformation"):
+        sec = sections.get(sec_key) or {}
+        if sec.get("text"):
+            desc_parts.append(html_to_text(sec["text"]))
+    comp_name = (j.get("company") or {}).get("name") or _pretty_slug(slug)
+    post_url = url or f"https://jobs.smartrecruiters.com/{slug}/{j.get('id')}"
+    return _row(
+        "smartrecruiters",
+        j.get("name") or "",
+        comp_name,
+        full_loc,
+        post_url,
+        "\n\n".join(p for p in desc_parts if p)[:2400],
+        _iso_date(j.get("releasedDate")),
+        is_remote=bool(loc_obj.get("remote")),
+    )
 
 
 def fetch_ats_posting(url: str) -> Optional[dict]:
@@ -449,12 +475,15 @@ def fetch_ats_posting(url: str) -> Optional[dict]:
             for row in _ashby_board(slug):
                 if job_id in (row["job_url"] or ""):
                     return row
+        if vendor == "smartrecruiters":
+            j = _get(f"https://api.smartrecruiters.com/v1/companies/{slug}/postings/{job_id}")
+            return _smartrecruiters_row(j, slug, url) if j and j.get("name") else None
     except Exception as e:
         logger.debug(f"[ATS] {vendor}/{slug}/{job_id}: {e}")
     return None
 
 
-SERPER_ATS_HOSTS = ("boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com")
+SERPER_ATS_HOSTS = ("boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "jobs.smartrecruiters.com")
 
 
 def _serper_ats_discovery(query: str, location: str, api_key: str, hours_old: Optional[int]) -> List[dict]:
@@ -585,6 +614,23 @@ _FREEHIRE_ISO2: Dict[str, str] = {
     "portugal": "PT", "pt": "PT",
     "belgium": "BE", "be": "BE",
     "austria": "AT", "at": "AT",
+    "romania": "RO", "ro": "RO", "roumanie": "RO",
+    "czech republic": "CZ", "czechia": "CZ", "cz": "CZ",
+    "hungary": "HU", "hu": "HU",
+    "bulgaria": "BG", "bg": "BG",
+    "greece": "GR", "gr": "GR",
+    "turkey": "TR", "tr": "TR",
+    "ukraine": "UA", "ua": "UA",
+    "tunisia": "TN", "tn": "TN",
+    "egypt": "EG", "eg": "EG",
+    "qatar": "QA", "qa": "QA",
+    "brazil": "BR", "br": "BR",
+    "mexico": "MX", "mx": "MX",
+    "argentina": "AR", "ar": "AR",
+    "colombia": "CO", "co": "CO",
+    "chile": "CL", "cl": "CL",
+    "japan": "JP", "jp": "JP",
+    "south korea": "KR", "kr": "KR",
 }
 
 
@@ -638,8 +684,9 @@ def _freehire_ats(query: str, country: str = "", location: str = "",
         return []
 
     items = _call_freehire(params)
-    # If strict country/location filter yielded very few hits, broaden to global ATS and let _location_ok filter
-    if len(items) < 4 and ("country" in params or "location" in params):
+    # Only broaden to global ATS when the user searched Worldwide/Global — never pollute a specific country search
+    is_specific_country = bool(c_norm and c_norm not in ("", "worldwide", "global", "all", "remote"))
+    if not is_specific_country and len(items) < 4 and ("country" in params or "location" in params):
         broad = {k: v for k, v in params.items() if k not in ("country", "location")}
         more = _call_freehire(broad)
         seen_slugs = {it.get("public_slug") or it.get("url") for it in items}
@@ -651,7 +698,8 @@ def _freehire_ats(query: str, country: str = "", location: str = "",
 
     out: List[dict] = []
     for item in items:
-        url = (item.get("url") or "").strip()
+        raw_url = (item.get("url") or "").strip()
+        url = re.sub(r"[?&]utm_source=freehire\.me\b", "", raw_url).rstrip("?&")
         title = (item.get("title") or "").strip()
         if not title or not url:
             continue
@@ -667,7 +715,14 @@ def _freehire_ats(query: str, country: str = "", location: str = "",
             sal_txt = f"{lo}{' - ' + hi if hi else ''}{(' / ' + sal_per) if sal_per else ''}".strip()
 
         work_mode = (item.get("work_mode") or "").lower()
-        loc_str = (item.get("location") or "").strip() or ("Remote" if work_mode == "remote" else "Worldwide")
+        raw_loc = (item.get("location") or "").strip()
+        if raw_loc:
+            loc_str = raw_loc
+        elif work_mode == "remote":
+            loc_str = "Remote"
+        else:
+            # Never label an unknown location as 'Worldwide' when a specific country was requested
+            loc_str = "" if is_specific_country else "Worldwide"
         vendor = (item.get("source") or "ats").lower()
         desc = html_to_text(item.get("description") or "")
         skills = item.get("skills") or []
@@ -702,22 +757,17 @@ _ANYWHERE = ("anywhere", "worldwide", "global", "remote", "")
 
 
 def _location_ok(row: dict, country: str) -> bool:
-    """Keep jobs the candidate can take from the selected country (remote-friendly rows always pass)."""
+    """
+    Strictly verify that a job matches the selected country when a specific country is chosen.
+    When country is Worldwide/Global/Remote, any location is accepted.
+    When a specific country is chosen (e.g. 'Romania'), generic 'Worldwide' or 'Remote' jobs
+    (or jobs in other countries) are rejected unless their location explicitly matches the country.
+    """
     c = (country or "").strip().lower()
-    if c in ("", "worldwide", "global", "all"):
+    if c in ("", "worldwide", "global", "all", "remote", "anywhere") or c.startswith("remote "):
         return True
-    loc = (row.get("location") or "").lower()
-    if not loc or any(loc.strip() == a for a in _ANYWHERE) or "worldwide" in loc or "anywhere" in loc:
-        return True
-    aliases = {c}
-    if c in ("usa", "us", "united states"):
-        aliases |= {"usa", "united states", "us", "u.s.", "america"}
-    if c in ("uk", "united kingdom", "gb"):
-        aliases |= {"uk", "united kingdom", "england", "london", "britain"}
-    if c in ("uae", "united arab emirates"):
-        aliases |= {"uae", "united arab emirates", "dubai", "abu dhabi"}
-    return any(re.search(rf"\b{re.escape(a)}\b", loc) for a in aliases) or (
-        row.get("is_remote") and any(k in loc for k in ("emea", "europe", "africa", "international")))
+    from .search_engine import job_matches_selected_countries
+    return job_matches_selected_countries(row, [country])
 
 
 def make_strict_matcher(queries: List[str]) -> Callable[[dict], bool]:
@@ -808,12 +858,18 @@ def fetch_open_source(site: str, queries: List[str], *,
     elif site == "official_apis":
         from .official_apis import fetch_official
         rows = fetch_official(query, country=country, location=location, hours_old=hours_old)
+    elif site == "local_boards":
+        from .local_boards import fetch_country_local_boards
+        rows = fetch_country_local_boards(queries, country=country, hours_old=hours_old, serper_key=serper_key)
     else:
         return []
 
+    from .search_engine import is_aggregator_or_non_posting
     out, seen = [], set()
     for r in rows:
-        if not relevant(r) or not _location_ok(r, country):
+        if (site != "local_boards" and not relevant(r)) or not _location_ok(r, country):
+            continue
+        if is_aggregator_or_non_posting(r.get("title", ""), r.get("job_url", ""), r.get("company", "")):
             continue
         key = (r["job_url"] or "").split("?")[0].rstrip("/").lower()
         if key in seen:

@@ -14,11 +14,12 @@ import {
 } from 'lucide-react'
 
 const STATUS_COLORS = {
-  applied:   { bg: 'bg-blue-500',    text: 'text-blue-400',    border: 'border-blue-500/30',    label: 'Applied'   },
-  interview: { bg: 'bg-indigo-500',  text: 'text-indigo-400',  border: 'border-indigo-500/30',  label: 'Interview' },
-  offer:     { bg: 'bg-blue-400',    text: 'text-blue-300',    border: 'border-blue-400/30',    label: 'Offer'     },
-  rejected:  { bg: 'bg-slate-500',   text: 'text-slate-400',   border: 'border-slate-500/30',   label: 'Rejected'  },
-  accepted:  { bg: 'bg-indigo-400',  text: 'text-indigo-300',  border: 'border-indigo-400/30',  label: 'Accepted'  },
+  applied:   { bg: 'bg-blue-500',    text: 'text-blue-400',    border: 'border-blue-500/30',    label: 'Applied'      },
+  review:    { bg: 'bg-cyan-500',    text: 'text-cyan-400',    border: 'border-cyan-500/30',    label: 'Under Review' },
+  interview: { bg: 'bg-indigo-500',  text: 'text-indigo-400',  border: 'border-indigo-500/30',  label: 'Interview'    },
+  offer:     { bg: 'bg-blue-400',    text: 'text-blue-300',    border: 'border-blue-400/30',    label: 'Offer'        },
+  rejected:  { bg: 'bg-slate-500',   text: 'text-slate-400',   border: 'border-slate-500/30',   label: 'Rejected'     },
+  accepted:  { bg: 'bg-indigo-400',  text: 'text-indigo-300',  border: 'border-indigo-400/30',  label: 'Accepted'     },
 }
 
 const CARD_THEMES = {
@@ -109,7 +110,7 @@ function StatCard({ Icon, value, label, sub, color = 'blue', delay = 0, onClick 
 }
 
 function PipelineBar({ pipeline, total }) {
-  const stages = ['applied', 'interview', 'offer', 'accepted', 'rejected']
+  const stages = ['applied', 'review', 'interview', 'offer', 'accepted', 'rejected']
   if (!total) {
     return (
       <div className="text-slate-400 text-xs text-center py-8 space-y-2">

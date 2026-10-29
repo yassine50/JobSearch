@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, startTransition } from 'react'
 import { motion } from 'framer-motion'
 import Sidebar from '../components/Sidebar.jsx'
 import PageWrapper from '../components/PageWrapper.jsx'
@@ -32,13 +32,14 @@ export default function Seeker() {
   const [watchlistModalOpen, setWatchlistModalOpen] = useState(false)
   const [authGateReason, setAuthGateReason] = useState(null)
 
-  // Job boards scraper state (hydrates from sessionStorage if user just unlocked a guest search on the Landing Page)
+  // Job boards scraper state (hydrates from sessionStorage or cached daily digest so layout never shifts)
   const [boardJobs, setBoardJobs] = useState(() => {
     try {
-      return JSON.parse(sessionStorage.getItem('guest_board_jobs') || '[]')
-    } catch {
-      return []
-    }
+      const saved = JSON.parse(sessionStorage.getItem('guest_board_jobs') || '[]')
+      if (Array.isArray(saved) && saved.length > 0) return saved
+    } catch {}
+    const digest = getCached('/jobs/daily-digest', null)
+    return Array.isArray(digest?.jobs) ? digest.jobs : []
   })
   const [boardLoading, setBoardLoading] = useState(false)
   const [boardStreaming, setBoardStreaming] = useState(false)
@@ -152,6 +153,8 @@ export default function Seeker() {
     const isLatest = () => searchId === searchIdRef.current
     setBoardLoading(true)
     setBoardStreaming(true)
+    setBoardJobs([])
+    setBoardMeta(null)
     const hoursOld = params.hours_old !== undefined ? params.hours_old : (
       params.filters?.datePosted === '24h' ? 24 :
       params.filters?.datePosted === 'week' ? 168 :
@@ -288,9 +291,7 @@ export default function Seeker() {
           <div className="max-w-[1480px] mx-auto w-full space-y-6">
 
             {/* Hero Header Card */}
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
+            <div
               className="glass-panel rounded-3xl p-5 sm:p-6 md:p-7 relative overflow-hidden flex flex-col xl:flex-row items-start xl:items-center justify-between gap-5"
             >
               <div className="glow-line-top" />
@@ -327,18 +328,13 @@ export default function Seeker() {
                       <button
                         key={tab.id}
                         type="button"
-                        onClick={() => setActiveTab(tab.id)}
+                        onClick={() => startTransition(() => setActiveTab(tab.id))}
                         className={`relative flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
-                          active ? 'text-white' : 'text-slate-400 hover:text-white'
+                          active
+                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25'
+                            : 'text-slate-400 hover:text-white'
                         }`}
                       >
-                        {active && (
-                          <motion.div
-                            layoutId="seeker-mode-pill"
-                            transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                            className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 shadow-md shadow-blue-600/25 z-0"
-                          />
-                        )}
                         <Icon size={14} className="relative z-10" />
                         <span className="relative z-10">{tab.label}</span>
                         {tab.badge && (
@@ -440,25 +436,17 @@ export default function Seeker() {
                   )}
                 </motion.button>
               </div>
-            </motion.div>
+            </div>
 
             {/* Active Mode Body (kept mounted so tab switching never triggers unwanted searches or loses results) */}
-            <motion.div
-              animate={{ opacity: activeTab === 'linkedin_posts' ? 1 : 0, y: activeTab === 'linkedin_posts' ? 0 : 6 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className={activeTab === 'linkedin_posts' ? 'block' : 'hidden'}
-            >
+            <div className={activeTab === 'linkedin_posts' ? 'block min-h-[540px]' : 'hidden'}>
               <LinkedInPostHunter
                 initialRole={hunterRole}
                 cvUploaded={cvInfo.uploaded}
                 onTailor={openTailor}
               />
-            </motion.div>
-            <motion.div
-              animate={{ opacity: activeTab === 'job_boards' ? 1 : 0, y: activeTab === 'job_boards' ? 0 : 6 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className={activeTab === 'job_boards' ? 'block' : 'hidden'}
-            >
+            </div>
+            <div className={activeTab === 'job_boards' ? 'block min-h-[540px]' : 'hidden'}>
               <JobBoardScraper
                 jobs={boardJobs}
                 loading={boardLoading}
@@ -471,11 +459,13 @@ export default function Seeker() {
                 isJobSaved={isJobSaved}
                 onJobApplied={handleJobApplied}
                 onSwitchToPosts={(targetRole) => {
-                  if (targetRole) setHunterRole(targetRole)
-                  setActiveTab('linkedin_posts')
+                  startTransition(() => {
+                    if (targetRole) setHunterRole(targetRole)
+                    setActiveTab('linkedin_posts')
+                  })
                 }}
               />
-            </motion.div>
+            </div>
           </div>
         </main>
 

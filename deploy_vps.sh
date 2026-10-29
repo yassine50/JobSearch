@@ -2,7 +2,7 @@
 set -e
 
 echo "===================================================="
-echo "🚀 Deploying CVtoMatch Backend on VPS (34.55.247.158)"
+echo "🚀 Deploying CVtoMatch Backend on VPS (34.41.44.162)"
 echo "===================================================="
 
 # 1. Create 4GB Swap File so the server never runs out of RAM
@@ -26,23 +26,49 @@ if [ ! -d "/opt/cvtomatch" ]; then
   sudo git clone https://github.com/yassine50/JobSearch.git /opt/cvtomatch
   sudo chown -R $USER:$USER /opt/cvtomatch
 else
-  echo "--> Backing up production database & config before pulling..."
-  mkdir -p ~/cvtomatch_backup
-  for f in jobsearcher.db jobsearcher.db-wal jobsearcher.db-shm scraper_config.json; do
+  echo "--> Safely checkpointing & backing up production database, JWT secret & config before pulling..."
+  mkdir -p "$HOME/cvtomatch_backup"
+  if [ -f "/opt/cvtomatch/web/backend/jobsearcher.db" ] && [ -x "/opt/cvtomatch/venv/bin/python" ]; then
+    /opt/cvtomatch/venv/bin/python - <<'PY' || cp -p "/opt/cvtomatch/web/backend/jobsearcher.db" "$HOME/cvtomatch_backup/jobsearcher.db"
+import os, sqlite3
+backup_dir = os.path.expanduser("~/cvtomatch_backup")
+src = sqlite3.connect("/opt/cvtomatch/web/backend/jobsearcher.db", timeout=30)
+try:
+    src.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+except Exception:
+    pass
+dst = sqlite3.connect(os.path.join(backup_dir, "jobsearcher.db"))
+with dst:
+    src.backup(dst)
+dst.close()
+src.close()
+PY
+  elif [ -f "/opt/cvtomatch/web/backend/jobsearcher.db" ]; then
+    cp -p "/opt/cvtomatch/web/backend/jobsearcher.db" "$HOME/cvtomatch_backup/jobsearcher.db"
+  fi
+  for f in scraper_config.json .jwt_secret; do
     if [ -f "/opt/cvtomatch/web/backend/$f" ]; then
-      cp -p "/opt/cvtomatch/web/backend/$f" "~/cvtomatch_backup/$f.bak" 2>/dev/null || cp -p "/opt/cvtomatch/web/backend/$f" "$HOME/cvtomatch_backup/$f"
+      cp -p "/opt/cvtomatch/web/backend/$f" "$HOME/cvtomatch_backup/$f"
     fi
   done
+  if [ -f "/opt/cvtomatch/.env" ]; then
+    cp -p "/opt/cvtomatch/.env" "$HOME/cvtomatch_backup/.env"
+  fi
+  sudo systemctl stop cvtomatch 2>/dev/null || true
   echo "--> Pulling latest changes in /opt/cvtomatch..."
   cd /opt/cvtomatch
   git fetch origin main
   git reset --hard origin/main
-  echo "--> Restoring production database & config..."
-  for f in jobsearcher.db jobsearcher.db-wal jobsearcher.db-shm scraper_config.json; do
+  echo "--> Restoring production database, JWT secret & config..."
+  rm -f /opt/cvtomatch/web/backend/jobsearcher.db-wal /opt/cvtomatch/web/backend/jobsearcher.db-shm
+  for f in jobsearcher.db scraper_config.json .jwt_secret; do
     if [ -f "$HOME/cvtomatch_backup/$f" ]; then
       cp -p "$HOME/cvtomatch_backup/$f" "/opt/cvtomatch/web/backend/$f"
     fi
   done
+  if [ -f "$HOME/cvtomatch_backup/.env" ]; then
+    cp -p "$HOME/cvtomatch_backup/.env" "/opt/cvtomatch/.env"
+  fi
 fi
 
 cd /opt/cvtomatch
@@ -137,7 +163,7 @@ sudo nginx -t
 sudo systemctl restart nginx
 
 echo "===================================================="
-echo "✅ CVtoMatch Backend is LIVE at: http://34.55.247.158/health"
+echo "✅ CVtoMatch Backend is LIVE at: http://34.41.44.162/health"
 echo "===================================================="
 curl -s http://127.0.0.1:8000/health || true
 echo ""

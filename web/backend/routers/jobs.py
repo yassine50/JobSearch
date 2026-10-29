@@ -71,37 +71,56 @@ def _compute_job_age_hours(date_val: Any) -> Optional[float]:
         except Exception:
             pass
 
-    # Check relative text
-    low = val_str.lower()
+    # Check month-name calendar date (e.g. "Oct 19, 2026", "19 Oct 2026", "October 19, 2026")
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y"):
+        try:
+            d_date = datetime.strptime(val_str.strip(), fmt).date()
+            days_diff = (now.date() - d_date).days
+            if days_diff <= 0:
+                return 4.0
+            return float(days_diff * 24)
+        except Exception:
+            pass
+
+    # Check relative text (English + French)
+    low = val_str.lower().strip()
+    if low in ("recently", "recent", "n/a", "none", "unknown", ""):
+        return None
     if any(w in low for w in ["just now", "moment", "second", "minute", "min ago", "mins ago",
-                               "less than an hour", "moments ago", "few seconds"]):
+                               "less than an hour", "moments ago", "few seconds", "à l'instant"]):
         return 0.5
-    # Handle "an hour ago" / "about an hour" → 1h
-    if re.search(r"\ban?\s+hour\b", low):
+    # Handle "an hour ago" / "about an hour" / "une heure" → 1h
+    if re.search(r"\b(?:an?\s+hour|une\s+heure)\b", low):
         return 1.0
-    m_h = re.search(r"(\d+)\s*(?:hour|hr|h)\b", low)
+    m_h = re.search(r"(\d+)\s*(?:hours?|hrs?|h|heures?)\b", low)
     if m_h:
         return float(m_h.group(1))
-    if "yesterday" in low or re.search(r"\b1\s*day\s*ago\b|\b1d\s*ago\b", low):
+    if "yesterday" in low or "hier" in low or re.search(r"\b1\s*days?\s*ago\b|\b1d\s*ago\b", low):
         return 24.0
-    # Handle "a day ago" → 24h
-    if re.search(r"\ba\s+day\s+ago\b", low):
+    # Handle "a day ago" / "un jour" → 24h
+    if re.search(r"\b(?:a\s+day\s+ago|un\s+jour)\b", low):
         return 24.0
-    m_d = re.search(r"(\d+)\s*(?:day|d)\b", low)
+    m_d = re.search(r"(\d+)\s*(?:days?|d|jours?|j)\b", low)
     if m_d:
         return float(m_d.group(1)) * 24.0
-    # Handle "a week ago" → 168h
-    if re.search(r"\ba\s+week\s+ago\b", low):
+    # Handle "a week ago" / "une semaine" → 168h
+    if re.search(r"\b(?:a\s+week\s+ago|une\s+semaine)\b", low):
         return 168.0
-    m_w = re.search(r"(\d+)\s*(?:week|wk|w)\b", low)
+    m_w = re.search(r"(\d+)\s*(?:weeks?|wks?|w|semaines?)\b", low)
     if m_w:
         return float(m_w.group(1)) * 168.0
-    # Handle "a month ago" → 720h
-    if re.search(r"\ba\s+month\s+ago\b", low):
+    # Handle "a month ago" / "un mois" → 720h
+    if re.search(r"\b(?:a\s+month\s+ago|un\s+mois)\b", low):
         return 720.0
-    m_m = re.search(r"(\d+)\s*(?:month|mo|m)\b", low)
+    m_m = re.search(r"(\d+)\s*(?:months?|mos?|mo|mois)\b", low)
     if m_m:
         return float(m_m.group(1)) * 720.0
+    # Handle "a year ago" / "2 years ago" / "il y a 2 ans" → 8760h
+    if re.search(r"\b(?:a\s+year|an?\s+yr|un\s+an)\b", low):
+        return 8760.0
+    m_y = re.search(r"(\d+)\s*(?:years?|yrs?|yr|y|ans?|an)\b", low)
+    if m_y:
+        return float(m_y.group(1)) * 8760.0
 
     return None
 
@@ -118,9 +137,11 @@ def _format_age_str(age_hours: Optional[float]) -> str:
     if days < 7:
         return f"{days}d ago"
     weeks = int(days // 7)
-    if weeks < 4:
+    if weeks <= 4:
         return f"{weeks}w ago"
-    months = int(days // 30)
+    if days >= 365:
+        return f"{max(1, int(days // 365))}y ago"
+    months = max(1, int(days // 30))
     return f"{months}mo ago"
 from .. import models
 from ..database import get_db
@@ -132,10 +153,10 @@ def _extract_job_id(url: str) -> Optional[str]:
     if not url: return None
     m = (
         re.search(r"currentJobId=(\d+)", url) or
-        re.search(r"/view/[^/?#]*-?(\d{7,12})", url) or
         re.search(r"-(\d{7,12})(?:[/?#]|$)", url) or
-        re.search(r"/jobs/view/(\d+)", url) or
-        re.search(r"(\d{8,11})", url)
+        re.search(r"/jobs/view/(\d+)(?:[/?#]|$)", url) or
+        re.search(r"/jobPosting/(\d+)", url) or
+        re.search(r"(?<!\d)(\d{8,11})(?!\d)", url)
     )
     return m.group(1) if m else None
 
@@ -263,12 +284,18 @@ _jobs_adapter = _req_lib.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=
 _JOBS_SESSION.mount("https://", _jobs_adapter)
 _JOBS_SESSION.mount("http://", _jobs_adapter)
 
+_LI_DETAIL_CACHE: dict = {}
+_LI_APPLY_URL_RE = re.compile(r'(?<=url=)https?://[^\s"\'<>]+|https?://[^\s"\'<>]+')
+
+
 def _fetch_linkedin_details(url_or_id: str) -> dict:
     """
-    Fetches full job description, closed-banner status, and structured criteria
+    Fetches full job description, closed-banner status, direct apply URL, and structured criteria
     (Seniority level, Employment type, Job function, Industries) via LinkedIn's
     public guest API (ported from ai-job-search linkedin-search/cli/src/helpers.ts).
     """
+    import time as _t_li
+    from urllib.parse import unquote
     job_id = None
     url_or_id = str(url_or_id or "").strip()
     if url_or_id.isdigit():
@@ -276,16 +303,20 @@ def _fetch_linkedin_details(url_or_id: str) -> dict:
     else:
         m = (
             re.search(r"currentJobId=(\d+)", url_or_id) or
-            re.search(r"/view/[^/?#]*-?(\d{8,12})", url_or_id) or
             re.search(r"-(\d{8,12})(?:[/?#]|$)", url_or_id) or
-            re.search(r"/jobs/view/(\d+)", url_or_id) or
-            re.search(r"(\d{9,11})", url_or_id)
+            re.search(r"/jobs/view/(\d+)(?:[/?#]|$)", url_or_id) or
+            re.search(r"/jobPosting/(\d+)", url_or_id) or
+            re.search(r"(?<!\d)(\d{9,11})(?!\d)", url_or_id)
         )
         if m:
             job_id = m.group(1)
 
     if not job_id:
         return {"description": "", "is_closed": False, "criteria": {}}
+
+    cached = _LI_DETAIL_CACHE.get(job_id)
+    if cached and (_t_li.time() - cached[0]) < 6 * 3600:
+        return dict(cached[1])
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -305,6 +336,24 @@ def _fetch_linkedin_details(url_or_id: str) -> dict:
                 or re.search(r"no\s+longer\s+accepting\s+applications", topcard_slice, re.I)
             )
             soup = BeautifulSoup(raw_html, "html.parser")
+            t_el = soup.find(class_=lambda x: x and "top-card-layout__title" in x)
+            co_el = soup.find("a", class_=lambda x: x and "topcard__org-name-link" in x) or soup.find("span", class_=lambda x: x and "topcard__flavor" in x and "bullet" not in x)
+            loc_el = soup.find(class_=lambda x: x and "topcard__flavor--bullet" in x)
+            posted_el = soup.find(class_=lambda x: x and "posted-time-ago" in x)
+            top_title = t_el.get_text(strip=True) if t_el else ""
+            top_company = co_el.get_text(strip=True) if co_el else ""
+            top_location = loc_el.get_text(strip=True) if loc_el else ""
+            top_posted = posted_el.get_text(strip=True) if posted_el else ""
+
+            job_url_direct = ""
+            apply_code = soup.find("code", id="applyUrl")
+            if apply_code:
+                m_app = _LI_APPLY_URL_RE.search(apply_code.decode_contents().strip())
+                if m_app:
+                    cand_direct = unquote(m_app.group(0)).strip()
+                    if cand_direct.startswith("http") and "linkedin.com" not in cand_direct.lower():
+                        job_url_direct = cand_direct
+
             desc_text = ""
             div = soup.find("div", class_=lambda x: x and "show-more-less-html__markup" in x)
             if div:
@@ -325,10 +374,22 @@ def _fetch_linkedin_details(url_or_id: str) -> dict:
                         criteria["job_function"] = v
                     elif "industr" in k:
                         criteria["industries"] = v
-            return {"description": desc_text, "is_closed": is_closed, "criteria": criteria}
+            res_dict = {
+                "title": top_title,
+                "company": top_company,
+                "location": top_location,
+                "date_posted": top_posted,
+                "job_url_direct": job_url_direct,
+                "description": desc_text,
+                "is_closed": is_closed,
+                "criteria": criteria,
+            }
+            if top_title or desc_text:
+                _LI_DETAIL_CACHE[job_id] = (_t_li.time(), res_dict)
+            return res_dict
     except Exception:
         pass
-    return {"description": "", "is_closed": False, "criteria": {}}
+    return {"title": "", "company": "", "location": "", "date_posted": "", "job_url_direct": "", "description": "", "is_closed": False, "criteria": {}}
 
 
 def _fetch_linkedin_description(url_or_id: str) -> str:
@@ -473,10 +534,7 @@ def _extract_jsonld_job_posting(html_text: str) -> dict:
 
 
 # ── Platform admin (only admins can see / change the server-side API keys) ─────
-def is_admin(user) -> bool:
-    admins = os.getenv("ADMIN_EMAILS", "yassineyoussefwx@gmail.com")
-    return bool(user) and (user.email or "").strip().lower() in {
-        e.strip().lower() for e in admins.split(",") if e.strip()}
+from ..auth import is_admin
 
 
 # ── Shared search cache: identical searches within 6h reuse the scraped results ─
@@ -531,55 +589,206 @@ def _check_and_count_search_quota(user):
                                      "Repeating a recent search is still free — try again tomorrow for new ones.")
         _search_quota[key] = used + 1
 
-def _fetch_serper_google_jobs(query: str, location: str = "", country: str = "us", results_wanted: int = 15, api_key: str = "") -> List[dict]:
-    """Fetches structured Google Search Jobs using Serper API when key is configured."""
+def _fetch_serper_google_jobs(
+    query: str,
+    location: str = "",
+    country: str = "us",
+    results_wanted: int = 15,
+    api_key: str = "",
+    hours_old: Optional[int] = None,
+) -> List[dict]:
+    """
+    Fetches verified individual job postings via Serper API (never job-board search/category pages).
+    Targets direct employer ATS postings and LinkedIn single-job views, extracting accurate
+    company names, titles, locations, and real posting dates.
+    """
     if not api_key:
         return []
     try:
-        from urllib.parse import urlparse
+        from concurrent.futures import ThreadPoolExecutor
+        from urllib.parse import urlparse, unquote
+        from ..open_sources import parse_ats_url, fetch_ats_posting
+        from ..search_engine import (
+            is_aggregator_or_non_posting, job_matches_selected_countries,
+            BAD_COMPANY, SINGLE_TECH_TO_ROLE, best_relevance,
+        )
+
         url = "https://google.serper.dev/search"
-        loc_str = location if location and location.lower() != "worldwide" else ""
-        q_str = f"{query} jobs in {loc_str}" if loc_str else f"{query} jobs"
+        is_ww = not location or location.strip().lower() in ("worldwide", "global", "all", "remote")
+        loc_str = "" if is_ww else location.strip()
         gl_map = {
-            "usa": "us", "united states": "us", "canada": "ca", "france": "fr",
-            "germany": "de", "uk": "uk", "united kingdom": "uk", "netherlands": "nl",
-            "morocco": "ma", "united arab emirates": "ae", "uae": "ae", "singapore": "sg"
+            "usa": "us", "united states": "us", "us": "us", "canada": "ca", "ca": "ca",
+            "france": "fr", "fr": "fr", "germany": "de", "de": "de", "uk": "uk", "gb": "uk",
+            "united kingdom": "uk", "netherlands": "nl", "nl": "nl", "morocco": "ma", "ma": "ma",
+            "united arab emirates": "ae", "uae": "ae", "singapore": "sg", "sg": "sg",
+            "romania": "ro", "ro": "ro", "spain": "es", "es": "es", "italy": "it", "it": "it",
+            "poland": "pl", "pl": "pl", "portugal": "pt", "pt": "pt", "switzerland": "ch", "ch": "ch",
+            "belgium": "be", "be": "be", "austria": "at", "at": "at", "sweden": "se", "se": "se",
+            "ireland": "ie", "ie": "ie", "denmark": "dk", "dk": "dk", "norway": "no", "no": "no",
+            "finland": "fi", "fi": "fi", "india": "in", "in": "in", "australia": "au", "au": "au",
+            "saudi arabia": "sa", "sa": "sa", "qatar": "qa", "egypt": "eg", "tunisia": "tn", "tn": "tn",
+            "algeria": "dz", "dz": "dz", "new zealand": "nz", "nz": "nz", "malaysia": "my", "my": "my",
+            "philippines": "ph", "ph": "ph", "indonesia": "id", "id": "id", "japan": "jp", "jp": "jp",
+            "south korea": "kr", "kr": "kr", "mexico": "mx", "mx": "mx", "brazil": "br", "br": "br",
+            "argentina": "ar", "ar": "ar", "colombia": "co", "co": "co", "chile": "cl", "cl": "cl",
+            "czech republic": "cz", "cz": "cz", "hungary": "hu", "hu": "hu", "bulgaria": "bg", "bg": "bg",
+            "greece": "gr", "gr": "gr", "croatia": "hr", "hr": "hr", "turkey": "tr", "tr": "tr",
+            "ukraine": "ua", "ua": "ua", "kuwait": "kw", "kw": "kw", "bahrain": "bh", "bh": "bh",
+            "oman": "om", "om": "om", "jordan": "jo", "jo": "jo", "south africa": "za", "za": "za",
         }
-        gl = gl_map.get(str(country).lower().strip(), "us")
-        payload = {"q": q_str, "gl": gl, "hl": "en", "num": max(10, min(results_wanted, 30))}
-        resp = _JOBS_SESSION.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=6.0)
-        if resp.status_code == 200:
-            data = resp.json()
-            jobs = []
-            for item in data.get("organic", [])[:results_wanted]:
-                raw_title = item.get("title", "")
-                link = item.get("link", "")
-                snippet = item.get("snippet", "")
-                if not link or not raw_title:
-                    continue
-                # Clean title
-                title = raw_title.split("|")[0].split(" - ")[0].split(" – ")[0].strip()
-                title = re.sub(r"^(?:Now Hiring:\s*\d*\s*|Apply for\s*|\$\d+k-\$\d+k\s*)", "", title, flags=re.I).strip()
-                # Parse company
-                parsed = urlparse(link)
-                netloc = parsed.netloc.replace("www.", "")
-                domain_name = netloc.split(".")[0].capitalize()
-                company = domain_name
-                m_co = re.search(r"(?:at|by|with)\s+([A-Z][A-Za-z0-9\s&]{2,25})(?:\s*[\.\,\-–|]|\s+in\s+|\s*$)", raw_title)
-                if m_co:
-                    company = m_co.group(1).strip()
-                jobs.append({
-                    "title": title or query.title(),
-                    "company": company,
-                    "location": loc_str or "United States",
-                    "description": snippet,
-                    "job_url": link,
-                    "job_url_direct": link,
-                    "date_posted": "Recently",
-                    "salary": "",
-                    "site": "google"
-                })
-            return jobs
+        c_low = str(country).lower().strip()
+        gl = gl_map.get(c_low, "us")
+
+        # Extract core tech keyword if query was expanded from a single tech (e.g. "Flutter Developer" -> "flutter")
+        q_clean = (query or "").strip()
+        first_word = q_clean.split()[0].lower() if q_clean.split() else ""
+        core_q = first_word if first_word in SINGLE_TECH_TO_ROLE else f'"{q_clean}"'
+        neg_clause = ' -betfair -"Flutter Functions" -"Flutter Studios" -"Flutter UK" -"Flutter Entertainment"' if "flutter" in q_clean.lower() else ""
+
+        loc_clause = f' "{loc_str}"' if loc_str else ""
+        queries = [
+            f'{core_q}{loc_clause} (site:greenhouse.io OR site:jobs.lever.co OR site:jobs.ashbyhq.com OR site:jobs.smartrecruiters.com OR site:apply.workable.com OR site:myworkdayjobs.com){neg_clause}',
+            f'site:linkedin.com/jobs/view {core_q}{loc_clause}{neg_clause}',
+        ]
+        if not is_ww and gl and gl not in ("us", "uk"):
+            queries.insert(0, f'site:{gl}.linkedin.com/jobs/view {core_q}{neg_clause}')
+        elif not is_ww and c_low != loc_str.lower() and c_low not in ("usa", "us"):
+            queries.append(f'site:linkedin.com/jobs/view {core_q} "{country}"{neg_clause}')
+
+        # Enforce Google recency filter (tbs) so Serper never surfaces 1-5 year old dead postings
+        if hours_old:
+            tbs = "qdr:d" if hours_old <= 24 else ("qdr:w" if hours_old <= 168 else "qdr:m")
+        else:
+            tbs = "qdr:m3"
+
+        def _run_serper_q(q_str: str):
+            payload = {"q": q_str, "gl": gl, "hl": "en", "num": 10, "tbs": tbs}
+            try:
+                resp = _JOBS_SESSION.post(url, json=payload, headers={"X-API-KEY": api_key, "Content-Type": "application/json"}, timeout=4.2)
+                if resp.status_code == 200:
+                    return resp.json().get("organic", [])
+            except Exception:
+                pass
+            return []
+
+        organic_items = []
+        seen_links = set()
+        with ThreadPoolExecutor(max_workers=3) as q_pool:
+            for items in q_pool.map(_run_serper_q, queries):
+                for it in items:
+                    lk = (it.get("link") or "").strip().split("?")[0]
+                    if lk and lk not in seen_links:
+                        seen_links.add(lk)
+                        organic_items.append(it)
+
+        def _verify_item(item: dict) -> Optional[dict]:
+            raw_title = (item.get("title") or "").strip()
+            link = (item.get("link") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            serper_date = (item.get("date") or "").strip()
+            if not link or not raw_title:
+                return None
+
+            # 1. If this is a Greenhouse / Lever / Ashby / SmartRecruiters URL, fetch the exact verified posting from the ATS API
+            if parse_ats_url(link):
+                ats_row = fetch_ats_posting(link)
+                if ats_row and ats_row.get("title") and ats_row.get("company"):
+                    job_cand = {
+                        "title": ats_row["title"],
+                        "company": ats_row["company"],
+                        "location": ats_row.get("location") or loc_str or "Worldwide",
+                        "description": ats_row.get("description") or snippet,
+                        "job_url": ats_row.get("job_url") or link,
+                        "job_url_direct": ats_row.get("job_url_direct") or link,
+                        "date_posted": ats_row.get("date_posted") or serper_date or "",
+                        "salary": "",
+                        "site": "google",
+                    }
+                    if is_ww or job_matches_selected_countries(job_cand, [loc_str or country]):
+                        return job_cand
+                return None
+
+            # 2. Must be a single job posting URL (never a board root or search/category page)
+            low_link = link.lower()
+            is_single_posting = (
+                "linkedin.com/jobs/view/" in low_link
+                or ("apply.workable.com/" in low_link and "/j/" in low_link)
+                or ("myworkdayjobs.com/" in low_link and "/job/" in low_link)
+            )
+            if not is_single_posting:
+                return None
+
+            title = raw_title
+            company = ""
+            job_loc = loc_str or "Worldwide"
+            date_posted = serper_date or ""
+            is_closed = False
+            path_parts = [p for p in urlparse(link).path.strip("/").split("/") if p]
+
+            if "linkedin.com/jobs/view/" in low_link:
+                # Pre-filter by relevance and Serper date before calling LinkedIn's detail endpoint
+                if best_relevance([q_clean, core_q], raw_title, snippet) < 20:
+                    return None
+                if serper_date and hours_old is not None:
+                    s_age = _compute_job_age_hours(serper_date)
+                    if s_age is not None and s_age > hours_old:
+                        return None
+                # Verify via cached _fetch_linkedin_details so we get the real date_posted and is_closed status
+                li_det = _fetch_linkedin_details(link)
+                if not li_det.get("title") or not li_det.get("company") or li_det.get("is_closed"):
+                    return None
+                title = li_det["title"]
+                company = li_det["company"]
+                job_loc = li_det.get("location") or ""
+                date_posted = li_det.get("date_posted") or serper_date or ""
+                if li_det.get("description"):
+                    snippet = li_det["description"]
+            elif "apply.workable.com/" in low_link and len(path_parts) >= 3:
+                company = " ".join(w.capitalize() for w in path_parts[0].split("-") if w)
+                title = raw_title.split(" - ")[0].split("|")[0].strip()
+                job_loc = ""
+            elif "myworkdayjobs.com/" in low_link:
+                sub = urlparse(link).netloc.split(".")[0]
+                company = "Betfair Romania Development" if sub.lower() == "flutterbe" else sub.capitalize()
+                title = raw_title.split(" - Myworkdayjobs")[0].split("|")[0].strip()
+                job_loc = ""
+                if "job" in path_parts:
+                    j_idx = path_parts.index("job")
+                    if j_idx + 2 < len(path_parts):
+                        loc_slug = unquote(path_parts[j_idx + 1]).replace("-", " ").strip()
+                        if loc_slug:
+                            job_loc = loc_slug.title()
+
+            title = re.sub(r"^(?:Now Hiring:\s*\d*\s*|Apply for\s*)", "", title, flags=re.I).strip()
+            if not title or not company or company.lower() in BAD_COMPANY:
+                return None
+            if is_aggregator_or_non_posting(title, link, company):
+                return None
+
+            li_jid = _extract_job_id(link) if "linkedin.com/jobs/view/" in low_link else None
+            canonical_li_url = f"https://www.linkedin.com/jobs/view/{li_jid}" if li_jid else link.split("?")[0]
+            job_cand = {
+                "title": title,
+                "company": company,
+                "location": job_loc,
+                "description": snippet,
+                "job_url": canonical_li_url if "linkedin.com/jobs/view/" in low_link else link,
+                "job_url_direct": (li_det.get("job_url_direct") if "linkedin.com/jobs/view/" in low_link and isinstance(li_det, dict) and li_det.get("job_url_direct") else (canonical_li_url if "linkedin.com/jobs/view/" in low_link else link)),
+                "date_posted": date_posted,
+                "is_closed": is_closed,
+                "salary": "",
+                "site": "linkedin" if "linkedin.com/jobs/view/" in low_link else "google",
+            }
+            if not is_ww and not job_matches_selected_countries(job_cand, [loc_str or country, country]):
+                return None
+            return job_cand
+
+        jobs = []
+        with ThreadPoolExecutor(max_workers=2) as v_pool:
+            for cand in v_pool.map(_verify_item, organic_items[:8]):
+                if cand:
+                    jobs.append(cand)
+        return jobs[:results_wanted]
     except Exception as e:
         logger.warning(f"[SerperGoogleJobs] Error: {e}")
     return []
@@ -785,13 +994,22 @@ def _enrich_job_description(job: dict) -> dict:
                     existing.add(clean_ne)
                     job.setdefault("emails", []).append({"email": clean_ne, "source": "found"})
 
-    if len(current_desc.strip()) > 80:
+    has_placeholder_comp = (job.get("company") or "").strip().startswith(("Employer via ", "Entreprise (", "Empresa via "))
+    if len(current_desc.strip()) > 160 and not has_placeholder_comp:
         return job
 
     if "linkedin" in site or "linkedin.com" in url:
         li_info = _fetch_linkedin_details(url)
         if li_info.get("is_closed"):
             job["is_closed"] = True
+        if li_info.get("job_url_direct"):
+            job["job_url_direct"] = li_info["job_url_direct"]
+        if li_info.get("date_posted") and (not job.get("date_posted") or str(job.get("date_posted")).lower() in ("recently", "recent", "none", "")):
+            job["date_posted"] = li_info["date_posted"]
+            age_h = _compute_job_age_hours(li_info["date_posted"])
+            job["age_hours"] = age_h
+            job["age_str"] = _format_age_str(age_h)
+            job["is_under_24h"] = bool(age_h is not None and age_h <= 24.0)
         if li_info.get("criteria"):
             job["job_criteria"] = li_info["criteria"]
             if not job.get("company_industry") and li_info["criteria"].get("industries"):
@@ -810,6 +1028,60 @@ def _enrich_job_description(job: dict) -> dict:
                     if clean_ne and clean_ne not in existing:
                         existing.add(clean_ne)
                         job.setdefault("emails", []).append({"email": clean_ne, "source": "found"})
+        return job
+
+    # Universal JSON-LD & HTML enrichment for local job boards & ATS pages
+    if url.startswith("http"):
+        try:
+            from ..utils import is_safe_public_url
+            if is_safe_public_url(url):
+                resp = _JOBS_SESSION.get(
+                    url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+                    },
+                    timeout=2.4,
+                )
+                if resp.status_code in (404, 410):
+                    job["is_closed"] = True
+                    return job
+                if resp.status_code == 200 and resp.text:
+                    low_html = resp.text.lower()
+                    if any(m in low_html for m in (
+                        "le poste a été pourvu", "n'accepte plus de candidature",
+                        "cette offre n'est plus disponible", "this job is no longer available",
+                        "anuntul a expirat", "oferta a expirat",
+                    )):
+                        job["is_closed"] = True
+                        return job
+                    jld = _extract_jsonld_job_posting(resp.text)
+                    if jld.get("company") and (has_placeholder_comp or not job.get("company")):
+                        job["company"] = jld["company"]
+                    if jld.get("description") and len(jld["description"]) > len(current_desc):
+                        job["description"] = jld["description"][:4500]
+                    if jld.get("salary") and not job.get("salary"):
+                        job["salary"] = jld["salary"][:60]
+                    if jld.get("date_posted") and not job.get("date_posted"):
+                        job["date_posted"] = jld["date_posted"]
+                        age_h = _compute_job_age_hours(jld["date_posted"])
+                        job["age_hours"] = age_h
+                        job["age_str"] = _format_age_str(age_h)
+                        job["is_under_24h"] = bool(age_h is not None and age_h <= 24.0)
+                    if job.get("description"):
+                        new_emails = _extract_emails_from_text(job["description"])
+                        if new_emails:
+                            existing = {
+                                (e.get("email") if isinstance(e, dict) else str(e)).lower()
+                                for e in (job.get("emails") or [])
+                            }
+                            for ne in new_emails:
+                                clean_ne = ne.strip().lower()
+                                if clean_ne and clean_ne not in existing:
+                                    existing.add(clean_ne)
+                                    job.setdefault("emails", []).append({"email": clean_ne, "source": "found"})
+        except Exception:
+            pass
     return job
 
 class SearchRequest(BaseModel):
@@ -942,6 +1214,64 @@ COUNTRY_NORM = {
     "egypt": ("egypt", "Egypt"),
     "india": ("india", "India"),
     "australia": ("australia", "Australia"),
+    "romania": ("romania", "Romania"),
+    "ro": ("romania", "Romania"),
+    "roumanie": ("romania", "Romania"),
+    "spain": ("spain", "Spain"),
+    "es": ("spain", "Spain"),
+    "italy": ("italy", "Italy"),
+    "it": ("italy", "Italy"),
+    "poland": ("poland", "Poland"),
+    "pl": ("poland", "Poland"),
+    "portugal": ("portugal", "Portugal"),
+    "pt": ("portugal", "Portugal"),
+    "switzerland": ("switzerland", "Switzerland"),
+    "ch": ("switzerland", "Switzerland"),
+    "belgium": ("belgium", "Belgium"),
+    "be": ("belgium", "Belgium"),
+    "austria": ("austria", "Austria"),
+    "at": ("austria", "Austria"),
+    "sweden": ("sweden", "Sweden"),
+    "se": ("sweden", "Sweden"),
+    "ireland": ("ireland", "Ireland"),
+    "ie": ("ireland", "Ireland"),
+    "denmark": ("denmark", "Denmark"),
+    "dk": ("denmark", "Denmark"),
+    "norway": ("norway", "Norway"),
+    "no": ("norway", "Norway"),
+    "finland": ("finland", "Finland"),
+    "fi": ("finland", "Finland"),
+    "czech republic": ("czech republic", "Czech Republic"),
+    "czechia": ("czech republic", "Czech Republic"),
+    "hungary": ("hungary", "Hungary"),
+    "bulgaria": ("bulgaria", "Bulgaria"),
+    "croatia": ("croatia", "Croatia"),
+    "greece": ("greece", "Greece"),
+    "turkey": ("turkey", "Turkey"),
+    "ukraine": ("ukraine", "Ukraine"),
+    "tunisia": ("tunisia", "Tunisie"),
+    "tn": ("tunisia", "Tunisie"),
+    "tunisie": ("tunisia", "Tunisie"),
+    "algeria": ("algeria", "Algérie"),
+    "dz": ("algeria", "Algérie"),
+    "algérie": ("algeria", "Algérie"),
+    "maroc": ("morocco", "Morocco"),
+    "kuwait": ("kuwait", "Kuwait"),
+    "bahrain": ("bahrain", "Bahrain"),
+    "oman": ("oman", "Oman"),
+    "brazil": ("brazil", "Brazil"),
+    "mexico": ("mexico", "Mexico"),
+    "argentina": ("argentina", "Argentina"),
+    "colombia": ("colombia", "Colombia"),
+    "chile": ("chile", "Chile"),
+    "japan": ("japan", "Japan"),
+    "south korea": ("south korea", "South Korea"),
+    "new zealand": ("new zealand", "New Zealand"),
+    "south africa": ("south africa", "South Africa"),
+    "jordan": ("jordan", "Jordan"),
+    "malaysia": ("malaysia", "Malaysia"),
+    "philippines": ("philippines", "Philippines"),
+    "indonesia": ("indonesia", "Indonesia"),
     "worldwide": ("usa", "Worldwide"),
     "global": ("usa", "Worldwide"),
 }
@@ -955,8 +1285,8 @@ def search_jobs(req: SearchRequest,
     import pandas as pd
 
     # Filter to supported jobspy sites - enable multi-board scraping
-    # remote_boards / ats / hackernews are zero-auth open sources (see open_sources.py)
-    SUPPORTED = {"linkedin", "indeed", "job_bank", "glassdoor", "google", "remote_boards", "ats", "hackernews", "official_apis"}
+    # remote_boards / ats / hackernews / local_boards are zero-auth open sources (see open_sources.py & local_boards.py)
+    SUPPORTED = {"linkedin", "indeed", "job_bank", "glassdoor", "google", "remote_boards", "ats", "hackernews", "official_apis", "local_boards"}
     valid_sites = [s for s in req.sites if s in SUPPORTED] or ["linkedin", "indeed", "job_bank"]
     if req.international_only and "job_bank" not in valid_sites:
         valid_sites.append("job_bank")
@@ -976,6 +1306,11 @@ def search_jobs(req: SearchRequest,
 
     # Keep LinkedIn enabled on 24h searches (f_TPR=r86400 + strict card timestamp verification)
     effective_sites = list(valid_sites)
+    _has_serper = bool(os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", ""))
+    if _has_serper and "google" not in effective_sites:
+        effective_sites.append("google")
+    if "local_boards" not in effective_sites:
+        effective_sites.append("local_boards")
     if hours_filter and hours_filter <= 24:
         for must_have in ["linkedin", "indeed", "job_bank"]:
             if must_have not in effective_sites and must_have in SUPPORTED:
@@ -983,6 +1318,7 @@ def search_jobs(req: SearchRequest,
 
     from ..search_engine import (
         expand_queries, best_relevance, is_spam, dedup_and_merge, quality_score,
+        is_aggregator_or_non_posting, job_matches_selected_countries,
     )
     from ..open_sources import fetch_open_source, OPEN_SITE_IDS
     from ..official_apis import configured_providers as _official_providers
@@ -999,18 +1335,24 @@ def search_jobs(req: SearchRequest,
              "raw": 0, "after_dedup": 0, "after_relevance": 0, "spam_removed": 0,
              "per_site": {}, "queries": {}, "timings": {}}
 
+    _NO_INDEED_DOMAIN = {"tunisia", "tn", "tunisie", "algeria", "dz", "algérie", "senegal", "sn", "jordan", "jo"}
+
     def _country_ctx(country_name: str):
         norm_key = country_name.strip().lower()
-        if norm_key in ("worldwide", "global", "all", ""):
+        is_ww = norm_key in ("worldwide", "global", "all", "remote", "") or norm_key.startswith("remote ")
+        if is_ww:
             indeed_c = "usa"
             loc = req.location.strip() if req.location.strip() else ("Remote" if req.is_remote else "Worldwide")
         else:
-            indeed_c, linkedin_loc = COUNTRY_NORM.get(norm_key, (norm_key, country_name.strip()))
+            indeed_c, linkedin_loc = COUNTRY_NORM.get(norm_key, (norm_key, country_name.strip().title()))
             loc = req.location.strip() if req.location.strip() else linkedin_loc
         sites = [
             s for s in effective_sites
-            if s != "job_bank" or norm_key in ("canada", "ca", "worldwide", "global", "all", "") or req.international_only
-        ] or list(effective_sites)
+            if (s != "job_bank" or norm_key in ("canada", "ca", "worldwide", "global", "all", "") or req.international_only)
+            and (s not in ("remote_boards", "hackernews") or is_ww)
+            and (s != "local_boards" or not is_ww)
+            and (s != "indeed" or norm_key not in _NO_INDEED_DOMAIN)
+        ] or ["linkedin"]
         return norm_key, indeed_c, loc, sites
 
     # Build the fan-out task list (deduplicating global open feeds across countries)
@@ -1026,6 +1368,9 @@ def search_jobs(req: SearchRequest,
                 all_queries.append(q)
         for site in sites:
             if site == "official_apis" and not _official_active:
+                continue
+            if site == "local_boards":
+                tasks.append((country_name, norm_key, site, variants, per_country, indeed_c, loc))
                 continue
             if site in OPEN_SITE_IDS:
                 if site in seen_open_sites:
@@ -1068,7 +1413,10 @@ def search_jobs(req: SearchRequest,
         if site == "google":
             serper_key = os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")
             if serper_key:
-                g_jobs = _fetch_serper_google_jobs(q, location=loc, country=indeed_c, results_wanted=want, api_key=serper_key)
+                g_jobs = _fetch_serper_google_jobs(
+                    q, location=loc, country=indeed_c, results_wanted=want,
+                    api_key=serper_key, hours_old=hours_filter,
+                )
                 if g_jobs:
                     df_g = pd.DataFrame(g_jobs)
                     df_g["_search_country"] = search_country
@@ -1169,6 +1517,22 @@ def search_jobs(req: SearchRequest,
 
             desc    = str(row.get("description", ""))
             job_url = str(row.get("job_url", ""))
+            loc_val = str(row.get("location", "")).strip()
+            if len(loc_val) == 2 and loc_val.isalpha():
+                _, pretty_loc = COUNTRY_NORM.get(loc_val.lower(), (loc_val, loc_val))
+                loc_val = pretty_loc
+
+            # Drop job search aggregator/category pages and invalid company placeholders
+            if is_aggregator_or_non_posting(title, job_url, company):
+                continue
+
+            # Strictly enforce country filter when specific country/countries are selected
+            if not job_matches_selected_countries(
+                {"title": title, "location": loc_val, "url": job_url, "job_url": job_url},
+                countries_to_search,
+                is_remote_requested=bool(req.is_remote),
+            ):
+                continue
             salary  = ""
             try:
                 if row.get("min_amount"):
@@ -1185,15 +1549,22 @@ def search_jobs(req: SearchRequest,
             date_raw = row.get("date_posted")
             age_hours = _compute_job_age_hours(date_raw)
             date_str = str(date_raw) if date_raw else ""
+            if date_str.lower() in ("recently", "recent", "none", "n/a"):
+                date_str = ""
             age_str = _format_age_str(age_hours)
             is_under_24h = bool(age_hours is not None and age_hours <= 24.0)
 
-            # Strictly enforce 24-hour (or custom hours) filter
+            # Never return closed postings where applications are no longer accepted
+            if bool(row.get("is_closed")):
+                continue
+
+            # Never return stale/dead postings older than 90 days (2160h) even on "Any time"
+            if age_hours is not None and age_hours > 2160.0:
+                continue
+
+            # Strictly enforce date filter (24h, Past week = 168h, Past month = 720h)
             if hours_filter is not None:
-                if age_hours is not None and age_hours > hours_filter:
-                    continue
-                # If age_hours is None and 24h filter was selected, never let indeterminate/unverified jobs pollute 24h results
-                if age_hours is None and hours_filter <= 24:
+                if age_hours is None or age_hours > hours_filter:
                     continue
 
             is_easy_apply = bool(
@@ -1204,7 +1575,7 @@ def search_jobs(req: SearchRequest,
             raw_jobs.append({
                 "title": title,
                 "company": company,
-                "location": str(row.get("location", "")),
+                "location": loc_val,
                 "url": job_url,
                 "job_url_direct": str(row.get("job_url_direct", "")),
                 "company_url_direct": str(row.get("company_url_direct", "")),
@@ -1234,7 +1605,7 @@ def search_jobs(req: SearchRequest,
                 "missing_skills": [],
                 "matched_query": str(row.get("_query", "")),
                 "also_on": [str(row.get("site", ""))],
-                "relevance": best_relevance(all_queries, title, desc),
+                "relevance": best_relevance(all_queries, title, desc, company),
                 "_spam": is_spam(title, desc, company),
             })
 
@@ -1244,25 +1615,6 @@ def search_jobs(req: SearchRequest,
         stats["spam_removed"] = before_spam - len(raw_jobs)
         raw_jobs = dedup_and_merge(raw_jobs)
         stats["after_dedup"] = len(raw_jobs)
-
-        # ── Quality stage 2: adaptive relevance filter ──
-        # Strong = the title really is the searched role (synonym-aware).
-        # Weak   = only the description matches; used to back-fill when strong results are scarce.
-        strong = [j for j in raw_jobs if j["relevance"] >= 40]
-        weak = sorted((j for j in raw_jobs if 20 <= j["relevance"] < 40), key=lambda j: -j["relevance"])
-        min_wanted = max(req.results_wanted, 15)
-        if len(strong) < min_wanted:
-            strong += weak[: min_wanted - len(strong)]
-        raw_jobs = strong
-        stats["after_relevance"] = len(raw_jobs)
-
-        # Cap work for the enrichment stages: best candidates first.
-        for j in raw_jobs:
-            j["quality"] = quality_score(j)
-        raw_jobs.sort(key=lambda j: -j["quality"])
-        MAX_RESULTS = min(max(req.results_wanted * 2, 45), 75)
-        raw_jobs = raw_jobs[:MAX_RESULTS]
-        del df, all_dfs
 
         def _bounded_map(fn, items, budget_s):
             """Parallel map on shared _JOBS_POOL that never blocks longer than budget_s."""
@@ -1279,26 +1631,84 @@ def search_jobs(req: SearchRequest,
                     out.append(it)
             return out
 
-        # Fast parallel enrichment for candidates missing descriptions so CV matching & email mining work on all top results
+        # ── Quality stage 2: adaptive relevance filter ──
+        # Strong = the title really is the searched role (synonym-aware).
+        # Weak   = only the description matches; used to back-fill when strong results are scarce.
+        strong = [j for j in raw_jobs if j["relevance"] >= 40]
+        if len(strong) < 3:
+            # Enrich at most 3 candidate software/mobile/developer cards that lacked descriptions at scrape time
+            cand_indices = [
+                idx for idx, j in enumerate(raw_jobs)
+                if j["relevance"] < 20
+                and len(j.get("description") or "") < 60
+                and re.search(r"\b(developer|engineer|développeur|developpeur|ingénieur|ingenieur|mobile|fullstack|full-stack|frontend|front-end)\b", (j.get("title") or "").lower())
+            ][:3]
+            if cand_indices:
+                def _pre_enrich(idx: int):
+                    raw_jobs[idx] = _enrich_job_description(raw_jobs[idx])
+                    if raw_jobs[idx].get("description"):
+                        raw_jobs[idx]["relevance"] = best_relevance(
+                            all_queries,
+                            raw_jobs[idx]["title"],
+                            raw_jobs[idx]["description"],
+                            raw_jobs[idx].get("company", ""),
+                        )
+                    return raw_jobs[idx]
+                _bounded_map(_pre_enrich, cand_indices, 1.8)
+                strong = [j for j in raw_jobs if j["relevance"] >= 40]
+
+        weak = sorted((j for j in raw_jobs if 20 <= j["relevance"] < 40), key=lambda j: -j["relevance"])
+        min_wanted = max(req.results_wanted, 15)
+        if len(strong) < min_wanted:
+            strong += weak[: min_wanted - len(strong)]
+        raw_jobs = strong
+        stats["after_relevance"] = len(raw_jobs)
+
+        # Cap work for the enrichment stages: best candidates first.
+        for j in raw_jobs:
+            j["quality"] = quality_score(j)
+        raw_jobs.sort(key=lambda j: -j["quality"])
+        MAX_RESULTS = min(max(req.results_wanted * 2, 45), 75)
+        raw_jobs = raw_jobs[:MAX_RESULTS]
+        del df, all_dfs
+
+        # Fast parallel enrichment for non-LinkedIn candidates (and at most 2 LinkedIn cards)
+        # so we never burst-hammer LinkedIn's guest API and trigger HTTP 429 on the user's IP.
         t_enrich = _time.time()
         try:
-            missing_desc_indices = [
-                idx for idx, j in enumerate(raw_jobs[:35])
-                if len(j.get("description") or "") < 140
-            ][:28]
+            missing_desc_indices = []
+            li_enrich_count = 0
+            for idx, j in enumerate(raw_jobs[:25]):
+                if len(j.get("description") or "") >= 80:
+                    continue
+                is_li = "linkedin" in (j.get("site") or "").lower() or "linkedin.com" in (j.get("url") or "").lower()
+                if is_li:
+                    if li_enrich_count >= 2:
+                        continue
+                    li_enrich_count += 1
+                missing_desc_indices.append(idx)
             if missing_desc_indices:
                 def _enrich_idx(idx: int):
                     raw_jobs[idx] = _enrich_job_description(raw_jobs[idx])
                     return raw_jobs[idx]
-                _bounded_map(_enrich_idx, missing_desc_indices, 3.5)
+                _bounded_map(_enrich_idx, missing_desc_indices[:10], 2.5)
         except Exception as desc_err:
             logger.warning(f"[Scraper] Parallel description enrichment warning: {desc_err}")
         stats["timings"]["describe_s"] = round(_time.time() - t_enrich, 2)
 
-        # Descriptions are now richer → refine relevance for jobs that were description-only matches.
+        # Descriptions are now richer → refine relevance and drop any newly-discovered closed or out-of-date postings
+        filtered_after_enrich = []
         for j in raw_jobs:
+            if j.get("is_closed"):
+                continue
+            if j.get("age_hours") is not None and j["age_hours"] > 2160.0:
+                continue
+            if hours_filter is not None and (j.get("age_hours") is None or j["age_hours"] > hours_filter):
+                continue
             if j.get("relevance", 0) < 40 and j.get("description"):
-                j["relevance"] = max(j["relevance"], best_relevance(all_queries, j["title"], j["description"]))
+                j["relevance"] = max(j["relevance"], best_relevance(all_queries, j["title"], j["description"], j.get("company", "")))
+            filtered_after_enrich.append(j)
+        raw_jobs = filtered_after_enrich
 
         # Multi-Layer Recruiter Email Discovery Engine (instant local + cached pass on all jobs,
         # plus time-boxed deep hunt on top 3 jobs missing emails)
@@ -1572,6 +1982,7 @@ def fetch_job_description(req: JobDescriptionRequest,
     desc = ""
     emails = []
 
+    job_url_direct = ""
     # 1. Job Bank Canada specialized fetch (with JSF AJAX extraction for recruiter email)
     if "jobbank.gc.ca" in url or (req.job_id and "jobbank" in str(req.job_id).lower()):
         jb_res = _fetch_jobbank_details(req.job_id or url)
@@ -1579,10 +1990,14 @@ def fetch_job_description(req: JobDescriptionRequest,
             desc = jb_res["description"]
         if jb_res.get("emails"):
             emails = list(jb_res["emails"])
+        if jb_res.get("job_url_direct"):
+            job_url_direct = jb_res["job_url_direct"]
     elif "linkedin.com" in url or (req.job_id and str(req.job_id).isdigit()):
-        desc = _fetch_linkedin_description(req.job_id or url)
+        li_res = _fetch_linkedin_details(req.job_id or url)
+        desc = li_res.get("description") or ""
+        job_url_direct = li_res.get("job_url_direct") or ""
 
-    if not desc and url.startswith("http"):
+    if not desc and url.startswith("http") and "linkedin.com" not in url.lower():
         from ..utils import is_safe_public_url
         if not is_safe_public_url(url):
             raise HTTPException(400, "This URL is not allowed.")
@@ -1631,6 +2046,7 @@ def fetch_job_description(req: JobDescriptionRequest,
 
     return {
         "description": desc,
+        "job_url_direct": job_url_direct,
         "emails": emails,
         "score": score,
         "matched_skills": matched_skills,
@@ -2215,12 +2631,19 @@ def update_daily_digest_settings(
     # Anti-abuse: only send an on-demand digest if none was sent in the last 23 hours
     last = current_user.last_digest_sent_at
     recently_sent = bool(last and (datetime.utcnow() - last).total_seconds() < 23 * 3600)
-    if req.send_test_now and not recently_sent:
-        try:
-            from ..auto_dispatcher import dispatch_daily_top_matches_digest
-            digest_preview = dispatch_daily_top_matches_digest(db, current_user.id, role_override=current_user.daily_digest_role)
-        except Exception as err:
-            logger.warning(f"[DailyDigest] Immediate preview warning: {err}")
+    if req.send_test_now:
+        if not recently_sent:
+            try:
+                from ..auto_dispatcher import dispatch_daily_top_matches_digest
+                digest_preview = dispatch_daily_top_matches_digest(db, current_user.id, role_override=current_user.daily_digest_role)
+            except Exception as err:
+                logger.warning(f"[DailyDigest] Immediate preview warning: {err}")
+        else:
+            digest_preview = {
+                "sent": False,
+                "already_sent_today": True,
+                "role": current_user.daily_digest_role or "",
+            }
 
     return {
         "enabled": True,
@@ -2242,23 +2665,30 @@ def search_jobs_fast_wave(
     can render initial matches in ~1.2s while the deep multi-board scrape completes.
     """
     from ..open_sources import fetch_open_source
-    from ..search_engine import expand_queries, best_relevance, is_spam, dedup_and_merge
+    from ..search_engine import (
+        expand_queries, best_relevance, is_spam, dedup_and_merge,
+        is_aggregator_or_non_posting, job_matches_selected_countries,
+    )
     from recruiter_hunter import enrich_job_emails
 
     query_title = (req.title or "").strip()
     if not query_title:
         return {"jobs": [], "wave": "fast"}
 
-    country = (req.countries[0] if req.countries else req.country) or "Worldwide"
+    countries_list = [c.strip() for c in req.countries if c and c.strip()] if req.countries else [req.country or "Worldwide"]
+    country = countries_list[0] if countries_list else "Worldwide"
+    is_ww = country.strip().lower() in ("worldwide", "global", "all", "remote", "") or country.strip().lower().startswith("remote ")
     variants = expand_queries(query_title, country.lower(), max_variants=2) or [query_title]
     hours_filter = req.hours_old if (req.hours_old and req.hours_old > 0) else None
 
     raw_rows = []
-    for site_id in ("remote_boards", "ats"):
+    serper_key = os.getenv("SERPER_API_KEY", "") or _get_scraper_config().get("serper_api_key", "")
+    fast_sites = ("remote_boards", "ats") if is_ww else ("local_boards", "ats")
+    for site_id in fast_sites:
         try:
             rows = fetch_open_source(
                 site_id, variants, country=country, location=(req.location or "").strip(),
-                hours_old=hours_filter,
+                hours_old=hours_filter, serper_key=serper_key,
             )
             if rows:
                 raw_rows.extend(rows)
@@ -2270,25 +2700,39 @@ def search_jobs_fast_wave(
 
     fast_jobs = []
     for row in raw_rows:
+        if bool(row.get("is_closed")):
+            continue
         title = str(row.get("title", "")).strip()
         company = str(row.get("company", "")).strip()
-        if not title:
+        job_url = str(row.get("job_url", "")).strip()
+        loc_val = str(row.get("location", "")).strip()
+        if not title or not job_url:
+            continue
+        if is_aggregator_or_non_posting(title, job_url, company):
+            continue
+        if not job_matches_selected_countries(
+            {"title": title, "location": loc_val, "url": job_url, "job_url": job_url},
+            countries_list,
+            is_remote_requested=bool(req.is_remote),
+        ):
             continue
         desc = str(row.get("description", ""))
         if is_spam(title, desc, company):
             continue
-        rel = best_relevance(variants, title, desc)
-        if rel < 25:
+        rel = best_relevance(variants, title, desc, company)
+        if rel < 35:
             continue
         date_raw = row.get("date_posted")
         age_hours = _compute_job_age_hours(date_raw)
-        if hours_filter is not None and age_hours is not None and age_hours > hours_filter:
+        if age_hours is not None and age_hours > 2160.0:
+            continue
+        if hours_filter is not None and (age_hours is None or age_hours > hours_filter):
             continue
         job_obj = {
             "title": title,
             "company": company,
-            "location": str(row.get("location", "")) or country,
-            "url": str(row.get("job_url", "")),
+            "location": loc_val or country,
+            "url": job_url,
             "job_url_direct": str(row.get("job_url_direct", "") or row.get("job_url", "")),
             "description": desc,
             "site": str(row.get("site", "remote_boards")),
