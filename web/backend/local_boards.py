@@ -1018,28 +1018,65 @@ def _scrape_bestjobs_romania(query: str) -> List[dict]:
 
 
 def _scrape_ejobs_romania(query: str) -> List[dict]:
-    """Targeted eJobs.ro single-posting discovery (Romania's #1 job board)."""
+    """Targeted eJobs.ro single-posting scraper (Romania's #1 job board, bypassing Cloudflare 403 via ro.search.yahoo.com + curl_cffi)."""
     out: List[dict] = []
     q_low = (query or "").strip().lower()
     first_w = q_low.split()[0] if q_low.split() else q_low
+    terms = ["mobile"] if first_w in ("flutter", "dart", "kotlin", "swift", "android", "ios") else [first_w]
+    seen = set()
     try:
-        from ddgs import DDGS
-        yq = f"{first_w} site:ejobs.ro/user/locuri-de-munca"
-        with DDGS(verify=False, timeout=3) as ddgs:
-            items = ddgs.text(yq, max_results=10, backend="yahoo") or []
-        seen = set()
-        for it in items:
-            href = (it.get("href") or "").strip().split("?")[0]
-            if not re.search(r"ejobs\.ro/user/locuri-de-munca/[^/]+/\d+", href.lower()) or href in seen:
-                continue
-            seen.add(href)
-            parsed = _parse_local_serper_item(
-                {"title": (it.get("title") or "").strip(), "link": href,
-                 "snippet": (it.get("body") or "").strip(), "date": ""},
-                "romania", "Romania",
+        from curl_cffi import requests as cffi_requests
+        for term in terms:
+            r = cffi_requests.get(
+                "https://ro.search.yahoo.com/search",
+                params={"p": f"site:ejobs.ro/user/locuri-de-munca {term}"},
+                impersonate="chrome124",
+                timeout=3.0,
+                verify=False,
             )
-            if parsed:
-                out.append(parsed)
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            for div in soup.select("div.dd.algo, div.algo"):
+                a = div.find("a", href=True)
+                if not a:
+                    continue
+                href = a["href"]
+                m_ru = re.search(r"RU=([^/]+)/RK=", href)
+                if m_ru:
+                    href = unquote(m_ru.group(1))
+                href = href.split("?")[0].strip()
+                if not re.search(r"ejobs\.ro/user/locuri-de-munca/[^/]+/\d+", href.lower()) or href in seen:
+                    continue
+                h3 = div.find("h3")
+                raw_t = h3.get_text(" ", strip=True) if h3 else a.get_text(" ", strip=True)
+                clean_t = re.sub(r"^.*?›\s*(?:locuri\s*-\s*de\s*-\s*munca|\d+)\s*", "", raw_t, flags=re.I)
+                clean_t = re.sub(r"\s*[-|]\s*Aplica(?:\s+pe)?(?:\s+eJobs)?.*$", "", clean_t, flags=re.I).rstrip(" .-…")
+                if not clean_t or len(clean_t) < 3:
+                    slug = href.rstrip("/").split("/")[-2]
+                    clean_t = slug.replace("-", " ").title()
+                comp_el = div.select_one("div.compText, p")
+                snip = comp_el.get_text(" ", strip=True) if comp_el else ""
+                date_str = ""
+                if " · " in snip:
+                    d_cand, snip = snip.split(" · ", 1)
+                    if len(d_cand) <= 25:
+                        date_str = _parse_local_date(d_cand.strip())
+                company = "Employer via eJobs.ro"
+                if " | " in clean_t:
+                    clean_t, company = [x.strip() for x in clean_t.rsplit(" | ", 1)]
+                seen.add(href)
+                out.append({
+                    "site": "ejobs.ro",
+                    "title": clean_t,
+                    "company": company,
+                    "location": "Bucharest, Romania",
+                    "job_url": href,
+                    "job_url_direct": href,
+                    "description": f"{clean_t} at {company} (Romania) — {snip}",
+                    "date_posted": date_str,
+                    "is_remote": "remote" in (clean_t + " " + snip).lower(),
+                })
     except Exception as e:
         logger.debug(f"[eJobs.ro] {query}: {e}")
     return out

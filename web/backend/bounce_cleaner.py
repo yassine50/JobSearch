@@ -636,7 +636,7 @@ def get_blacklisted_emails(db: Session, user_id: Optional[int] = None) -> Set[st
     rows = db.query(
         models.EmailBlacklist.email,
         models.EmailBlacklist.source,
-        models.EmailBlacklist.created_by_user_id,
+        models.EmailBlacklist.user_id,
     ).all()
     result = set()
     for email_addr, source, created_by in rows:
